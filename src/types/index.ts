@@ -1,0 +1,141 @@
+import { Timestamp } from 'firebase/firestore'
+
+export interface Cast {
+    id: string
+    name: string
+    gender: '男性' | '女性' | ''
+    dateOfBirth?: Timestamp
+    agency: string
+    imageUrl: string
+    email: string
+    notes: string
+    castType: '内部' | '外部'
+    slackMentionId: string
+    appearanceCount: number
+    snsX?: string
+    snsInstagram?: string
+    snsTikTok?: string
+    createdAt: Timestamp
+    updatedAt: Timestamp
+}
+
+export interface Casting {
+    id: string
+    castId: string
+    castName: string
+    castType: '内部' | '外部'
+    accountName: string
+    projectName: string
+    projectId: string
+    roleName: string
+    startDate: Timestamp
+    endDate: Timestamp
+    startTime?: string // Format: "HH:mm" (e.g., "10:00")
+    endTime?: string   // Format: "HH:mm" (e.g., "18:00")
+    rank: number
+    status: CastingStatus
+    note: string
+    mainSub: 'メイン' | 'サブ' | 'その他'
+    cost: number
+    slackThreadTs: string
+    slackPermalink: string
+    calendarEventId: string
+    dbSentStatus: '済' | ''
+    createdBy: string
+    updatedBy: string
+    createdAt: Timestamp
+    updatedAt: Timestamp
+}
+
+export type CastingStatus =
+    | '仮押さえ' | '仮キャスティング' | '打診中' | 'オーダー待ち'
+    | 'OK' | '決定' | 'NG' | 'キャンセル'
+
+export interface ShootingContact {
+    id: string
+    castingId: string
+    castName: string
+    castType: '内部' | '外部'
+    projectName: string
+    accountName: string
+    roleName: string
+    shootDate: Timestamp
+    inTime?: string
+    outTime?: string
+    location?: string
+    address?: string
+    fee?: number
+    makingUrl?: string
+    postDate?: Timestamp
+    mainSub: 'メイン' | 'サブ' | 'その他'
+    status: ShootingContactStatus
+    email?: string
+    orderDocumentId?: string
+    slackThreadTs?: string
+    createdAt: Timestamp
+    updatedAt: Timestamp
+}
+
+export type ShootingContactStatus =
+    | '香盤連絡待ち'
+    | '発注書送信待ち'
+    | 'メイキング共有待ち'
+    | '投稿日連絡待ち'
+    | '完了'
+
+
+// Old CartItem kept for compatibility during transition if needed, or repurposed
+export interface CartItem {
+    tempId: string // Frontend unique ID for DnD
+    castId: string
+    cast: Cast
+    roleName: string
+    rank: number // 1-based rank
+    note: string
+    mainSub: 'メイン' | 'サブ' | 'その他'
+    projectName?: string // Snapshot of project name at order time
+}
+
+// New Structures
+export interface CartCast {
+    id: string
+    cast: Cast
+}
+
+export interface CartRole {
+    id: string
+    name: string
+    type: 'メイン' | 'サブ' | 'その他'
+    note: string
+    castIds: string[]
+}
+
+export interface CartProject {
+    id: string
+    title: string
+    roles: CartRole[]
+}
+
+export interface CartMeta {
+    accountName: string
+    projectName: string
+    notionUrl: string
+    dateRanges: string[]
+}
+
+export interface Shooting {
+    id: string
+    title: string
+    shootDate: Timestamp
+    team: string
+    director: string
+    floorDirector: string
+    notionUrl: string
+    notionPageId?: string
+}
+
+export interface OrderContext {
+    mode: 'shooting' | 'external' | 'internal' | null
+    shootingData?: Shooting | null
+    dateRanges: string[]
+}
