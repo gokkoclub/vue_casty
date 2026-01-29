@@ -7,6 +7,8 @@ import { useAuth } from '@/composables/useAuth'
 import { useSlack } from '@/composables/useSlack'
 import { useShootingContact } from '@/composables/useShootingContact'
 import { useNotion } from '@/composables/useNotion'
+import { useCastMaster } from '@/composables/useCastMaster'
+import { useGoogleCalendar } from '@/composables/useGoogleCalendar'
 
 export interface CastingFilters {
     status?: CastingStatus[]
@@ -23,6 +25,8 @@ export function useCastings() {
     const { notifyStatusUpdate } = useSlack()
     const { addFromCasting } = useShootingContact()
     const { syncToNotion } = useNotion()
+    const { addToCastMaster } = useCastMaster()
+    const { handleStatusChange: handleCalendarStatusChange } = useGoogleCalendar()
 
     /**
      * Fetch castings from Firestore with optional filters
@@ -151,16 +155,32 @@ export function useCastings() {
                 })
             }
 
-            // 4. TODO: Handle calendar events for internal casts
-            // - OK/決定: Remove [仮] prefix from calendar event
-            // - NG/キャンセル: Delete calendar event
-
-            // 5. Handle shooting contact DB for external casts
-            // 決定ステータス + 外部キャストの場合、撮影連絡DBに自動追加
-            if (newStatus === '決定' && casting.castType === '外部') {
-                addFromCasting(casting).catch(err => {
-                    console.warn('Failed to add to shooting contact DB:', err)
+            // 4. Handle calendar events for internal casts
+            // 内部キャストのカレンダーイベント更新
+            if (casting.castType === '内部' && casting.calendarEventId) {
+                handleCalendarStatusChange(
+                    casting.calendarEventId,
+                    casting.castName,
+                    casting.projectName,
+                    newStatus
+                ).catch(err => {
+                    console.warn('Calendar event update failed:', err)
                 })
+            }
+
+            // 5. Handle 決定 status - add to castMaster and shootingContacts
+            if (newStatus === '決定') {
+                // 5a. キャスティングマスターDBに追加（内部・外部両方）
+                addToCastMaster(casting).catch(err => {
+                    console.warn('Failed to add to castMaster:', err)
+                })
+
+                // 5b. 外部キャストのみ撮影連絡DBに自動追加
+                if (casting.castType === '外部') {
+                    addFromCasting(casting).catch(err => {
+                        console.warn('Failed to add to shooting contact DB:', err)
+                    })
+                }
             }
 
             // 6. Notion sync for OK/決定

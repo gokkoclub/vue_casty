@@ -1,12 +1,13 @@
 import { ref } from 'vue'
 import {
-    collection, doc, writeBatch,
+    collection, doc, writeBatch, updateDoc,
     Timestamp
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import { useOrderStore } from '@/stores/orderStore'
 import { useToast } from 'primevue/usetoast'
+import { useGoogleCalendar } from '@/composables/useGoogleCalendar'
 
 export interface OrderItem {
     castId: string
@@ -142,6 +143,7 @@ export function useOrders() {
     const orderStore = useOrderStore()
     const toast = useToast()
     const loading = ref(false)
+    const { createEvent: createCalendarEvent, isGapiAvailable } = useGoogleCalendar()
 
     /**
      * カートの内容をOrderPayloadに変換
@@ -333,6 +335,53 @@ export function useOrders() {
 
 
             await batch.commit()
+
+            // Create calendar events for internal casts (仮押さえ)
+            // カレンダーイベント作成は非同期で行い、IDをFirestoreに更新
+            if (isGapiAvailable()) {
+                const internalItems = payload.items.filter(item => item.castType === '内部')
+
+                if (internalItems.length > 0) {
+                    console.log(`Creating ${internalItems.length} calendar events for internal casts...`)
+
+                    // 各内部キャストにカレンダーイベントを作成
+                    let castingIdIndex = 0
+                    for (const item of payload.items) {
+                        for (const dateRange of payload.dateRanges) {
+                            const castingId = castingIds[castingIdIndex]
+                            castingIdIndex++
+
+                            // 内部キャストのみカレンダー作成
+                            if (item.castType !== '内部') continue
+
+                            const [startDateStr, endDateStr] = dateRange.includes('~')
+                                ? dateRange.split('~').map(s => s.trim())
+                                : [dateRange, dateRange]
+
+                            try {
+                                const eventId = await createCalendarEvent({
+                                    castName: item.castName,
+                                    projectName: item.projectName,
+                                    roleName: item.roleName,
+                                    startDate: new Date(startDateStr || dateRange),
+                                    endDate: endDateStr ? new Date(endDateStr) : undefined,
+                                    isProvisional: true  // 仮押さえ
+                                })
+
+                                if (eventId && castingId) {
+                                    // FirestoreにcalendarEventIdを保存
+                                    await updateDoc(doc(db, 'castings', castingId), {
+                                        calendarEventId: eventId
+                                    })
+                                    console.log(`Calendar event created for ${item.castName}: ${eventId}`)
+                                }
+                            } catch (calErr) {
+                                console.warn(`Failed to create calendar event for ${item.castName}:`, calErr)
+                            }
+                        }
+                    }
+                }
+            }
 
             // Try Cloud Function first, fallback to direct Slack API
             let slackResult: { ts: string; permalink: string } | null = null

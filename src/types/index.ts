@@ -139,3 +139,26 @@ export interface OrderContext {
     shootingData?: Shooting | null
     dateRanges: string[]
 }
+
+/**
+ * キャスティングマスターDB
+ * ステータスが「決定」になったキャスティングの履歴を保存
+ * 内部・外部両方のキャストが対象
+ */
+export interface CastMaster {
+    id: string
+    castingId: string       // 元のcastingsドキュメントへの参照
+    castId: string
+    castName: string
+    castType: '内部' | '外部'
+    accountName: string
+    projectName: string
+    roleName: string
+    mainSub: 'メイン' | 'サブ' | 'その他'
+    shootDate: Timestamp
+    endDate?: Timestamp
+    cost: number
+    decidedAt: Timestamp    // 決定日時
+    decidedBy: string       // 決定したユーザー
+    createdAt: Timestamp
+}
