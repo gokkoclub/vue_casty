@@ -6,12 +6,15 @@ import SelectButton from 'primevue/selectbutton'
 import ProgressSpinner from 'primevue/progressspinner'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
+import Checkbox from 'primevue/checkbox'
+import MultiSelect from 'primevue/multiselect'
 import CastCard from '@/components/cast/CastCard.vue'
 import CastDetailDialog from '@/components/cast/CastDetailDialog.vue'
 import DateSelector from '@/components/calendar/DateSelector.vue'
 import CartSidebar from '@/components/cart/CartSidebar.vue'
 import ShootingList from '@/components/shooting/ShootingList.vue'
 import OrderTypeDialog from '@/components/casting/OrderTypeDialog.vue'
+import ProgressModal from '@/components/common/ProgressModal.vue'
 import { useCasts } from '@/composables/useCasts'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAvailability } from '@/composables/useAvailability'
@@ -36,8 +39,35 @@ const typeOptions = [
   { label: '外部', value: '外部' }
 ]
 
-// View Mode
-const viewMode = ref<'grid' | 'list'>('grid')
+// Gender filter
+const genderMale = ref(false)
+const genderFemale = ref(false)
+
+// Agency filter (multiselect)
+const selectedAgencies = ref<string[]>([])
+const agencyOptions = computed(() => {
+  const agencies = new Set(casts.value.map(c => c.agency || 'フリー'))
+  return Array.from(agencies).sort().map(a => ({ label: a, value: a }))
+})
+
+// Availability filter
+const showAvailableOnly = ref(false)
+
+// Sort options
+const sortOption = ref<'none' | 'appearance' | 'kana'>('none')
+const sortOptions = [
+  { label: '最新', value: 'none' },
+  { label: '出演回数', value: 'appearance' },
+  { label: '50音順', value: 'kana' }
+]
+
+// View Mode: 3 columns (comfort) or 5 columns (dense)
+const viewMode = ref<'3col' | '5col'>('3col')
+
+// Progress Modal State
+const showProgress = ref(false)
+const progressValue = ref(0)
+const progressMessage = ref('')
 
 // Date Select
 const selectedDates = ref<Date[]>([])
@@ -148,13 +178,52 @@ const handleOrderTypeSelect = (mode: 'external' | 'internal' | 'cancel') => {
 
 // Cast Selection
 const filteredCasts = computed(() => {
-  return casts.value.filter(cast => {
+  let result = casts.value.filter(cast => {
+    // Text search: name, agency, notes, furigana
+    const searchLower = searchQuery.value.toLowerCase()
     const matchesSearch = !searchQuery.value || 
-      cast.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      cast.agency?.toLowerCase().includes(searchQuery.value.toLowerCase())
+      cast.name.toLowerCase().includes(searchLower) ||
+      cast.agency?.toLowerCase().includes(searchLower) ||
+      cast.notes?.toLowerCase().includes(searchLower) ||
+      (cast as any).furigana?.toLowerCase().includes(searchLower)
+    
+    // Type filter
     const matchesType = selectedType.value === 'all' || cast.castType === selectedType.value
-    return matchesSearch && matchesType
+    
+    // Gender filter
+    const matchesGender = 
+      (!genderMale.value && !genderFemale.value) ||
+      (genderMale.value && cast.gender === '男性') ||
+      (genderFemale.value && cast.gender === '女性')
+    
+    // Agency filter
+    const matchesAgency = 
+      selectedAgencies.value.length === 0 ||
+      selectedAgencies.value.includes(cast.agency || 'フリー')
+    
+    // Availability filter (check if not already booked)
+    const matchesAvailability = !showAvailableOnly.value || 
+      !isBookingBlocked(
+        cast.id, 
+        activeCastings.value, 
+        selectedDates.value.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s)
+      )
+    
+    return matchesSearch && matchesType && matchesGender && matchesAgency && matchesAvailability
   })
+  
+  // Sorting
+  if (sortOption.value === 'appearance') {
+    result = [...result].sort((a, b) => (b.appearanceCount || 0) - (a.appearanceCount || 0))
+  } else if (sortOption.value === 'kana') {
+    result = [...result].sort((a, b) => {
+      const aKana = (a as any).furigana || a.name
+      const bKana = (b as any).furigana || b.name
+      return aKana.localeCompare(bKana, 'ja')
+    })
+  }
+  
+  return result
 })
 
 const handleCastClick = (cast: Cast) => {
@@ -323,16 +392,16 @@ onUnmounted(() => {
                 
                 <div class="view-toggle">
                   <Button 
-                    icon="pi pi-th-large" 
+                    label="3列"
                     text 
-                    :severity="viewMode === 'grid' ? 'primary' : 'secondary'"
-                    @click="viewMode = 'grid'"
+                    :severity="viewMode === '3col' ? 'primary' : 'secondary'"
+                    @click="viewMode = '3col'"
                   />
                   <Button 
-                    icon="pi pi-list" 
+                    label="5列" 
                     text
-                    :severity="viewMode === 'list' ? 'primary' : 'secondary'"
-                    @click="viewMode = 'list'"
+                    :severity="viewMode === '5col' ? 'primary' : 'secondary'"
+                    @click="viewMode = '5col'"
                   />
                 </div>
               </div>
@@ -340,18 +409,56 @@ onUnmounted(() => {
             <template #content>
               <template v-if="selectedDates.length > 0">
                 <!-- Search & Filter Controls -->
-                <div class="filters mb-3">
-                  <InputText 
-                    v-model="searchQuery" 
-                    placeholder="キャスト名・事務所名で検索"
-                    class="w-full mb-2"
-                  />
-                  <SelectButton 
-                    v-model="selectedType" 
-                    :options="typeOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                  />
+                <div class="filters-container mb-3">
+                  <!-- Search Row -->
+                  <div class="filter-row">
+                    <InputText 
+                      v-model="searchQuery" 
+                      placeholder="キャスト名・事務所名・ふりがなで検索"
+                      class="search-input"
+                    />
+                    <SelectButton 
+                      v-model="selectedType" 
+                      :options="typeOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                    />
+                  </div>
+                  
+                  <!-- Gender & Agency Row -->
+                  <div class="filter-row">
+                    <div class="filter-group">
+                      <Checkbox v-model="genderMale" inputId="genderMale" binary />
+                      <label for="genderMale">男性</label>
+                    </div>
+                    <div class="filter-group">
+                      <Checkbox v-model="genderFemale" inputId="genderFemale" binary />
+                      <label for="genderFemale">女性</label>
+                    </div>
+                    <MultiSelect
+                      v-model="selectedAgencies"
+                      :options="agencyOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                      placeholder="事務所を選択"
+                      :maxSelectedLabels="2"
+                      class="agency-select"
+                    />
+                  </div>
+                  
+                  <!-- Availability & Sort Row -->
+                  <div class="filter-row">
+                    <div class="filter-group">
+                      <Checkbox v-model="showAvailableOnly" inputId="availableOnly" binary />
+                      <label for="availableOnly">未仮キャスのみ</label>
+                    </div>
+                    <SelectButton 
+                      v-model="sortOption" 
+                      :options="sortOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                    />
+                  </div>
                 </div>
 
                 <!-- ローディング -->
@@ -360,9 +467,9 @@ onUnmounted(() => {
                   <p>キャストを読み込み中...</p>
                 </div>
 
-                <!-- キャストグリッド/リスト -->
+                <!-- キャストグリッド -->
                 <div v-else-if="filteredCasts.length > 0" 
-                     :class="['cast-view', viewMode === 'grid' ? 'grid-mode' : 'list-mode']">
+                     :class="['cast-view', viewMode === '3col' ? 'grid-3col' : 'grid-5col']">
                   <CastCard 
                     v-for="cast in filteredCasts" 
                     :key="cast.id"
@@ -404,6 +511,13 @@ onUnmounted(() => {
 
     <CartSidebar 
       @submit="handleSubmitOrder"
+    />
+
+    <!-- Progress Modal -->
+    <ProgressModal 
+      v-model:visible="showProgress"
+      :progress="progressValue"
+      :message="progressMessage"
     />
   </div>
 </template>
@@ -451,6 +565,9 @@ onUnmounted(() => {
 }
 
 /* Date Selector Override: Make calendar more compact */
+.date-card {
+  overflow: hidden;
+}
 .date-card :deep(.p-datepicker-inline) {
   border: none;
   box-shadow: none;
@@ -523,6 +640,45 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+/* Filter styles */
+.filters-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--p-surface-50);
+  border-radius: 8px;
+  border: 1px solid var(--p-surface-200);
+}
+
+.filter-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.filter-group label {
+  cursor: pointer;
+  user-select: none;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.agency-select {
+  min-width: 180px;
+}
+
 .filters {
   display: flex;
   gap: 1rem;
@@ -535,82 +691,23 @@ onUnmounted(() => {
   flex: 1;
 }
 
-/* Grid Mode: Force 4 columns */
-.cast-view.grid-mode {
+/* Grid Mode: 3 columns (comfort) */
+.cast-view.grid-3col {
   display: grid;
-  grid-template-columns: repeat(4, 1fr); /* Exact 4 columns */
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 
-/* List Mode: Smart List Design */
-.cast-view.list-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+/* Grid Mode: 5 columns (dense) */
+.cast-view.grid-5col {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
 }
 
-.cast-view.list-mode :deep(.cast-card) {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  gap: 1.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  border: 1px solid var(--p-surface-200);
-  background: #fff;
-  transition: transform 0.2s, box-shadow 0.2s;
-  max-width: 100%;
-}
-.cast-view.list-mode :deep(.cast-card:hover) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-}
-/* Re-style internal elements for list mode */
-.cast-view.list-mode :deep(.p-card-header) {
-  width: 60px;
-  height: 60px;
-  flex-shrink: 0;
-  margin: 0;
-}
-.cast-view.list-mode :deep(.cast-image) {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-.cast-view.list-mode :deep(.p-card-body) {
-  padding: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.cast-view.list-mode :deep(.p-card-content) {
-  padding: 0;
-}
-.cast-view.list-mode :deep(.p-card-title) {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.cast-view.list-mode :deep(.p-card-subtitle) {
-  margin: 0;
+.cast-view.grid-5col :deep(.cast-card) {
   font-size: 0.9rem;
-  color: var(--p-text-muted-color);
 }
-.cast-view.list-mode :deep(.tags) {
-  display: none; /* Hide tags in smart list, or show minimal? Keep clean */
-}
-.cast-view.list-mode :deep(.p-card-footer) {
-  padding: 0;
-  margin: 0;
-}
-/* Override Card structure via deep selector hack might be brittle. 
-   Better approach: Pass 'displayMode' prop to CastCard or use specific CSS classes.
-   Let's assume CastCard uses standard PrimeVue slots which render specific DOM.
-   We need to target those.
-*/
 
 .loading-container, .empty-state {
   display: flex;
@@ -627,8 +724,9 @@ onUnmounted(() => {
     gap: 1rem;
   }
   
-  .cast-view.grid-mode {
-    grid-template-columns: repeat(2, 1fr); /* 2 cols on smaller screens */
+  .cast-view.grid-3col,
+  .cast-view.grid-5col {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 </style>

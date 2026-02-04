@@ -3,6 +3,7 @@ import { Timestamp } from 'firebase/firestore'
 export interface Cast {
     id: string
     name: string
+    furigana?: string  // ふりがな for 50音順 sorting
     gender: '男性' | '女性' | ''
     dateOfBirth?: Timestamp
     agency: string
@@ -48,8 +49,9 @@ export interface Casting {
 }
 
 export type CastingStatus =
-    | '仮押さえ' | '仮キャスティング' | '打診中' | 'オーダー待ち'
-    | 'OK' | '決定' | 'NG' | 'キャンセル'
+    | '仮押さえ' | '仮キャスティング' | '打診中'
+    | 'オーダー待ち' | 'オーダー待ち（仮キャスティング）'
+    | 'OK' | '決定' | '条件つきOK' | 'NG' | 'キャンセル'
 
 export interface ShootingContact {
     id: string

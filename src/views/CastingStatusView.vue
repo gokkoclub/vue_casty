@@ -11,8 +11,12 @@ import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'
 import Checkbox from 'primevue/checkbox'
 import { useCastings } from '@/composables/useCastings'
-import CastingStatusTable from '@/components/casting/CastingStatusTable.vue'
+import { useBulkSelection } from '@/composables/useBulkSelection'
+import CastingStatusList from '@/components/casting/CastingStatusList.vue'
 import StatusChangeModal from '@/components/status/StatusChangeModal.vue'
+import BulkActionBar from '@/components/status/BulkActionBar.vue'
+import BulkStatusModal from '@/components/status/BulkStatusModal.vue'
+import SummaryModal from '@/components/common/SummaryModal.vue'
 import type { Casting, CastingStatus } from '@/types'
 
 const { 
@@ -24,6 +28,18 @@ const {
   deleteCasting,
   getHierarchicalCastings 
 } = useCastings()
+
+// Bulk selection
+const {
+  bulkSelectMode,
+  selectedCount,
+  toggleMode: toggleBulkMode,
+  toggleSelect,
+  selectAll,
+  clearSelection,
+  isSelected,
+  getSelectedIds
+} = useBulkSelection()
 
 // Current month state
 const currentMonth = ref(new Date())
@@ -39,6 +55,10 @@ const orderWaitOnly = ref(false)
 // Modal state
 const showStatusModal = ref(false)
 const selectedCasting = ref<Casting | null>(null)
+const showBulkStatusModal = ref(false)
+const showSummaryModal = ref(false)
+const summaryCastings = ref<Casting[]>([])
+const summaryProjectName = ref('')
 
 // Computed hierarchical data
 const hierarchicalData = computed(() => {
@@ -119,6 +139,78 @@ const handleDelete = async (castingId: string) => {
   }
 }
 
+// Handle additional order
+const handleAdditionalOrder = (casting: Casting) => {
+  // TODO: Implement additional order logic
+  console.log('Additional order for:', casting)
+}
+
+// Handle summary modal
+const handleOpenSummary = (castings: Casting[]) => {
+  summaryCastings.value = castings
+  summaryProjectName.value = castings[0]?.projectName || ''
+  showSummaryModal.value = true
+}
+
+// Handle email modal
+const handleOpenEmail = (casting: Casting) => {
+  // TODO: Implement email modal
+  console.log('Open email for:', casting)
+}
+
+// Get all casting IDs for select all
+const getAllCastingIds = (): string[] => {
+  const ids: string[] = []
+  hierarchicalData.value.forEach(dateGroup => {
+    dateGroup.accounts.forEach(accountGroup => {
+      accountGroup.projects.forEach(projectGroup => {
+        projectGroup.castings.forEach(casting => {
+          ids.push(casting.id)
+        })
+      })
+    })
+  })
+  return ids
+}
+
+// Handle select all
+const handleSelectAll = () => {
+  selectAll(getAllCastingIds())
+}
+
+// Handle bulk delete
+const handleBulkDelete = async () => {
+  const count = selectedCount.value
+  if (!confirm(`${count}件のキャスティングを削除しますか？`)) return
+  
+  const ids = getSelectedIds()
+  for (const id of ids) {
+    await deleteCasting(id)
+  }
+  
+  clearSelection()
+  toggleBulkMode()
+  await fetchCastings()
+}
+
+// Handle bulk status update
+const handleBulkUpdateStatus = () => {
+  showBulkStatusModal.value = true
+}
+
+// Execute bulk status update
+const executeBulkStatusUpdate = async (newStatus: CastingStatus) => {
+  const ids = getSelectedIds()
+  for (const id of ids) {
+    await updateCastingStatus(id, newStatus)
+  }
+  
+  showBulkStatusModal.value = false
+  clearSelection()
+  toggleBulkMode()
+  await fetchCastings()
+}
+
 // Reload data
 const reload = () => {
   fetchCastings()
@@ -132,13 +224,32 @@ const reload = () => {
         <i class="pi pi-calendar-plus"></i>
         キャスティング状況
       </h1>
-      <Button 
-        label="再読み込み" 
-        icon="pi pi-refresh"
-        @click="reload"
-        :loading="loading"
-      />
+      <div class="header-actions">
+        <Button 
+          :label="bulkSelectMode ? '一括選択中' : '一括選択'"
+          :icon="bulkSelectMode ? 'pi pi-check-square' : 'pi pi-square'"
+          :severity="bulkSelectMode ? 'info' : 'secondary'"
+          text
+          @click="toggleBulkMode"
+        />
+        <Button 
+          label="再読み込み" 
+          icon="pi pi-refresh"
+          @click="reload"
+          :loading="loading"
+        />
+      </div>
     </div>
+
+    <!-- Bulk Action Bar -->
+    <BulkActionBar 
+      v-if="bulkSelectMode"
+      :selected-count="selectedCount"
+      @delete="handleBulkDelete"
+      @update-status="handleBulkUpdateStatus"
+      @select-all="handleSelectAll"
+      @clear-selection="clearSelection"
+    />
 
     <!-- Tabs -->
     <TabView v-model:activeIndex="activeTab" class="status-tabs">
@@ -226,14 +337,21 @@ const reload = () => {
                   :key="projectGroup.projectName"
                   class="project-group"
                 >
-                  <CastingStatusTable
+                  <CastingStatusList
                     :castings="projectGroup.castings"
                     :projectName="projectGroup.projectName"
                     :updaters="projectGroup.updaters"
+                    :isExternalTab="currentTab === 'special'"
+                    :bulkSelectMode="bulkSelectMode"
+                    :isSelected="isSelected"
                     @update-status="handleQuickStatusUpdate"
                     @open-modal="openStatusModal"
                     @delete="handleDelete"
                     @save-cost="handleSaveCost"
+                    @additional-order="handleAdditionalOrder"
+                    @open-summary="handleOpenSummary"
+                    @open-email="handleOpenEmail"
+                    @toggle-select="toggleSelect"
                   />
                 </div>
               </div>
@@ -259,6 +377,20 @@ const reload = () => {
       v-model:visible="showStatusModal"
       :casting="selectedCasting"
       @confirm="handleModalStatusUpdate"
+    />
+
+    <!-- Summary Modal -->
+    <SummaryModal
+      v-model:visible="showSummaryModal"
+      :castings="summaryCastings"
+      :projectName="summaryProjectName"
+    />
+
+    <!-- Bulk Status Modal -->
+    <BulkStatusModal
+      v-model:visible="showBulkStatusModal"
+      :selectedCount="selectedCount"
+      @confirm="executeBulkStatusUpdate"
     />
   </div>
 </template>

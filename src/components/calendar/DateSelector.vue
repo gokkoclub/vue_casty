@@ -102,6 +102,35 @@ const clearDates = () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  overflow: hidden;
+  contain: layout;
+}
+
+/* Calendar containment fix */
+.date-selector :deep(.p-datepicker) {
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.date-selector :deep(.p-datepicker-panel) {
+  width: 100% !important;
+  max-width: 100%;
+}
+
+.date-selector :deep(.p-datepicker-calendar) {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.date-selector :deep(.p-datepicker-calendar td) {
+  padding: 0.15rem;
+}
+
+.date-selector :deep(.p-datepicker-calendar td > span) {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.85rem;
 }
 
 .selected-dates {
