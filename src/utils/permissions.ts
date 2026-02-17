@@ -8,25 +8,29 @@ import type { CastingStatus } from '@/types'
 // ステータスの遷移可能先を定義
 const STATUS_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
     '仮押さえ': ['打診中', 'オーダー待ち', 'OK', '決定', 'NG', 'キャンセル'],
-    '仮キャスティング': ['打診中', 'オーダー待ち', 'OK', '決定', 'NG', 'キャンセル'],
-    '打診中': ['オーダー待ち', 'OK', 'NG'],
-    'オーダー待ち': ['OK', '決定', 'NG'],
+    '仮キャスティング': ['OK', '条件つきOK', 'NG'],
+    '打診中': ['オーダー待ち', 'OK', '条件つきOK', 'NG'],
+    'オーダー待ち': ['OK', '条件つきOK', '決定', 'NG'],
+    'オーダー待ち（仮キャスティング）': ['OK', '条件つきOK', '決定', 'NG'],
     'OK': ['決定', 'NG'],
+    '条件つきOK': ['OK', '決定', 'NG'],
     '決定': ['キャンセル'],
     'NG': [],
     'キャンセル': []
 }
 
-// 一般ユーザーが変更可能なステータス（限定的）
+// 一般ユーザーが変更可能なステータス（業務フローに必要な遷移をカバー）
 const USER_ALLOWED_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
-    '仮押さえ': ['打診中', 'オーダー待ち'],
-    '仮キャスティング': ['打診中', 'オーダー待ち'],
-    '打診中': ['オーダー待ち'],
-    'オーダー待ち': [],
-    'OK': [],
-    '決定': [],
-    'NG': [],
-    'キャンセル': []
+    '仮押さえ': ['打診中', 'オーダー待ち', 'NG', 'キャンセル'],
+    '仮キャスティング': ['OK', '条件つきOK', 'NG'],
+    '打診中': ['オーダー待ち', 'OK', '条件つきOK', 'NG'],
+    'オーダー待ち': ['OK', '条件つきOK', '決定', 'NG'],
+    'オーダー待ち（仮キャスティング）': ['OK', '条件つきOK', '決定', 'NG'],
+    'OK': ['決定', 'NG'],
+    '条件つきOK': ['OK', '決定', 'NG'],
+    '決定': ['キャンセル'],
+    'NG': ['仮押さえ'],
+    'キャンセル': ['仮押さえ']
 }
 
 export const Permissions = {
@@ -103,7 +107,9 @@ export function getStatusColor(status: CastingStatus): string {
         '仮キャスティング': 'info',
         '打診中': 'secondary',
         'オーダー待ち': 'warning',
+        'オーダー待ち（仮キャスティング）': 'warning',
         'OK': 'success',
+        '条件つきOK': 'info',
         '決定': 'success',
         'NG': 'danger',
         'キャンセル': 'danger'
@@ -120,7 +126,9 @@ export function getStatusIcon(status: CastingStatus): string {
         '仮キャスティング': 'pi-user-plus',
         '打診中': 'pi-comments',
         'オーダー待ち': 'pi-inbox',
+        'オーダー待ち（仮キャスティング）': 'pi-inbox',
         'OK': 'pi-check',
+        '条件つきOK': 'pi-check-square',
         '決定': 'pi-check-circle',
         'NG': 'pi-times',
         'キャンセル': 'pi-ban'

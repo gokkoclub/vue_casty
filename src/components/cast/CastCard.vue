@@ -58,25 +58,26 @@ const handleImageError = (event: Event) => {
     class="cast-card" 
     @click="emit('click', cast)"
   >
-    <!-- Top-right booking badges -->
-    <div v-if="bookings && bookings.length > 0" class="booking-badges">
-      <Tag
-        v-for="(booking, index) in bookings"
-        :key="index"
-        :value="booking.displayLabel"
-        :severity="booking.severity"
-        class="booking-tag"
-      />
-    </div>
-
     <template #header>
-      <img 
-        :src="imageUrl" 
-        :alt="cast.name"
-        class="cast-image"
-        @error="handleImageError"
-        loading="lazy"
-      />
+      <div class="header-wrapper">
+        <img 
+          :src="imageUrl" 
+          :alt="cast.name"
+          class="cast-image"
+          @error="handleImageError"
+          loading="lazy"
+        />
+        <!-- Booking badges overlaid on image -->
+        <div v-if="bookings && bookings.length > 0" class="booking-badges">
+          <Tag
+            v-for="(booking, index) in bookings"
+            :key="index"
+            :value="booking.displayLabel"
+            :severity="booking.severity"
+            class="booking-tag"
+          />
+        </div>
+      </div>
     </template>
     <template #title>
       <div class="card-title">{{ cast.name }}</div>
@@ -103,7 +104,8 @@ const handleImageError = (event: Event) => {
   cursor: pointer;
   transition: transform 0.2s, box-shadow 0.2s;
   height: 380px;
-  width: 200px;
+  width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -123,6 +125,11 @@ const handleImageError = (event: Event) => {
   flex-direction: column;
   gap: 4px;
   align-items: flex-end;
+}
+
+.header-wrapper {
+  position: relative;
+  overflow: visible;
 }
 
 .booking-tag {

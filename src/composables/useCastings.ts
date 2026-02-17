@@ -1,12 +1,12 @@
 import { ref, computed } from 'vue'
 import { collection, query, orderBy, getDocs, doc, updateDoc, Timestamp } from 'firebase/firestore'
-import { db } from '@/services/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { db, functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
 import { useToast } from 'primevue/usetoast'
 import { useAuth } from '@/composables/useAuth'
 import { useSlack } from '@/composables/useSlack'
 import { useShootingContact } from '@/composables/useShootingContact'
-import { useNotion } from '@/composables/useNotion'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useGoogleCalendar } from '@/composables/useGoogleCalendar'
 
@@ -24,7 +24,6 @@ export function useCastings() {
     const { userEmail } = useAuth()
     const { notifyStatusUpdate } = useSlack()
     const { addFromCasting } = useShootingContact()
-    const { syncToNotion } = useNotion()
     const { addToCastMaster } = useCastMaster()
     const { handleStatusChange: handleCalendarStatusChange } = useGoogleCalendar()
 
@@ -183,20 +182,7 @@ export function useCastings() {
                 }
             }
 
-            // 6. Notion sync for OK/決定
-            // ステータスがOKまたは決定の場合、Notionに同期
-            if (newStatus === 'OK' || newStatus === '決定') {
-                syncToNotion({
-                    projectId: casting.projectId || '',
-                    castName: casting.castName,
-                    status: newStatus,
-                    mainSub: casting.mainSub || '',
-                    roleName: casting.roleName,
-                    accountName: casting.accountName
-                }).catch(err => {
-                    console.warn('Failed to sync to Notion:', err)
-                })
-            }
+            // 6. Notion sync — notifyStatusUpdate CF内で自動実行されるため不要
 
             toast.add({
                 severity: 'success',
@@ -310,6 +296,78 @@ export function useCastings() {
     }
 
     /**
+     * Update casting time (delegates to updateCastingDetails for CF integration)
+     * カレンダー更新 + Slack通知も同時実行
+     */
+    async function updateCastingTime(castingId: string, startTime: string, endTime: string): Promise<boolean> {
+        return updateCastingDetails(castingId, { startTime, endTime })
+    }
+
+    /**
+     * Update casting details (date/time) and notify via Cloud Function
+     * 特別オーダー（外部案件/社内イベント）の日程・時間変更用
+     */
+    async function updateCastingDetails(
+        castingId: string,
+        changes: {
+            startDate?: string
+            endDate?: string
+            startTime?: string
+            endTime?: string
+        }
+    ): Promise<boolean> {
+        if (!db) return false
+
+        const casting = castings.value.find(c => c.id === castingId)
+        if (!casting) return false
+
+        try {
+            // Cloud Functionに委譲（Firestore更新 + Slack通知 + Calendar更新）
+            if (functions) {
+                const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
+                await notifyUpdate({ castingId, changes })
+            } else {
+                // Cloud Functions未設定時: Firestoreのみ更新
+                const castingRef = doc(db, 'castings', castingId)
+                const updateData: Record<string, unknown> = {
+                    updatedAt: Timestamp.now(),
+                    updatedBy: userEmail.value || 'unknown'
+                }
+                if (changes.startDate) updateData.startDate = Timestamp.fromDate(new Date(changes.startDate))
+                if (changes.endDate) updateData.endDate = Timestamp.fromDate(new Date(changes.endDate))
+                if (changes.startTime) updateData.startTime = changes.startTime
+                if (changes.endTime) updateData.endTime = changes.endTime
+                await updateDoc(castingRef, updateData)
+            }
+
+            // ローカルステート更新
+            if (changes.startDate) casting.startDate = Timestamp.fromDate(new Date(changes.startDate))
+            if (changes.endDate) casting.endDate = Timestamp.fromDate(new Date(changes.endDate))
+            if (changes.startTime) casting.startTime = changes.startTime
+            if (changes.endTime) casting.endTime = changes.endTime
+            casting.updatedAt = Timestamp.now()
+
+            toast.add({
+                severity: 'success',
+                summary: '保存完了',
+                detail: 'オーダー内容を更新しました',
+                life: 2000
+            })
+
+            return true
+        } catch (error) {
+            console.error('Error updating casting details:', error)
+            toast.add({
+                severity: 'error',
+                summary: 'エラー',
+                detail: 'オーダー内容の更新に失敗しました',
+                life: 3000
+            })
+            return false
+        }
+    }
+
+    /**
      * Group castings by date
      */
     const castingsByDate = computed(() => {
@@ -346,6 +404,27 @@ export function useCastings() {
     // Special account names for tab filtering
     const SPECIAL_ACCOUNTS = ['外部案件', '社内イベント']
 
+    // Tab type
+    type TabType = 'all' | 'shooting' | 'event' | 'feature'
+
+    // Helpers for tab classification
+    const isMultiDay = (c: Casting): boolean => {
+        if (!c.startDate || !c.endDate) return false
+        return c.startDate.toDate().toDateString() !== c.endDate.toDate().toDateString()
+    }
+
+    const isSpecialAccount = (c: Casting): boolean => {
+        // modeフィールドがあればそれを優先、なければaccountNameで判定
+        if (c.mode === 'external' || c.mode === 'internal') return true
+        return SPECIAL_ACCOUNTS.includes(c.accountName)
+    }
+
+    // チーム名（accountName）に「長編」や「POPCORN」が含まれていれば中長編扱い
+    const isFeatureProject = (c: Casting): boolean => {
+        const name = (c.accountName || '').toUpperCase()
+        return name.includes('長編') || name.includes('POPCORN')
+    }
+
     /**
      * Hierarchical grouping: Date -> Account -> Project -> Castings
      */
@@ -366,12 +445,51 @@ export function useCastings() {
         hasOrderWait: boolean
     }
 
+    // Project-based grouping for 作品ビュー / 中長編
+    interface FeatureCastingGroup {
+        projectName: string
+        accountName: string
+        dateRange: string // e.g., '2/14〜2/18'
+        startDate: string
+        endDate: string
+        allDates: string[] // 全撮影日リスト
+        castings: Casting[]
+    }
+
+    // Project-based grouping for 作品ビュー (single-day castings)
+    interface ProjectViewGroup {
+        projectName: string
+        accountName: string
+        dates: string[] // all dates this project appears on
+        castingsByDate: Map<string, Casting[]> // date -> castings
+        totalCastings: number
+        hasOrderWait: boolean
+    }
+
+    /**
+     * Check if a casting matches the given tab
+     */
+    function matchesTab(casting: Casting, tab: TabType): boolean {
+        switch (tab) {
+            case 'all':
+                return true
+            case 'shooting':
+                return !isSpecialAccount(casting) && !isMultiDay(casting) && !isFeatureProject(casting)
+            case 'event':
+                return isSpecialAccount(casting)
+            case 'feature':
+                return !isSpecialAccount(casting) && (isMultiDay(casting) || isFeatureProject(casting))
+            default:
+                return true
+        }
+    }
+
     /**
      * Get castings grouped by hierarchy with filters
      */
     function getHierarchicalCastings(options: {
         month: Date
-        tab: 'normal' | 'special'
+        tab: TabType
         showPast: boolean
         orderWaitOnly: boolean
     }): DateGroup[] {
@@ -390,6 +508,9 @@ export function useCastings() {
         castings.value.forEach(casting => {
             if (!casting.startDate || !casting.endDate) return
 
+            // Tab filtering
+            if (!matchesTab(casting, tab)) return
+
             const startDate = casting.startDate.toDate()
             const endDate = casting.endDate.toDate()
 
@@ -402,17 +523,6 @@ export function useCastings() {
 
                 // Skip past dates if showPast is false
                 if (!showPast && currentDate < today) {
-                    currentDate.setDate(currentDate.getDate() + 1)
-                    continue
-                }
-
-                // Tab filtering
-                const isSpecialAccount = SPECIAL_ACCOUNTS.includes(casting.accountName)
-                if (tab === 'special' && !isSpecialAccount) {
-                    currentDate.setDate(currentDate.getDate() + 1)
-                    continue
-                }
-                if (tab === 'normal' && isSpecialAccount) {
                     currentDate.setDate(currentDate.getDate() + 1)
                     continue
                 }
@@ -502,6 +612,205 @@ export function useCastings() {
         return result
     }
 
+    /**
+     * Get castings grouped by project for 中長編タブ and 作品ビュー
+     */
+    function getFeatureGroupedCastings(options: {
+        month: Date
+        showPast: boolean
+        orderWaitOnly: boolean
+    }): FeatureCastingGroup[] {
+        const { month, showPast, orderWaitOnly } = options
+        const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
+        const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+
+        // Group by project
+        const projectMap = new Map<string, {
+            accountName: string
+            castings: Casting[]
+            minStart: Date
+            maxEnd: Date
+        }>()
+
+        castings.value.forEach(casting => {
+            if (!casting.startDate || !casting.endDate) return
+            if (!isMultiDay(casting)) return
+            if (isSpecialAccount(casting)) return
+
+            const startDate = casting.startDate.toDate()
+            const endDate = casting.endDate.toDate()
+
+            // Check month overlap
+            if (endDate < monthStart || startDate > monthEnd) return
+
+            // Check past filter
+            if (!showPast && endDate < today) return
+
+            const key = `${casting.accountName}__${casting.projectName}`
+            if (!projectMap.has(key)) {
+                projectMap.set(key, {
+                    accountName: casting.accountName,
+                    castings: [],
+                    minStart: startDate,
+                    maxEnd: endDate
+                })
+            }
+
+            const group = projectMap.get(key)!
+            group.castings.push(casting)
+            if (startDate < group.minStart) group.minStart = startDate
+            if (endDate > group.maxEnd) group.maxEnd = endDate
+        })
+
+        const result: FeatureCastingGroup[] = []
+
+        for (const [key, group] of projectMap) {
+            let filteredCastings = group.castings
+            if (orderWaitOnly) {
+                filteredCastings = group.castings.filter(c =>
+                    ORDER_WAIT_STATUSES.includes(c.status)
+                )
+            }
+            if (filteredCastings.length === 0) continue
+
+            // Generate all dates in range
+            const allDates: string[] = []
+            const d = new Date(group.minStart)
+            while (d <= group.maxEnd) {
+                allDates.push(d.toISOString().split('T')[0]!)
+                d.setDate(d.getDate() + 1)
+            }
+
+            // Format date range
+            const formatShort = (dt: Date) => `${dt.getMonth() + 1}/${dt.getDate()}`
+            const dateRange = `${formatShort(group.minStart)}〜${formatShort(group.maxEnd)}`
+
+            const projectName = key.split('__')[1] || ''
+
+            // Sort by rank then cast name
+            filteredCastings.sort((a, b) => (a.rank || 0) - (b.rank || 0) || a.castName.localeCompare(b.castName))
+
+            result.push({
+                projectName,
+                accountName: group.accountName,
+                dateRange,
+                startDate: group.minStart.toISOString().split('T')[0]!,
+                endDate: group.maxEnd.toISOString().split('T')[0]!,
+                allDates,
+                castings: filteredCastings
+            })
+        }
+
+        // Sort by start date
+        result.sort((a, b) => a.startDate.localeCompare(b.startDate))
+
+        return result
+    }
+
+    /**
+     * Get castings grouped by project for 作品ビュー (non-feature, single-day castings)
+     */
+    function getProjectGroupedCastings(options: {
+        month: Date
+        tab: TabType
+        showPast: boolean
+        orderWaitOnly: boolean
+    }): ProjectViewGroup[] {
+        const { month, tab, showPast, orderWaitOnly } = options
+        const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
+        const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+        const today = new Date()
+        today.setHours(0, 0, 0, 0)
+
+        // Group by account__project key
+        const projectMap = new Map<string, {
+            accountName: string
+            castingsByDate: Map<string, Casting[]>
+        }>()
+
+        castings.value.forEach(casting => {
+            if (!casting.startDate || !casting.endDate) return
+            if (!matchesTab(casting, tab)) return
+
+            const startDate = casting.startDate.toDate()
+            startDate.setHours(0, 0, 0, 0)
+
+            // Month check
+            if (startDate < monthStart || startDate > monthEnd) return
+
+            // Past filter
+            if (!showPast && startDate < today) return
+
+            const dateKey = startDate.toISOString().split('T')[0]!
+            const projectKey = `${casting.accountName}__${casting.projectName}`
+
+            if (!projectMap.has(projectKey)) {
+                projectMap.set(projectKey, {
+                    accountName: casting.accountName,
+                    castingsByDate: new Map()
+                })
+            }
+
+            const group = projectMap.get(projectKey)!
+            if (!group.castingsByDate.has(dateKey)) {
+                group.castingsByDate.set(dateKey, [])
+            }
+            group.castingsByDate.get(dateKey)!.push(casting)
+        })
+
+        const result: ProjectViewGroup[] = []
+
+        for (const [key, group] of projectMap) {
+            const projectName = key.split('__')[1] || ''
+            let totalCastings = 0
+            let hasOrderWait = false
+
+            // Apply orderWaitOnly filter per date
+            const filteredByDate = new Map<string, Casting[]>()
+            for (const [dateKey, dateCastings] of group.castingsByDate) {
+                let fc = dateCastings
+                if (orderWaitOnly) {
+                    fc = dateCastings.filter(c => ORDER_WAIT_STATUSES.includes(c.status))
+                }
+                if (fc.length === 0) continue
+                if (fc.some(c => ORDER_WAIT_STATUSES.includes(c.status))) {
+                    hasOrderWait = true
+                }
+                fc.sort((a, b) => (a.rank || 0) - (b.rank || 0))
+                filteredByDate.set(dateKey, fc)
+                totalCastings += fc.length
+            }
+
+            if (filteredByDate.size === 0) continue
+
+            const dates = Array.from(filteredByDate.keys()).sort()
+
+            result.push({
+                projectName,
+                accountName: group.accountName,
+                dates,
+                castingsByDate: filteredByDate,
+                totalCastings,
+                hasOrderWait
+            })
+        }
+
+        // Sort by earliest date, then project name
+        result.sort((a, b) => {
+            const dateA = a.dates[0] || ''
+            const dateB = b.dates[0] || ''
+            return dateA.localeCompare(dateB) || a.projectName.localeCompare(b.projectName)
+        })
+
+        return result
+    }
+
     return {
         castings,
         loading,
@@ -510,9 +819,13 @@ export function useCastings() {
         fetchCastings,
         updateCastingStatus,
         updateCastingCost,
+        updateCastingTime,
+        updateCastingDetails,
         deleteCasting,
         getCastingById,
-        getHierarchicalCastings
+        getHierarchicalCastings,
+        getFeatureGroupedCastings,
+        getProjectGroupedCastings
     }
 }
 

@@ -1,13 +1,14 @@
 import { ref } from 'vue'
 import {
-    collection, doc, writeBatch, updateDoc,
+    collection, doc, writeBatch,
     Timestamp
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import { useOrderStore } from '@/stores/orderStore'
+import { useAuth } from '@/composables/useAuth'
+import { useLoading } from '@/composables/useLoading'
 import { useToast } from 'primevue/usetoast'
-import { useGoogleCalendar } from '@/composables/useGoogleCalendar'
 
 export interface OrderItem {
     castId: string
@@ -143,7 +144,7 @@ export function useOrders() {
     const orderStore = useOrderStore()
     const toast = useToast()
     const loading = ref(false)
-    const { createEvent: createCalendarEvent, isGapiAvailable } = useGoogleCalendar()
+    // Note: Calendar events are now created automatically by Cloud Functions
 
     /**
      * カートの内容をOrderPayloadに変換
@@ -266,12 +267,17 @@ export function useOrders() {
             return false
         }
 
+        const { userName } = useAuth()
+
         loading.value = true
+        const { startLoading, stopLoading } = useLoading()
+        startLoading('オーダーを送信中...')
 
         try {
             const payload = prepareOrderPayload()
             if (!payload) {
                 loading.value = false
+                stopLoading()
                 return false
             }
 
@@ -291,6 +297,22 @@ export function useOrders() {
                         ? dateRange.split('~').map(s => s.trim())
                         : [dateRange, dateRange]
 
+                    // タイムゾーン安全な日付パース（正午に設定してUTC変換時の-1日を防止）
+                    const parseLocalDate = (str: string): Date => {
+                        const parts = str.split('/')
+                        const d = new Date(
+                            parseInt(parts[0]!),
+                            parseInt(parts[1]!) - 1,
+                            parseInt(parts[2]!),
+                            12, 0, 0 // 正午に設定 → UTC変換しても同日
+                        )
+                        console.log('[DEBUG parseLocalDate]', str, '→', d.toString(), 'getDate:', d.getDate())
+                        return d
+                    }
+
+                    console.log('[DEBUG SUBMIT] mode:', payload.mode, 'dateRange:', dateRange, 'startDateStr:', startDateStr, 'endDateStr:', endDateStr)
+                    console.log('[DEBUG SUBMIT] roleName:', item.roleName, 'castType:', item.castType, 'projectName:', item.projectName)
+
                     const castingRef = doc(collection(db, 'castings'))
                     castingIds.push(castingRef.id)
 
@@ -303,7 +325,14 @@ export function useOrders() {
                         projectId: payload.projectId || '',
                         roleName: item.roleName,
                         rank: item.rank,
-                        status: '仮押さえ',
+                        mode: payload.mode || 'shooting',
+                        // ステータス初期値: 外部/社内は ORDER_INTEGRATION_GUIDE 準拠
+                        status: (() => {
+                            if (payload.mode === 'external' || payload.mode === 'internal') {
+                                return item.castType === '外部' ? '決定' : '仮キャスティング'
+                            }
+                            return '仮押さえ'
+                        })(),
                         note: item.note,
                         mainSub: item.mainSub,
                         cost: 0,
@@ -311,12 +340,24 @@ export function useOrders() {
                         slackPermalink: '',
                         calendarEventId: '',
                         dbSentStatus: '',
-                        startDate: Timestamp.fromDate(new Date(startDateStr || dateRange)),
-                        endDate: Timestamp.fromDate(new Date(endDateStr || startDateStr || dateRange)),
+                        startDate: Timestamp.fromDate(parseLocalDate(startDateStr || dateRange)),
+                        endDate: Timestamp.fromDate(parseLocalDate(endDateStr || startDateStr || dateRange)),
                         createdAt: now,
                         updatedAt: now,
-                        createdBy: 'current-user', // TODO: get from auth
+                        createdBy: 'current-user',
                         updatedBy: 'current-user'
+                    }
+
+                    // For multi-day orders (中長編), auto-generate shootingDates
+                    if (startDateStr && endDateStr && startDateStr !== endDateStr) {
+                        const dates: string[] = []
+                        const current = new Date(startDateStr)
+                        const end = new Date(endDateStr)
+                        while (current <= end) {
+                            dates.push(current.toISOString().split('T')[0]!)
+                            current.setDate(current.getDate() + 1)
+                        }
+                        castingData.shootingDates = dates
                     }
 
                     // Add time fields for external/internal events
@@ -336,89 +377,83 @@ export function useOrders() {
 
             await batch.commit()
 
-            // Create calendar events for internal casts (仮押さえ)
-            // カレンダーイベント作成は非同期で行い、IDをFirestoreに更新
-            if (isGapiAvailable()) {
-                const internalItems = payload.items.filter(item => item.castType === '内部')
-
-                if (internalItems.length > 0) {
-                    console.log(`Creating ${internalItems.length} calendar events for internal casts...`)
-
-                    // 各内部キャストにカレンダーイベントを作成
-                    let castingIdIndex = 0
-                    for (const item of payload.items) {
-                        for (const dateRange of payload.dateRanges) {
-                            const castingId = castingIds[castingIdIndex]
-                            castingIdIndex++
-
-                            // 内部キャストのみカレンダー作成
-                            if (item.castType !== '内部') continue
-
-                            const [startDateStr, endDateStr] = dateRange.includes('~')
-                                ? dateRange.split('~').map(s => s.trim())
-                                : [dateRange, dateRange]
-
-                            try {
-                                const eventId = await createCalendarEvent({
-                                    castName: item.castName,
-                                    projectName: item.projectName,
-                                    roleName: item.roleName,
-                                    startDate: new Date(startDateStr || dateRange),
-                                    endDate: endDateStr ? new Date(endDateStr) : undefined,
-                                    isProvisional: true  // 仮押さえ
-                                })
-
-                                if (eventId && castingId) {
-                                    // FirestoreにcalendarEventIdを保存
-                                    await updateDoc(doc(db, 'castings', castingId), {
-                                        calendarEventId: eventId
-                                    })
-                                    console.log(`Calendar event created for ${item.castName}: ${eventId}`)
-                                }
-                            } catch (calErr) {
-                                console.warn(`Failed to create calendar event for ${item.castName}:`, calErr)
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Try Cloud Function first, fallback to direct Slack API
+            // Cloud Functions経由でSlack通知 + カレンダー作成
+            // Cloud Functionsが自動でFirestoreにslackThreadTs/calendarEventIdを書き戻す
             let slackResult: { ts: string; permalink: string } | null = null
 
             if (functions) {
                 try {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
+                    console.log('[DEBUG CF CALL] mode:', payload.mode)
+
+                    // PDF file → base64
+                    let pdfBase64: string | undefined
+                    let pdfFileName: string | undefined
+                    if (pdfFile) {
+                        const arrayBuffer = await pdfFile.arrayBuffer()
+                        const bytes = new Uint8Array(arrayBuffer)
+                        let binary = ''
+                        for (let i = 0; i < bytes.length; i++) {
+                            binary += String.fromCharCode(bytes[i]!)
+                        }
+                        pdfBase64 = btoa(binary)
+                        pdfFileName = pdfFile.name
+                    }
+
                     const result = await notifyOrder({
-                        ...payload,
-                        castingIds,
-                        hasInternal: payload.items.some(i => i.castType === '内部')
+                        accountName: payload.accountName,
+                        projectName: payload.projectName,
+                        projectId: payload.projectId,
+                        mode: payload.mode,
+                        dateRanges: payload.dateRanges,
+                        shootingData: payload.shootingData || undefined,
+                        startTime: orderStore.manualMeta.startTime || undefined,
+                        endTime: orderStore.manualMeta.endTime || undefined,
+                        ccMention: userName.value || undefined,
+                        hasInternal: payload.items.some(i => i.castType === '内部'),
+                        pdfBase64,
+                        pdfFileName,
+                        items: payload.items.map(i => ({
+                            castId: i.castId,
+                            castName: i.castName,
+                            castType: i.castType,
+                            roleName: i.roleName,
+                            rank: i.rank,
+                            mainSub: i.mainSub,
+                            projectName: i.projectName,
+                            slackMentionId: i.slackMentionId
+                        })),
+                        castingIds
                     })
 
                     if (result.data && typeof result.data === 'object' && 'ts' in result.data) {
                         slackResult = result.data as { ts: string; permalink: string }
+                        console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
+                    } else {
+                        console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)
                     }
                 } catch (cloudFnError) {
-                    console.warn('Cloud Function call failed, trying direct Slack API...', cloudFnError)
-                    // Fallback to direct Slack API
+                    console.error('[CF FAILED] Cloud Function call failed:', cloudFnError)
+                    console.warn('[CF FALLBACK] Falling back to direct Slack API (calendar will NOT be created)')
+                    // Fallback: 開発用直接Slack API
                     slackResult = await sendSlackNotificationDirect(payload)
+
+                    // Fallback時はフロント側でFirestore更新
+                    if (slackResult && db) {
+                        const updateBatch = writeBatch(db)
+                        for (const id of castingIds) {
+                            updateBatch.update(doc(db, 'castings', id), {
+                                slackThreadTs: slackResult.ts,
+                                slackPermalink: slackResult.permalink
+                            })
+                        }
+                        await updateBatch.commit()
+                    }
                 }
             } else {
-                // No Cloud Functions available, use direct Slack API
+                // Cloud Functions未設定: 開発用直接Slack API
                 console.info('Cloud Functions not available, using direct Slack API')
                 slackResult = await sendSlackNotificationDirect(payload)
-            }
-
-            // Update Firestore with Slack thread info
-            if (slackResult && db) {
-                const updateBatch = writeBatch(db)
-                for (const id of castingIds) {
-                    updateBatch.update(doc(db, 'castings', id), {
-                        slackThreadTs: slackResult.ts,
-                        slackPermalink: slackResult.permalink
-                    })
-                }
-                await updateBatch.commit()
             }
 
             toast.add({
@@ -432,6 +467,7 @@ export function useOrders() {
             orderStore.clear()
 
             loading.value = false
+            stopLoading()
             return true
 
         } catch (error) {
@@ -444,6 +480,7 @@ export function useOrders() {
             })
 
             loading.value = false
+            stopLoading()
             return false
         }
     }

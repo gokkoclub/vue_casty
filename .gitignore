@@ -35,3 +35,7 @@ pnpm-debug.log*
 
 # Testing
 coverage
+
+# Service Account Keys
+serviceAccountKey.json
+scripts/serviceAccountKey.json

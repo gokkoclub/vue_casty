@@ -42,6 +42,8 @@ export interface Casting {
     slackPermalink: string
     calendarEventId: string
     dbSentStatus: '済' | ''
+    mode?: 'shooting' | 'external' | 'internal'
+    shootingDates?: string[]  // 中長編用: キャスト参加日 ['2026-02-14', '2026-02-15']
     createdBy: string
     updatedBy: string
     createdAt: Timestamp
@@ -134,6 +136,16 @@ export interface Shooting {
     floorDirector: string
     notionUrl: string
     notionPageId?: string
+    // 追加スタッフ
+    cd?: string
+    fd?: string
+    producer?: string
+    chiefProducer?: string
+    six?: string
+    camera?: string
+    costume?: string
+    hairMakeup?: string
+    allStaff?: string[]  // 全スタッフ名一覧（稼働判定用）
 }
 
 export interface OrderContext {

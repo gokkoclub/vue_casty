@@ -1,0 +1,37 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "castings",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "castId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "status",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "startDate",
+                    "order": "ASCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "castings",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "projectId",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "slackThreadTs",
+                    "order": "ASCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

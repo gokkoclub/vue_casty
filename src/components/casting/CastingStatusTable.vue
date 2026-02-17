@@ -153,7 +153,7 @@ const openSlack = (url: string) => {
       <!-- 金額 -->
       <Column field="cost" header="金額" style="width: 120px; text-align: right">
         <template #body="{ data }">
-          <div v-if="isOrderWait(data.status)" class="cost-edit">
+          <div v-if="!['NG', 'キャンセル'].includes(data.status)" class="cost-edit">
             <InputNumber 
               :modelValue="data.cost"
               @update:modelValue="(v) => handleCostChange(data.id, v)"
@@ -181,7 +181,7 @@ const openSlack = (url: string) => {
         <template #body="{ data }">
           <div class="actions">
             <Button
-              v-if="isOrderWait(data.status)"
+              v-if="!['NG', 'キャンセル'].includes(data.status)"
               icon="pi pi-save"
               text
               size="small"

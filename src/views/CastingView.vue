@@ -28,6 +28,14 @@ const toast = useToast()
 const { casts, loading, fetchAll, isFirebaseConfigured } = useCasts()
 const { shootings, loading: shootingsLoading, fetchShootingsByDates } = useShootings()
 const { activeCastings, fetchAvailability } = useAvailability()
+
+// タイムゾーン安全なローカル日付フォーマッター（toISOString はUTC変換で日付がずれる）
+const toLocalDateStr = (d: Date): string => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 const store = useOrderStore()
 
 // フィルター
@@ -72,6 +80,7 @@ const progressMessage = ref('')
 // Date Select
 const selectedDates = ref<Date[]>([])
 const selectedShooting = ref<Shooting | null>(null)
+const _skipShootingWatch = ref(false) // Guard: prevent watcher from resetting mode during order type switch
 
 // UI State
 const showOrderTypeDialog = ref(false)
@@ -88,14 +97,24 @@ const handleDatesUpdate = (dates: Date[]) => {
 watch(selectedDates, async (dates) => {
   // Update store dates formatting
   const formatted = dates.map(d => {
+    console.log('[DEBUG DATE] Raw Date object:', d, 'toString:', d.toString(), 'getDate:', d.getDate(), 'getMonth:', d.getMonth(), 'getFullYear:', d.getFullYear(), 'toISOString:', d.toISOString())
     const year = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
-    return `${year}/${month}/${day}`
+    const result = `${year}/${month}/${day}`
+    console.log('[DEBUG DATE] Formatted:', result)
+    return result
   }).sort()
+  
+  console.log('[DEBUG DATE] All formatted dates:', formatted)
   
   if (store.context) {
     store.context.dateRanges = formatted
+  }
+
+  // 日付がクリアされた場合、撮影選択もクリア
+  if (dates.length === 0) {
+    selectedShooting.value = null
   }
 
   // Fetch shooting candidates and availability
@@ -120,6 +139,11 @@ const handleShootingSelect = (shooting: Shooting) => {
 
 // Watch for shooting selection changes
 watch(selectedShooting, (newShooting, oldShooting) => {
+  // Guard: skip if mode was explicitly set by handleOrderTypeSelect
+  if (_skipShootingWatch.value) {
+    _skipShootingWatch.value = false
+    return
+  }
   if (!newShooting && oldShooting) {
     // Shooting deselected - clear shooting mode but keep dates
     store.setContext({
@@ -168,8 +192,13 @@ const handleOrderTypeSelect = (mode: 'external' | 'internal' | 'cancel') => {
     return
   }
   
+  // 撮影モードからの切り替え時、撮影選択をクリア（watcherでmode resetされないようにガード）
+  _skipShootingWatch.value = true
+  selectedShooting.value = null
+  
   store.setContext({
     mode: mode,
+    shootingData: null,
     dateRanges: store.context.dateRanges
   })
   showOrderTypeDialog.value = false
@@ -206,7 +235,7 @@ const filteredCasts = computed(() => {
       !isBookingBlocked(
         cast.id, 
         activeCastings.value, 
-        selectedDates.value.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s)
+        selectedDates.value.map((d: Date) => toLocalDateStr(d))
       )
     
     return matchesSearch && matchesType && matchesGender && matchesAgency && matchesAvailability
@@ -474,8 +503,8 @@ onUnmounted(() => {
                     v-for="cast in filteredCasts" 
                     :key="cast.id"
                     :cast="cast"
-                    :bookings="getCastBookings(cast.id, activeCastings, selectedDates.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s))"
-                    :isBlocked="isBookingBlocked(cast.id, activeCastings, selectedDates.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s))"
+                    :bookings="getCastBookings(cast.id, activeCastings, selectedDates.map((d: Date) => toLocalDateStr(d)))"
+                    :isBlocked="isBookingBlocked(cast.id, activeCastings, selectedDates.map((d: Date) => toLocalDateStr(d)))"
                     @click="handleCastClick"
                     @add="handleAddToCart"
                   />
@@ -550,7 +579,7 @@ onUnmounted(() => {
 /* New Grid Layout */
 .grid-layout {
   display: grid;
-  grid-template-columns: 280px 1fr; /* Narrower calendar column */
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
 }
@@ -701,7 +730,7 @@ onUnmounted(() => {
 /* Grid Mode: 5 columns (dense) */
 .cast-view.grid-5col {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.75rem;
 }
 
