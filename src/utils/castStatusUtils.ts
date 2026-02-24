@@ -4,10 +4,10 @@ import type { Casting } from '@/types'
  * キャストの予約情報
  */
 export interface CastBooking {
-    status: '仮押さえ' | '決定' | 'NG'
+    status: '仮押さえ' | '仮キャスティング' | 'オーダー待ち' | '決定' | 'NG'
     team: string  // accountName
     displayLabel: string  // "Team A: 仮"
-    severity: 'warning' | 'danger' | 'secondary'
+    severity: 'warning' | 'danger' | 'secondary' | 'info'
     projectName?: string
 }
 
@@ -26,6 +26,14 @@ export function getCastBookings(
 ): CastBooking[] {
     if (selectedDates.length === 0) return []
 
+    // ローカルタイムゾーンで日付を YYYY-MM-DD にフォーマット
+    const toLocalDateStr = (d: Date): string => {
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        return `${y}-${m}-${day}`
+    }
+
     const bookings: CastBooking[] = []
     const seen = new Set<string>()
 
@@ -33,36 +41,46 @@ export function getCastBookings(
     const relevantCastings = activeCastings.filter(c => {
         if (c.castId !== castId) return false
 
-        // 表示対象のステータスのみ
-        if (!['仮押さえ', '決定', 'NG'].includes(c.status)) return false
+        // 表示対象のステータス（打診中・オーダー待ちも仮キャスティングとして表示）
+        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '決定', 'NG'].includes(c.status)) return false
 
-        const castingDate = c.startDate.toDate().toISOString().split('T')[0] ?? ''
-        return castingDate !== '' && selectedDates.includes(castingDate)
+        const castStart = toLocalDateStr(c.startDate.toDate())
+        const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart
+        // 選択日のいずれかがキャスティングの日付範囲内にあるか
+        return selectedDates.some(d => d >= castStart && d <= castEnd)
     })
 
     // Group by team and status to avoid duplicates
     relevantCastings.forEach(casting => {
-        const key = `${casting.accountName}-${casting.status}`
+        // accountName が空の場合、projectName または mode に基づいたラベルを使用
+        const teamLabel = casting.accountName
+            || casting.projectName
+            || (casting.mode === 'internal' ? '社内イベント' : casting.mode === 'external' ? '外部案件' : '不明')
+
+        const key = `${teamLabel}-${casting.status}`
         if (seen.has(key)) return
         seen.add(key)
 
         let displayLabel = ''
-        let severity: 'warning' | 'danger' | 'secondary' = 'secondary'
+        let severity: 'warning' | 'danger' | 'secondary' | 'info' = 'secondary'
 
         if (casting.status === '仮押さえ') {
-            displayLabel = `${casting.accountName}: 仮`
+            displayLabel = `${teamLabel}: 仮`
             severity = 'warning'
+        } else if (casting.status === '仮キャスティング' || casting.status === '打診中' || casting.status === 'オーダー待ち') {
+            displayLabel = `${teamLabel}: 仮キャスティング`
+            severity = 'info'
         } else if (casting.status === '決定') {
-            displayLabel = `${casting.accountName}: 決定`
+            displayLabel = `${teamLabel}: 決定`
             severity = 'danger'
         } else if (casting.status === 'NG') {
-            displayLabel = `${casting.accountName}: NG`
+            displayLabel = `${teamLabel}: NG`
             severity = 'secondary'
         }
 
         bookings.push({
-            status: casting.status as '仮押さえ' | '決定' | 'NG',
-            team: casting.accountName,
+            status: casting.status as '仮押さえ' | '仮キャスティング' | 'オーダー待ち' | '決定' | 'NG',
+            team: teamLabel,
             displayLabel,
             severity,
             projectName: casting.projectName
@@ -88,11 +106,19 @@ export function isBookingBlocked(
 ): boolean {
     if (selectedDates.length === 0) return false
 
+    const toLocalDateStr = (d: Date): string => {
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        return `${y}-${m}-${day}`
+    }
+
     return activeCastings.some(c => {
         if (c.castId !== castId || c.status !== 'NG') return false
 
-        const castingDate = c.startDate.toDate().toISOString().split('T')[0] ?? ''
-        return castingDate !== '' && selectedDates.includes(castingDate)
+        const castStart = toLocalDateStr(c.startDate.toDate())
+        const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart
+        return selectedDates.some(d => d >= castStart && d <= castEnd)
     })
 }
 
@@ -111,11 +137,19 @@ export function getBookingCount(
 ): number {
     if (selectedDates.length === 0) return 0
 
+    const toLocalDateStr = (d: Date): string => {
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        return `${y}-${m}-${day}`
+    }
+
     return activeCastings.filter(c => {
         if (c.castId !== castId) return false
-        if (!['仮押さえ', '決定'].includes(c.status)) return false
+        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '決定'].includes(c.status)) return false
 
-        const castingDate = c.startDate.toDate().toISOString().split('T')[0] ?? ''
-        return castingDate !== '' && selectedDates.includes(castingDate)
+        const castStart = toLocalDateStr(c.startDate.toDate())
+        const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart
+        return selectedDates.some(d => d >= castStart && d <= castEnd)
     }).length
 }

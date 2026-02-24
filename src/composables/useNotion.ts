@@ -5,18 +5,19 @@ import { useToast } from 'primevue/usetoast'
 
 /**
  * Notion同期composable
- * GASエンドポイント経由またはCloud Functions経由でNotionと同期
+ * Cloud Functions経由でNotionと同期
+ * 
+ * 注意: ステータス変更時のNotion同期はCloud Functions (notifyStatusUpdate) 内で
+ * 自動的に行われます。このcomposableは直接呼び出しが必要な場合のみ使用してください。
  */
 export function useNotion() {
     const loading = ref(false)
     const toast = useToast()
 
-    // バックエンドのベースURL（開発/本番で切り替え）
-    const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-    const GAS_ENDPOINT_URL = import.meta.env.VITE_GAS_ENDPOINT_URL || ''
-
     /**
      * OK/決定ステータス時にNotionに同期
+     * Cloud Functions (notifyStatusUpdate) 内で自動実行されるが、
+     * 手動同期が必要な場合にも使用可能
      */
     interface NotionSyncPayload {
         projectId: string
@@ -31,7 +32,7 @@ export function useNotion() {
         loading.value = true
 
         try {
-            // 1. Cloud Functionsを使用する場合
+            // Cloud Functions経由で同期
             if (functions) {
                 try {
                     const syncFn = httpsCallable(functions, 'syncToNotion')
@@ -42,41 +43,7 @@ export function useNotion() {
                     console.log('Notion sync via Cloud Functions successful')
                     return true
                 } catch (err) {
-                    console.warn('Cloud Functions not available, trying fallback:', err)
-                }
-            }
-
-            // 2. FastAPIバックエンド経由でGASを呼び出す場合
-            if (API_BASE_URL) {
-                const response = await fetch(`${API_BASE_URL}/api/sync/notion`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'syncToNotion',
-                        ...payload
-                    })
-                })
-
-                if (response.ok) {
-                    console.log('Notion sync via FastAPI successful')
-                    return true
-                }
-            }
-
-            // 3. GASエンドポイントに直接呼び出す場合
-            if (GAS_ENDPOINT_URL) {
-                const response = await fetch(GAS_ENDPOINT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'syncToNotion',
-                        ...payload
-                    })
-                })
-
-                if (response.ok) {
-                    console.log('Notion sync via GAS successful')
-                    return true
+                    console.warn('Cloud Functions syncToNotion not available:', err)
                 }
             }
 
@@ -94,26 +61,19 @@ export function useNotion() {
 
     /**
      * 撮影スケジュールをNotionから同期
+     * → GASで定期実行されるため、手動同期は基本不要
      */
     async function syncShootingSchedule(): Promise<boolean> {
         loading.value = true
 
         try {
-            if (API_BASE_URL) {
-                const response = await fetch(`${API_BASE_URL}/api/sync/gas?type=shooting`)
-
-                if (response.ok) {
-                    toast.add({
-                        severity: 'success',
-                        summary: '同期完了',
-                        detail: '撮影スケジュールを同期しました',
-                        life: 2000
-                    })
-                    return true
-                }
-            }
-
-            console.log('Shooting schedule sync (dev mode)')
+            console.log('Shooting schedule sync is handled by GAS scheduled trigger')
+            toast.add({
+                severity: 'info',
+                summary: '同期',
+                detail: '撮影スケジュールはGASで定期同期されます',
+                life: 2000
+            })
             return true
 
         } catch (error) {

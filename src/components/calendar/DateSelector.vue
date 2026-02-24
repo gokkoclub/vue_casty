@@ -15,25 +15,32 @@ const emit = defineEmits<{
 // Internal state for DatePicker which handles range as array
 const pickedDates = ref<Date[]>([])
 
-// Initialize from props if needed (handling conversion from array of dates to range not trivial, assuming reset on load)
+// Initialize from props if needed
 watch(() => props.dates, (newVal) => {
-  if (newVal.length === 0) {
+  // Only clear pickedDates when dates are externally cleared
+  // AND pickedDates still has values (avoid re-triggering the cycle)
+  if (newVal.length === 0 && pickedDates.value.length > 0) {
     pickedDates.value = []
   }
 }, { immediate: true })
 
 watch(pickedDates, (newVal) => {
+  console.log('[DEBUG DateSelector] pickedDates changed:', newVal)
   // If range is selected (start, end), fill the dates in between for the store
   if (Array.isArray(newVal) && newVal.length === 2 && newVal[0] && newVal[1]) {
-     const start = newVal[0]
-     const end = newVal[1]
-     const dates: Date[] = []
-     let current = new Date(start)
-     while (current <= end) {
-       dates.push(new Date(current))
-       current.setDate(current.getDate() + 1)
-     }
-     emit('update:dates', dates)
+      console.log('[DEBUG DateSelector] start raw:', newVal[0], 'toString:', newVal[0].toString(), 'getDate:', newVal[0].getDate())
+      console.log('[DEBUG DateSelector] end raw:', newVal[1], 'toString:', newVal[1].toString(), 'getDate:', newVal[1].getDate())
+      const start = new Date(newVal[0].getFullYear(), newVal[0].getMonth(), newVal[0].getDate())
+      const end = new Date(newVal[1].getFullYear(), newVal[1].getMonth(), newVal[1].getDate())
+      console.log('[DEBUG DateSelector] normalized start:', start.toString(), 'end:', end.toString())
+      const dates: Date[] = []
+      let current = new Date(start)
+      while (current <= end) {
+        dates.push(new Date(current))
+        current.setDate(current.getDate() + 1)
+      }
+      console.log('[DEBUG DateSelector] Generated dates count:', dates.length, dates.map(d => d.getDate()))
+      emit('update:dates', dates)
   } else if (Array.isArray(newVal) && newVal.length > 0 && newVal[0]) {
     emit('update:dates', [newVal[0]])
   } else {
@@ -102,6 +109,35 @@ const clearDates = () => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  overflow: hidden;
+  contain: layout;
+}
+
+/* Calendar containment fix */
+.date-selector :deep(.p-datepicker) {
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.date-selector :deep(.p-datepicker-panel) {
+  width: 100% !important;
+  max-width: 100%;
+}
+
+.date-selector :deep(.p-datepicker-calendar) {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.date-selector :deep(.p-datepicker-calendar td) {
+  padding: 0.15rem;
+}
+
+.date-selector :deep(.p-datepicker-calendar td > span) {
+  width: 2rem;
+  height: 2rem;
+  font-size: 0.85rem;
 }
 
 .selected-dates {

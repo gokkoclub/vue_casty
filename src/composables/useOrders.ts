@@ -6,6 +6,8 @@ import {
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import { useOrderStore } from '@/stores/orderStore'
+import { useAuth } from '@/composables/useAuth'
+import { useLoading } from '@/composables/useLoading'
 import { useToast } from 'primevue/usetoast'
 
 export interface OrderItem {
@@ -142,6 +144,7 @@ export function useOrders() {
     const orderStore = useOrderStore()
     const toast = useToast()
     const loading = ref(false)
+    // Note: Calendar events are now created automatically by Cloud Functions
 
     /**
      * カートの内容をOrderPayloadに変換
@@ -264,12 +267,17 @@ export function useOrders() {
             return false
         }
 
+        const { userName } = useAuth()
+
         loading.value = true
+        const { startLoading, stopLoading } = useLoading()
+        startLoading('オーダーを送信中...')
 
         try {
             const payload = prepareOrderPayload()
             if (!payload) {
                 loading.value = false
+                stopLoading()
                 return false
             }
 
@@ -289,6 +297,22 @@ export function useOrders() {
                         ? dateRange.split('~').map(s => s.trim())
                         : [dateRange, dateRange]
 
+                    // タイムゾーン安全な日付パース（正午に設定してUTC変換時の-1日を防止）
+                    const parseLocalDate = (str: string): Date => {
+                        const parts = str.split('/')
+                        const d = new Date(
+                            parseInt(parts[0]!),
+                            parseInt(parts[1]!) - 1,
+                            parseInt(parts[2]!),
+                            12, 0, 0 // 正午に設定 → UTC変換しても同日
+                        )
+                        console.log('[DEBUG parseLocalDate]', str, '→', d.toString(), 'getDate:', d.getDate())
+                        return d
+                    }
+
+                    console.log('[DEBUG SUBMIT] mode:', payload.mode, 'dateRange:', dateRange, 'startDateStr:', startDateStr, 'endDateStr:', endDateStr)
+                    console.log('[DEBUG SUBMIT] roleName:', item.roleName, 'castType:', item.castType, 'projectName:', item.projectName)
+
                     const castingRef = doc(collection(db, 'castings'))
                     castingIds.push(castingRef.id)
 
@@ -301,7 +325,17 @@ export function useOrders() {
                         projectId: payload.projectId || '',
                         roleName: item.roleName,
                         rank: item.rank,
-                        status: '仮押さえ',
+                        mode: payload.mode || 'shooting',
+                        // ステータス初期値:
+                        // 撮影モード: 外部=オーダー待ち, 内部=仮キャスティング
+                        // 外部案件/社内イベント: ORDER_INTEGRATION_GUIDE 準拠
+                        status: (() => {
+                            if (payload.mode === 'external' || payload.mode === 'internal') {
+                                return item.castType === '外部' ? '決定' : '仮キャスティング'
+                            }
+                            // shooting mode
+                            return item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング'
+                        })(),
                         note: item.note,
                         mainSub: item.mainSub,
                         cost: 0,
@@ -309,12 +343,24 @@ export function useOrders() {
                         slackPermalink: '',
                         calendarEventId: '',
                         dbSentStatus: '',
-                        startDate: Timestamp.fromDate(new Date(startDateStr || dateRange)),
-                        endDate: Timestamp.fromDate(new Date(endDateStr || startDateStr || dateRange)),
+                        startDate: Timestamp.fromDate(parseLocalDate(startDateStr || dateRange)),
+                        endDate: Timestamp.fromDate(parseLocalDate(endDateStr || startDateStr || dateRange)),
                         createdAt: now,
                         updatedAt: now,
-                        createdBy: 'current-user', // TODO: get from auth
+                        createdBy: 'current-user',
                         updatedBy: 'current-user'
+                    }
+
+                    // For multi-day orders (中長編), auto-generate shootingDates
+                    if (startDateStr && endDateStr && startDateStr !== endDateStr) {
+                        const dates: string[] = []
+                        const current = new Date(startDateStr)
+                        const end = new Date(endDateStr)
+                        while (current <= end) {
+                            dates.push(current.toISOString().split('T')[0]!)
+                            current.setDate(current.getDate() + 1)
+                        }
+                        castingData.shootingDates = dates
                     }
 
                     // Add time fields for external/internal events
@@ -334,42 +380,137 @@ export function useOrders() {
 
             await batch.commit()
 
-            // Try Cloud Function first, fallback to direct Slack API
+            // Cloud Functions経由でSlack通知 + カレンダー作成
+            // Cloud Functionsが自動でFirestoreにslackThreadTs/calendarEventIdを書き戻す
             let slackResult: { ts: string; permalink: string } | null = null
 
             if (functions) {
                 try {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
+                    console.log('[DEBUG CF CALL] mode:', payload.mode)
+
+                    // PDF file → base64 (CFに渡してSlack SDKでアップロード)
+                    let pdfBase64: string | undefined
+                    let pdfFileName: string | undefined
+                    if (pdfFile) {
+                        const arrayBuffer = await pdfFile.arrayBuffer()
+                        const bytes = new Uint8Array(arrayBuffer)
+                        let binary = ''
+                        for (let i = 0; i < bytes.length; i++) {
+                            binary += String.fromCharCode(bytes[i]!)
+                        }
+                        pdfBase64 = btoa(binary)
+                        pdfFileName = pdfFile.name
+                        console.log('[PDF] Attached:', pdfFileName, 'size:', bytes.length, 'base64 length:', pdfBase64.length)
+                    } else {
+                        console.log('[PDF] No file attached')
+                    }
+
                     const result = await notifyOrder({
-                        ...payload,
-                        castingIds,
-                        hasInternal: payload.items.some(i => i.castType === '内部')
+                        accountName: payload.accountName,
+                        projectName: payload.projectName,
+                        projectId: payload.projectId,
+                        mode: payload.mode,
+                        dateRanges: payload.dateRanges,
+                        shootingData: payload.shootingData || undefined,
+                        startTime: orderStore.manualMeta.startTime || undefined,
+                        endTime: orderStore.manualMeta.endTime || undefined,
+                        ccMention: userName.value || undefined,
+                        hasInternal: payload.items.some(i => i.castType === '内部'),
+                        pdfBase64,
+                        pdfFileName,
+                        items: payload.items.map(i => ({
+                            castId: i.castId,
+                            castName: i.castName,
+                            castType: i.castType,
+                            roleName: i.roleName,
+                            rank: i.rank,
+                            mainSub: i.mainSub,
+                            projectName: i.projectName,
+                            slackMentionId: i.slackMentionId
+                        })),
+                        castingIds
                     })
 
                     if (result.data && typeof result.data === 'object' && 'ts' in result.data) {
                         slackResult = result.data as { ts: string; permalink: string }
+                        console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
+
+                        // ── カレンダー招待: ユーザーOAuthでattendees追加 ──
+                        // SA では attendees 追加に DWD が必要なため、フロントのユーザーOAuth で対応
+                        // トークンが無い/期限切れの場合はGoogleログインポップアップで再取得
+                        const cfData = result.data as Record<string, unknown>
+                        const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
+                        const calendarId = import.meta.env.VITE_CALENDAR_ID_INTERNAL
+                        const { getAccessToken } = useAuth()
+                        const accessToken = calendarResults && Object.keys(calendarResults).length > 0
+                            ? await getAccessToken()
+                            : null
+
+                        if (calendarResults && calendarId && accessToken) {
+                            for (const [key, { eventId, castEmail }] of Object.entries(calendarResults)) {
+                                if (!eventId || !castEmail) continue
+                                try {
+                                    // 既存attendees取得
+                                    const getUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+                                    const getResp = await fetch(getUrl, {
+                                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                                    })
+                                    let existingAttendees: Array<{ email: string }> = []
+                                    if (getResp.ok) {
+                                        const eventData = await getResp.json() as { attendees?: Array<{ email: string }> }
+                                        existingAttendees = eventData.attendees || []
+                                    }
+                                    if (existingAttendees.some(a => a.email === castEmail)) continue
+
+                                    // 既存 + 新規でPATCH
+                                    const resp = await fetch(`${getUrl}?sendUpdates=all`, {
+                                        method: 'PATCH',
+                                        headers: {
+                                            'Authorization': `Bearer ${accessToken}`,
+                                            'Content-Type': 'application/json',
+                                        },
+                                        body: JSON.stringify({
+                                            attendees: [...existingAttendees, { email: castEmail }],
+                                        }),
+                                    })
+                                    if (resp.ok) {
+                                        console.log(`[CALENDAR] Attendee added: ${castEmail} → event ${eventId}`)
+                                    } else {
+                                        console.warn(`[CALENDAR] Attendee add failed for ${key}:`, resp.status)
+                                    }
+                                } catch (calErr) {
+                                    console.warn(`[CALENDAR] Attendee add error for ${key}:`, calErr)
+                                }
+                            }
+                        } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
+                            console.warn('[CALENDAR] Attendee addition skipped: failed to obtain OAuth token')
+                        }
+                    } else {
+                        console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)
                     }
                 } catch (cloudFnError) {
-                    console.warn('Cloud Function call failed, trying direct Slack API...', cloudFnError)
-                    // Fallback to direct Slack API
+                    console.error('[CF FAILED] Cloud Function call failed:', cloudFnError)
+                    console.warn('[CF FALLBACK] Falling back to direct Slack API (calendar will NOT be created)')
+                    // Fallback: 開発用直接Slack API
                     slackResult = await sendSlackNotificationDirect(payload)
+
+                    // Fallback時はフロント側でFirestore更新
+                    if (slackResult && db) {
+                        const updateBatch = writeBatch(db)
+                        for (const id of castingIds) {
+                            updateBatch.update(doc(db, 'castings', id), {
+                                slackThreadTs: slackResult.ts,
+                                slackPermalink: slackResult.permalink
+                            })
+                        }
+                        await updateBatch.commit()
+                    }
                 }
             } else {
-                // No Cloud Functions available, use direct Slack API
+                // Cloud Functions未設定: 開発用直接Slack API
                 console.info('Cloud Functions not available, using direct Slack API')
                 slackResult = await sendSlackNotificationDirect(payload)
-            }
-
-            // Update Firestore with Slack thread info
-            if (slackResult && db) {
-                const updateBatch = writeBatch(db)
-                for (const id of castingIds) {
-                    updateBatch.update(doc(db, 'castings', id), {
-                        slackThreadTs: slackResult.ts,
-                        slackPermalink: slackResult.permalink
-                    })
-                }
-                await updateBatch.commit()
             }
 
             toast.add({
@@ -383,6 +524,7 @@ export function useOrders() {
             orderStore.clear()
 
             loading.value = false
+            stopLoading()
             return true
 
         } catch (error) {
@@ -395,6 +537,7 @@ export function useOrders() {
             })
 
             loading.value = false
+            stopLoading()
             return false
         }
     }

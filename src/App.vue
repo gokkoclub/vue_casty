@@ -5,6 +5,7 @@ import Menubar from 'primevue/menubar'
 import Button from 'primevue/button'
 import Badge from 'primevue/badge'
 import Toast from 'primevue/toast'
+import BackendProgress from '@/components/common/BackendProgress.vue'
 import { useCartStore } from '@/stores/cartStore'
 import { useAuth } from '@/composables/useAuth'
 
@@ -43,6 +44,7 @@ const menuItems = computed(() => [
 <template>
   <div class="app-container">
     <Toast />
+    <BackendProgress />
     
     <header class="app-header">
       <Menubar :model="menuItems">

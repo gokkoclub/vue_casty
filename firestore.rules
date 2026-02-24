@@ -1,0 +1,58 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 認証済みユーザーは全コレクション読み取り可能
+    match /{document=**} {
+      allow read: if request.auth != null;
+    }
+
+    // castings: 認証済みユーザーは読み書き可能
+    match /castings/{castingId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // casts: 認証済みユーザーは読み書き可能
+    match /casts/{castId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // admins: 認証済みユーザーは読み取り可能、書き込みは管理者のみ
+    match /admins/{adminId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // castMaster: 認証済みユーザーは読み書き可能
+    match /castMaster/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // shootingContacts: 認証済みユーザーは読み書き可能
+    match /shootingContacts/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // shootings: 認証済みユーザーは読み書き可能
+    match /shootings/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // shootingDetails: 認証済みユーザーは読み書き可能
+    match /shootingDetails/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // config: 認証済みユーザーは読み取り可能
+    match /config/{docId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    // offshotDrive: 認証済みユーザーは読み書き可能
+    match /offshotDrive/{docId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

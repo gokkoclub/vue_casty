@@ -6,12 +6,16 @@ import SelectButton from 'primevue/selectbutton'
 import ProgressSpinner from 'primevue/progressspinner'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
+import Checkbox from 'primevue/checkbox'
+import MultiSelect from 'primevue/multiselect'
 import CastCard from '@/components/cast/CastCard.vue'
 import CastDetailDialog from '@/components/cast/CastDetailDialog.vue'
 import DateSelector from '@/components/calendar/DateSelector.vue'
 import CartSidebar from '@/components/cart/CartSidebar.vue'
 import ShootingList from '@/components/shooting/ShootingList.vue'
 import OrderTypeDialog from '@/components/casting/OrderTypeDialog.vue'
+import ProgressModal from '@/components/common/ProgressModal.vue'
+import NewCastModal from '@/components/cast/NewCastModal.vue'
 import { useCasts } from '@/composables/useCasts'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAvailability } from '@/composables/useAvailability'
@@ -25,6 +29,14 @@ const toast = useToast()
 const { casts, loading, fetchAll, isFirebaseConfigured } = useCasts()
 const { shootings, loading: shootingsLoading, fetchShootingsByDates } = useShootings()
 const { activeCastings, fetchAvailability } = useAvailability()
+
+// タイムゾーン安全なローカル日付フォーマッター（toISOString はUTC変換で日付がずれる）
+const toLocalDateStr = (d: Date): string => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 const store = useOrderStore()
 
 // フィルター
@@ -36,17 +48,46 @@ const typeOptions = [
   { label: '外部', value: '外部' }
 ]
 
-// View Mode
-const viewMode = ref<'grid' | 'list'>('grid')
+// Gender filter
+const genderMale = ref(false)
+const genderFemale = ref(false)
+
+// Agency filter (multiselect)
+const selectedAgencies = ref<string[]>([])
+const agencyOptions = computed(() => {
+  const agencies = new Set(casts.value.map(c => c.agency || 'フリー'))
+  return Array.from(agencies).sort().map(a => ({ label: a, value: a }))
+})
+
+// Availability filter
+const showAvailableOnly = ref(false)
+
+// Sort options
+const sortOption = ref<'none' | 'appearance' | 'kana'>('none')
+const sortOptions = [
+  { label: '最新', value: 'none' },
+  { label: '出演回数', value: 'appearance' },
+  { label: '50音順', value: 'kana' }
+]
+
+// View Mode: 3 columns (comfort) or 5 columns (dense)
+const viewMode = ref<'3col' | '5col'>('3col')
+
+// Progress Modal State
+const showProgress = ref(false)
+const progressValue = ref(0)
+const progressMessage = ref('')
 
 // Date Select
 const selectedDates = ref<Date[]>([])
 const selectedShooting = ref<Shooting | null>(null)
+const _skipShootingWatch = ref(false) // Guard: prevent watcher from resetting mode during order type switch
 
 // UI State
 const showOrderTypeDialog = ref(false)
 const selectedCast = ref<Cast | null>(null)
 const showDetailDialog = ref(false)
+const showNewCastModal = ref(false)
 
 // Date update handler
 const handleDatesUpdate = (dates: Date[]) => {
@@ -58,14 +99,24 @@ const handleDatesUpdate = (dates: Date[]) => {
 watch(selectedDates, async (dates) => {
   // Update store dates formatting
   const formatted = dates.map(d => {
+    console.log('[DEBUG DATE] Raw Date object:', d, 'toString:', d.toString(), 'getDate:', d.getDate(), 'getMonth:', d.getMonth(), 'getFullYear:', d.getFullYear(), 'toISOString:', d.toISOString())
     const year = d.getFullYear()
     const month = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
-    return `${year}/${month}/${day}`
+    const result = `${year}/${month}/${day}`
+    console.log('[DEBUG DATE] Formatted:', result)
+    return result
   }).sort()
+  
+  console.log('[DEBUG DATE] All formatted dates:', formatted)
   
   if (store.context) {
     store.context.dateRanges = formatted
+  }
+
+  // 日付がクリアされた場合、撮影選択もクリア
+  if (dates.length === 0) {
+    selectedShooting.value = null
   }
 
   // Fetch shooting candidates and availability
@@ -90,6 +141,11 @@ const handleShootingSelect = (shooting: Shooting) => {
 
 // Watch for shooting selection changes
 watch(selectedShooting, (newShooting, oldShooting) => {
+  // Guard: skip if mode was explicitly set by handleOrderTypeSelect
+  if (_skipShootingWatch.value) {
+    _skipShootingWatch.value = false
+    return
+  }
   if (!newShooting && oldShooting) {
     // Shooting deselected - clear shooting mode but keep dates
     store.setContext({
@@ -138,8 +194,13 @@ const handleOrderTypeSelect = (mode: 'external' | 'internal' | 'cancel') => {
     return
   }
   
+  // 撮影モードからの切り替え時、撮影選択をクリア（watcherでmode resetされないようにガード）
+  _skipShootingWatch.value = true
+  selectedShooting.value = null
+  
   store.setContext({
     mode: mode,
+    shootingData: null,
     dateRanges: store.context.dateRanges
   })
   showOrderTypeDialog.value = false
@@ -148,13 +209,52 @@ const handleOrderTypeSelect = (mode: 'external' | 'internal' | 'cancel') => {
 
 // Cast Selection
 const filteredCasts = computed(() => {
-  return casts.value.filter(cast => {
+  let result = casts.value.filter(cast => {
+    // Text search: name, agency, notes, furigana
+    const searchLower = searchQuery.value.toLowerCase()
     const matchesSearch = !searchQuery.value || 
-      cast.name.toLowerCase().includes(searchQuery.value.toLowerCase()) ||
-      cast.agency?.toLowerCase().includes(searchQuery.value.toLowerCase())
+      cast.name.toLowerCase().includes(searchLower) ||
+      cast.agency?.toLowerCase().includes(searchLower) ||
+      cast.notes?.toLowerCase().includes(searchLower) ||
+      (cast as any).furigana?.toLowerCase().includes(searchLower)
+    
+    // Type filter
     const matchesType = selectedType.value === 'all' || cast.castType === selectedType.value
-    return matchesSearch && matchesType
+    
+    // Gender filter
+    const matchesGender = 
+      (!genderMale.value && !genderFemale.value) ||
+      (genderMale.value && cast.gender === '男性') ||
+      (genderFemale.value && cast.gender === '女性')
+    
+    // Agency filter
+    const matchesAgency = 
+      selectedAgencies.value.length === 0 ||
+      selectedAgencies.value.includes(cast.agency || 'フリー')
+    
+    // Availability filter (check if not already booked)
+    const matchesAvailability = !showAvailableOnly.value || 
+      !isBookingBlocked(
+        cast.id, 
+        activeCastings.value, 
+        selectedDates.value.map((d: Date) => toLocalDateStr(d))
+      )
+    
+    return matchesSearch && matchesType && matchesGender && matchesAgency && matchesAvailability
   })
+  
+  // Sorting
+  if (sortOption.value === 'appearance') {
+    result = [...result].sort((a, b) => (b.appearanceCount || 0) - (a.appearanceCount || 0))
+  } else if (sortOption.value === 'kana') {
+    result = [...result].sort((a, b) => {
+      const aKana = (a as any).furigana || a.name
+      const bKana = (b as any).furigana || b.name
+      return aKana.localeCompare(bKana, 'ja')
+    })
+  }
+  
+  return result
 })
 
 const handleCastClick = (cast: Cast) => {
@@ -171,6 +271,12 @@ const handleAddToCart = (cast: Cast) => {
   store.addItem(cast)
   // No longer auto-opening cart
   toast.add({ severity: 'success', summary: 'カートに追加', detail: cast.name, life: 2000 })
+}
+
+const handleNewCastSaved = (cast: Cast) => {
+  // 新規外部キャストをカートに自動追加
+  store.addItem(cast)
+  toast.add({ severity: 'success', summary: 'カートに追加', detail: `${cast.name} をカートに追加しました`, life: 3000 })
 }
 
 // Order submission with progress
@@ -323,16 +429,16 @@ onUnmounted(() => {
                 
                 <div class="view-toggle">
                   <Button 
-                    icon="pi pi-th-large" 
+                    label="3列"
                     text 
-                    :severity="viewMode === 'grid' ? 'primary' : 'secondary'"
-                    @click="viewMode = 'grid'"
+                    :severity="viewMode === '3col' ? 'primary' : 'secondary'"
+                    @click="viewMode = '3col'"
                   />
                   <Button 
-                    icon="pi pi-list" 
+                    label="5列" 
                     text
-                    :severity="viewMode === 'list' ? 'primary' : 'secondary'"
-                    @click="viewMode = 'list'"
+                    :severity="viewMode === '5col' ? 'primary' : 'secondary'"
+                    @click="viewMode = '5col'"
                   />
                 </div>
               </div>
@@ -340,18 +446,56 @@ onUnmounted(() => {
             <template #content>
               <template v-if="selectedDates.length > 0">
                 <!-- Search & Filter Controls -->
-                <div class="filters mb-3">
-                  <InputText 
-                    v-model="searchQuery" 
-                    placeholder="キャスト名・事務所名で検索"
-                    class="w-full mb-2"
-                  />
-                  <SelectButton 
-                    v-model="selectedType" 
-                    :options="typeOptions"
-                    optionLabel="label"
-                    optionValue="value"
-                  />
+                <div class="filters-container mb-3">
+                  <!-- Search Row -->
+                  <div class="filter-row">
+                    <InputText 
+                      v-model="searchQuery" 
+                      placeholder="キャスト名・事務所名・ふりがなで検索"
+                      class="search-input"
+                    />
+                    <SelectButton 
+                      v-model="selectedType" 
+                      :options="typeOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                    />
+                  </div>
+                  
+                  <!-- Gender & Agency Row -->
+                  <div class="filter-row">
+                    <div class="filter-group">
+                      <Checkbox v-model="genderMale" inputId="genderMale" binary />
+                      <label for="genderMale">男性</label>
+                    </div>
+                    <div class="filter-group">
+                      <Checkbox v-model="genderFemale" inputId="genderFemale" binary />
+                      <label for="genderFemale">女性</label>
+                    </div>
+                    <MultiSelect
+                      v-model="selectedAgencies"
+                      :options="agencyOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                      placeholder="事務所を選択"
+                      :maxSelectedLabels="2"
+                      class="agency-select"
+                    />
+                  </div>
+                  
+                  <!-- Availability & Sort Row -->
+                  <div class="filter-row">
+                    <div class="filter-group">
+                      <Checkbox v-model="showAvailableOnly" inputId="availableOnly" binary />
+                      <label for="availableOnly">未仮キャスのみ</label>
+                    </div>
+                    <SelectButton 
+                      v-model="sortOption" 
+                      :options="sortOptions"
+                      optionLabel="label"
+                      optionValue="value"
+                    />
+                  </div>
                 </div>
 
                 <!-- ローディング -->
@@ -360,15 +504,24 @@ onUnmounted(() => {
                   <p>キャストを読み込み中...</p>
                 </div>
 
-                <!-- キャストグリッド/リスト -->
+                <!-- キャストグリッド -->
                 <div v-else-if="filteredCasts.length > 0" 
-                     :class="['cast-view', viewMode === 'grid' ? 'grid-mode' : 'list-mode']">
+                     :class="['cast-view', viewMode === '3col' ? 'grid-3col' : 'grid-5col']">
+                  <!-- 新規外部キャスト追加カード（先頭） -->
+                  <div class="new-cast-card" @click="showNewCastModal = true">
+                    <div class="new-cast-card-icon">＋</div>
+                    <div class="new-cast-card-text">
+                      <strong>新規外部キャストを追加</strong>
+                      <small>DBに存在しない外部キャストを登録</small>
+                    </div>
+                  </div>
+
                   <CastCard 
                     v-for="cast in filteredCasts" 
                     :key="cast.id"
                     :cast="cast"
-                    :bookings="getCastBookings(cast.id, activeCastings, selectedDates.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s))"
-                    :isBlocked="isBookingBlocked(cast.id, activeCastings, selectedDates.map((d: Date) => d.toISOString().split('T')[0]).filter((s): s is string => !!s))"
+                    :bookings="getCastBookings(cast.id, activeCastings, selectedDates.map((d: Date) => toLocalDateStr(d)))"
+                    :isBlocked="isBookingBlocked(cast.id, activeCastings, selectedDates.map((d: Date) => toLocalDateStr(d)))"
                     @click="handleCastClick"
                     @add="handleAddToCart"
                   />
@@ -405,6 +558,19 @@ onUnmounted(() => {
     <CartSidebar 
       @submit="handleSubmitOrder"
     />
+
+    <!-- Progress Modal -->
+    <ProgressModal 
+      v-model:visible="showProgress"
+      :progress="progressValue"
+      :message="progressMessage"
+    />
+
+    <!-- 新規外部キャストモーダル -->
+    <NewCastModal
+      v-model:visible="showNewCastModal"
+      @saved="handleNewCastSaved"
+    />
   </div>
 </template>
 
@@ -436,7 +602,7 @@ onUnmounted(() => {
 /* New Grid Layout */
 .grid-layout {
   display: grid;
-  grid-template-columns: 280px 1fr; /* Narrower calendar column */
+  grid-template-columns: 280px minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
 }
@@ -451,6 +617,9 @@ onUnmounted(() => {
 }
 
 /* Date Selector Override: Make calendar more compact */
+.date-card {
+  overflow: hidden;
+}
 .date-card :deep(.p-datepicker-inline) {
   border: none;
   box-shadow: none;
@@ -523,6 +692,45 @@ onUnmounted(() => {
   flex-direction: column;
 }
 
+/* Filter styles */
+.filters-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: var(--p-surface-50);
+  border-radius: 8px;
+  border: 1px solid var(--p-surface-200);
+}
+
+.filter-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.filter-group label {
+  cursor: pointer;
+  user-select: none;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 200px;
+}
+
+.agency-select {
+  min-width: 180px;
+}
+
 .filters {
   display: flex;
   gap: 1rem;
@@ -535,82 +743,23 @@ onUnmounted(() => {
   flex: 1;
 }
 
-/* Grid Mode: Force 4 columns */
-.cast-view.grid-mode {
+/* Grid Mode: 3 columns (comfort) */
+.cast-view.grid-3col {
   display: grid;
-  grid-template-columns: repeat(4, 1fr); /* Exact 4 columns */
+  grid-template-columns: repeat(3, 1fr);
   gap: 1rem;
 }
 
-/* List Mode: Smart List Design */
-.cast-view.list-mode {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+/* Grid Mode: 5 columns (dense) */
+.cast-view.grid-5col {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.75rem;
 }
 
-.cast-view.list-mode :deep(.cast-card) {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  padding: 1rem 1.5rem;
-  gap: 1.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-  border: 1px solid var(--p-surface-200);
-  background: #fff;
-  transition: transform 0.2s, box-shadow 0.2s;
-  max-width: 100%;
-}
-.cast-view.list-mode :deep(.cast-card:hover) {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-}
-/* Re-style internal elements for list mode */
-.cast-view.list-mode :deep(.p-card-header) {
-  width: 60px;
-  height: 60px;
-  flex-shrink: 0;
-  margin: 0;
-}
-.cast-view.list-mode :deep(.cast-image) {
-  width: 60px;
-  height: 60px;
-  border-radius: 50%;
-  object-fit: cover;
-}
-.cast-view.list-mode :deep(.p-card-body) {
-  padding: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.cast-view.list-mode :deep(.p-card-content) {
-  padding: 0;
-}
-.cast-view.list-mode :deep(.p-card-title) {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-.cast-view.list-mode :deep(.p-card-subtitle) {
-  margin: 0;
+.cast-view.grid-5col :deep(.cast-card) {
   font-size: 0.9rem;
-  color: var(--p-text-muted-color);
 }
-.cast-view.list-mode :deep(.tags) {
-  display: none; /* Hide tags in smart list, or show minimal? Keep clean */
-}
-.cast-view.list-mode :deep(.p-card-footer) {
-  padding: 0;
-  margin: 0;
-}
-/* Override Card structure via deep selector hack might be brittle. 
-   Better approach: Pass 'displayMode' prop to CastCard or use specific CSS classes.
-   Let's assume CastCard uses standard PrimeVue slots which render specific DOM.
-   We need to target those.
-*/
 
 .loading-container, .empty-state {
   display: flex;
@@ -627,8 +776,55 @@ onUnmounted(() => {
     gap: 1rem;
   }
   
-  .cast-view.grid-mode {
-    grid-template-columns: repeat(2, 1fr); /* 2 cols on smaller screens */
+  .cast-view.grid-3col,
+  .cast-view.grid-5col {
+    grid-template-columns: repeat(2, 1fr);
   }
+}
+/* 新規外部キャスト追加カード */
+.new-cast-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  border: 2px dashed var(--blue-300, #93c5fd);
+  border-radius: 12px;
+  background: var(--blue-50, #eff6ff);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 140px;
+  text-align: center;
+}
+
+.new-cast-card:hover {
+  border-color: var(--blue-500, #3b82f6);
+  background: var(--blue-100, #dbeafe);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.new-cast-card-icon {
+  font-size: 2rem;
+  color: var(--blue-500, #3b82f6);
+  font-weight: 300;
+  line-height: 1;
+}
+
+.new-cast-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.new-cast-card-text strong {
+  font-size: 0.85rem;
+  color: var(--blue-700, #1d4ed8);
+}
+
+.new-cast-card-text small {
+  font-size: 0.75rem;
+  color: var(--blue-500, #3b82f6);
 }
 </style>

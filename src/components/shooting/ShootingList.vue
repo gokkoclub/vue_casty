@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import Card from 'primevue/card'
 import Button from 'primevue/button'
 import type { Shooting } from '@/types'
 
@@ -14,59 +13,54 @@ const emit = defineEmits<{
   'create-new': []
 }>()
 
-const formatDate = (date: any) => {
+const formatShootDate = (date: any) => {
   if (!date) return ''
+  if (typeof date === 'string') return date.substring(0, 10)
   const d = date.toDate ? date.toDate() : new Date(date)
-  return `${d.getMonth() + 1}/${d.getDate()}`
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 </script>
 
 <template>
   <div class="shooting-list">
     <div v-if="loading" class="loading">
-      <i class="pi pi-spin pi-spinner" style="font-size: 2rem"></i>
+      <i class="pi pi-spin pi-spinner"></i>
     </div>
 
     <div v-else-if="shootings.length > 0" class="list-container">
-      <Card 
+      <div 
         v-for="shooting in shootings" 
         :key="shooting.id"
-        class="shooting-card"
+        class="shooting-item"
         :class="{ 'selected': selectedId === shooting.id }"
         @click="emit('select', shooting)"
       >
-        <template #title>
-          <div class="card-header">
-            <span class="date-badge">{{ formatDate(shooting.shootDate) }}</span>
-            <span class="title">{{ shooting.title }}</span>
-          </div>
-        </template>
-        <template #subtitle>
-          <div class="subtitle-row">
-            <i class="pi pi-users"></i> {{ shooting.team }}
-          </div>
-        </template>
-      </Card>
-      
-      <div class="divider">
-        <span>または</span>
+        <div class="item-main">
+          <span class="item-title">{{ shooting.title }}</span>
+          <span class="item-team">{{ shooting.team }}</span>
+        </div>
+        <span class="item-date">{{ formatShootDate(shooting.shootDate) }}</span>
       </div>
-
+      
       <Button 
-        label="リストにない案件を作成 (外部/社内)" 
-        icon="pi pi-plus"
+        label="＋ 新規案件" 
         severity="secondary"
-        outlined
-        class="w-full"
+        text
+        size="small"
+        class="w-full new-btn"
         @click="emit('create-new')"
       />
     </div>
 
     <div v-else class="empty-state">
-      <p>選択された期間の撮影予定はありません</p>
+      <p>撮影予定なし</p>
       <Button 
         label="新規案件として進める" 
         icon="pi pi-arrow-right"
+        size="small"
         @click="emit('create-new')"
       />
     </div>
@@ -77,95 +71,85 @@ const formatDate = (date: any) => {
 .shooting-list {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
 }
 
 .loading {
   display: flex;
   justify-content: center;
-  padding: 2rem;
+  padding: 1rem;
+  font-size: 1.25rem;
+  color: var(--p-text-muted-color);
 }
 
 .list-container {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-}
-
-.shooting-card {
-  border-left: 4px solid var(--p-surface-300);
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.shooting-card:hover {
-  border-left-color: var(--p-primary-color);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-
-.shooting-card.selected {
-  border-left-color: var(--p-primary-color);
-  background: var(--p-primary-50);
-}
-
-.card-header {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.date-badge {
-  background: var(--p-primary-50);
-  color: var(--p-primary-700);
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.title {
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.subtitle-row {
-  display: flex;
-  align-items: center;
   gap: 0.5rem;
-  font-size: 0.85rem;
-  margin-top: 0.25rem;
 }
 
-.divider {
+.shooting-item {
   display: flex;
-  align-items: center;
-  text-align: center;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--p-surface-200);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: white;
+}
+
+.shooting-item:hover {
+  border-color: var(--p-primary-300);
+  background: var(--p-surface-50);
+}
+
+.shooting-item.selected {
+  border-color: var(--p-primary-color);
+  background: var(--p-primary-50);
+}
+
+.item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.item-title {
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--p-text-color);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.item-date {
+  font-size: 0.8rem;
   color: var(--p-text-muted-color);
-  font-size: 0.875rem;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  border-bottom: 1px solid var(--p-surface-200);
+.item-team {
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
 }
 
-.divider span {
-  padding: 0 0.5rem;
+.new-btn {
+  margin-top: 0.25rem;
 }
 
 .empty-state {
   text-align: center;
-  padding: 2rem;
+  padding: 1rem;
   color: var(--p-text-muted-color);
-  background: var(--p-surface-50);
-  border-radius: 8px;
-  border: 1px dashed var(--p-surface-300);
+  font-size: 0.85rem;
 }
 
 .empty-state p {
-  margin-bottom: 1rem;
+  margin-bottom: 0.5rem;
 }
 
 .w-full {
