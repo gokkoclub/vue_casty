@@ -129,12 +129,14 @@ exports.syncShootingDetailsToContacts = (0, https_1.onCall)({ maxInstances: 10 }
         if (detailsSnap.empty) {
             return { success: true, updated: 0, message: "No details found" };
         }
-        // Build castName -> details map
+        // Normalize cast name: strip 様/さん/サン suffix and trim
+        const normalizeCastName = (name) => name.replace(/[様さんサン]+$/u, "").trim();
+        // Build normalized castName -> details map
         const detailsMap = new Map();
         detailsSnap.docs.forEach((doc) => {
             const d = doc.data();
             if (d.castName) {
-                detailsMap.set(d.castName, {
+                detailsMap.set(normalizeCastName(d.castName), {
                     inTime: d.inTime || "",
                     outTime: d.outTime || "",
                     location: d.location || "",
@@ -151,7 +153,8 @@ exports.syncShootingDetailsToContacts = (0, https_1.onCall)({ maxInstances: 10 }
         const batch = db.batch();
         contactsSnap.docs.forEach((doc) => {
             const contact = doc.data();
-            const detail = detailsMap.get(contact.castName);
+            // Normalize contact castName too for matching
+            const detail = detailsMap.get(normalizeCastName(contact.castName || ""));
             if (!detail)
                 return;
             const updateData = {};

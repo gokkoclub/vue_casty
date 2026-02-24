@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import {
-    collection, query, where, getDocs, addDoc, Timestamp
+    collection, query, where, getDocs, addDoc, updateDoc, doc, Timestamp
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
 import type { CastMaster, Casting } from '@/types'
@@ -78,6 +78,30 @@ export function useCastMaster() {
     }
 
     /**
+     * マスターデータを更新
+     */
+    async function updateMaster(masterId: string, data: Partial<CastMaster>): Promise<boolean> {
+        if (!db) return false
+        try {
+            const masterRef = doc(db, 'castMaster', masterId)
+            // id, castingId, createdAt など不変フィールドは除外
+            const { id: _id, castingId: _cid, createdAt: _ca, ...updateData } = data as Record<string, unknown>
+            await updateDoc(masterRef, updateData)
+
+            // ローカル更新
+            const master = masters.value.find(m => m.id === masterId)
+            if (master) Object.assign(master, data)
+
+            toast.add({ severity: 'success', summary: '更新完了', detail: 'マスターデータを更新しました', life: 2000 })
+            return true
+        } catch (error) {
+            console.error('Error updating castMaster:', error)
+            toast.add({ severity: 'error', summary: 'エラー', detail: '更新に失敗しました', life: 3000 })
+            return false
+        }
+    }
+
+    /**
      * キャスティングマスターDBから履歴を取得
      */
     async function fetchHistory(filters?: {
@@ -90,7 +114,7 @@ export function useCastMaster() {
         loading.value = true
 
         try {
-            let q = query(collection(db, 'castMaster'))
+            const q = query(collection(db, 'castMaster'))
 
             const snapshot = await getDocs(q)
             let results: CastMaster[] = []
@@ -159,6 +183,7 @@ export function useCastMaster() {
         masters,
         loading,
         addToCastMaster,
+        updateMaster,
         fetchHistory,
         getAppearanceCount
     }

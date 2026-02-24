@@ -4,7 +4,7 @@ import type { Casting } from '@/types'
  * キャストの予約情報
  */
 export interface CastBooking {
-    status: '仮押さえ' | '仮キャスティング' | '決定' | 'NG'
+    status: '仮押さえ' | '仮キャスティング' | 'オーダー待ち' | '決定' | 'NG'
     team: string  // accountName
     displayLabel: string  // "Team A: 仮"
     severity: 'warning' | 'danger' | 'secondary' | 'info'
@@ -41,8 +41,8 @@ export function getCastBookings(
     const relevantCastings = activeCastings.filter(c => {
         if (c.castId !== castId) return false
 
-        // 表示対象のステータス（打診中も仮キャスティングとして表示）
-        if (!['仮押さえ', '仮キャスティング', '打診中', '決定', 'NG'].includes(c.status)) return false
+        // 表示対象のステータス（打診中・オーダー待ちも仮キャスティングとして表示）
+        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '決定', 'NG'].includes(c.status)) return false
 
         const castStart = toLocalDateStr(c.startDate.toDate())
         const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart
@@ -67,7 +67,7 @@ export function getCastBookings(
         if (casting.status === '仮押さえ') {
             displayLabel = `${teamLabel}: 仮`
             severity = 'warning'
-        } else if (casting.status === '仮キャスティング' || casting.status === '打診中') {
+        } else if (casting.status === '仮キャスティング' || casting.status === '打診中' || casting.status === 'オーダー待ち') {
             displayLabel = `${teamLabel}: 仮キャスティング`
             severity = 'info'
         } else if (casting.status === '決定') {
@@ -79,7 +79,7 @@ export function getCastBookings(
         }
 
         bookings.push({
-            status: casting.status as '仮押さえ' | '仮キャスティング' | '決定' | 'NG',
+            status: casting.status as '仮押さえ' | '仮キャスティング' | 'オーダー待ち' | '決定' | 'NG',
             team: teamLabel,
             displayLabel,
             severity,
@@ -146,7 +146,7 @@ export function getBookingCount(
 
     return activeCastings.filter(c => {
         if (c.castId !== castId) return false
-        if (!['仮押さえ', '仮キャスティング', '打診中', '決定'].includes(c.status)) return false
+        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '決定'].includes(c.status)) return false
 
         const castStart = toLocalDateStr(c.startDate.toDate())
         const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart

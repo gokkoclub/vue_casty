@@ -63,18 +63,21 @@ export interface ShootingContact {
     projectName: string
     accountName: string
     roleName: string
+    notionId?: string
     shootDate: Timestamp
     inTime?: string
     outTime?: string
     location?: string
     address?: string
     fee?: number
+    cost?: string
     makingUrl?: string
     postDate?: Timestamp
     mainSub: 'メイン' | 'サブ' | 'その他'
     status: ShootingContactStatus
     email?: string
     orderDocumentId?: string
+    poUuid?: string
     slackThreadTs?: string
     createdAt: Timestamp
     updatedAt: Timestamp

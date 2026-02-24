@@ -326,12 +326,15 @@ export function useOrders() {
                         roleName: item.roleName,
                         rank: item.rank,
                         mode: payload.mode || 'shooting',
-                        // ステータス初期値: 外部/社内は ORDER_INTEGRATION_GUIDE 準拠
+                        // ステータス初期値:
+                        // 撮影モード: 外部=オーダー待ち, 内部=仮キャスティング
+                        // 外部案件/社内イベント: ORDER_INTEGRATION_GUIDE 準拠
                         status: (() => {
                             if (payload.mode === 'external' || payload.mode === 'internal') {
                                 return item.castType === '外部' ? '決定' : '仮キャスティング'
                             }
-                            return '仮押さえ'
+                            // shooting mode
+                            return item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング'
                         })(),
                         note: item.note,
                         mainSub: item.mainSub,
@@ -386,7 +389,7 @@ export function useOrders() {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
                     console.log('[DEBUG CF CALL] mode:', payload.mode)
 
-                    // PDF file → base64
+                    // PDF file → base64 (CFに渡してSlack SDKでアップロード)
                     let pdfBase64: string | undefined
                     let pdfFileName: string | undefined
                     if (pdfFile) {
@@ -398,6 +401,9 @@ export function useOrders() {
                         }
                         pdfBase64 = btoa(binary)
                         pdfFileName = pdfFile.name
+                        console.log('[PDF] Attached:', pdfFileName, 'size:', bytes.length, 'base64 length:', pdfBase64.length)
+                    } else {
+                        console.log('[PDF] No file attached')
                     }
 
                     const result = await notifyOrder({
@@ -429,6 +435,57 @@ export function useOrders() {
                     if (result.data && typeof result.data === 'object' && 'ts' in result.data) {
                         slackResult = result.data as { ts: string; permalink: string }
                         console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
+
+                        // ── カレンダー招待: ユーザーOAuthでattendees追加 ──
+                        // SA では attendees 追加に DWD が必要なため、フロントのユーザーOAuth で対応
+                        // トークンが無い/期限切れの場合はGoogleログインポップアップで再取得
+                        const cfData = result.data as Record<string, unknown>
+                        const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
+                        const calendarId = import.meta.env.VITE_CALENDAR_ID_INTERNAL
+                        const { getAccessToken } = useAuth()
+                        const accessToken = calendarResults && Object.keys(calendarResults).length > 0
+                            ? await getAccessToken()
+                            : null
+
+                        if (calendarResults && calendarId && accessToken) {
+                            for (const [key, { eventId, castEmail }] of Object.entries(calendarResults)) {
+                                if (!eventId || !castEmail) continue
+                                try {
+                                    // 既存attendees取得
+                                    const getUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
+                                    const getResp = await fetch(getUrl, {
+                                        headers: { 'Authorization': `Bearer ${accessToken}` }
+                                    })
+                                    let existingAttendees: Array<{ email: string }> = []
+                                    if (getResp.ok) {
+                                        const eventData = await getResp.json() as { attendees?: Array<{ email: string }> }
+                                        existingAttendees = eventData.attendees || []
+                                    }
+                                    if (existingAttendees.some(a => a.email === castEmail)) continue
+
+                                    // 既存 + 新規でPATCH
+                                    const resp = await fetch(`${getUrl}?sendUpdates=all`, {
+                                        method: 'PATCH',
+                                        headers: {
+                                            'Authorization': `Bearer ${accessToken}`,
+                                            'Content-Type': 'application/json',
+                                        },
+                                        body: JSON.stringify({
+                                            attendees: [...existingAttendees, { email: castEmail }],
+                                        }),
+                                    })
+                                    if (resp.ok) {
+                                        console.log(`[CALENDAR] Attendee added: ${castEmail} → event ${eventId}`)
+                                    } else {
+                                        console.warn(`[CALENDAR] Attendee add failed for ${key}:`, resp.status)
+                                    }
+                                } catch (calErr) {
+                                    console.warn(`[CALENDAR] Attendee add error for ${key}:`, calErr)
+                                }
+                            }
+                        } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
+                            console.warn('[CALENDAR] Attendee addition skipped: failed to obtain OAuth token')
+                        }
                     } else {
                         console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)
                     }

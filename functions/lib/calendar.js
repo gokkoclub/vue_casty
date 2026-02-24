@@ -94,17 +94,11 @@ async function createCalendarEvent(params) {
             startObj = { date: params.startDate };
             endObj = { date: exclusiveEnd };
         }
-        // 出席者リスト
-        const attendees = [];
-        if (params.castEmail) {
-            attendees.push({ email: params.castEmail });
-        }
         console.log("Creating calendar event:", {
             summary,
             start: startObj,
             end: endObj,
             calendarId: params.calendarId,
-            attendeesCount: attendees.length,
         });
         const requestBody = {
             summary,
@@ -112,15 +106,15 @@ async function createCalendarEvent(params) {
             start: startObj,
             end: endObj,
         };
-        if (attendees.length > 0) {
-            requestBody.attendees = attendees;
-        }
+        // NOTE: サービスアカウントでは attendees 追加に Domain-Wide Delegation が必要
+        // attendees はフロント側のユーザーOAuthで追加する
         const result = await calendar.events.insert({
             calendarId: params.calendarId,
             requestBody,
         });
-        console.log("Calendar event created:", result.data.id);
-        return result.data.id || null;
+        const eventId = result.data.id || null;
+        console.log("Calendar event created:", eventId);
+        return eventId;
     }
     catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

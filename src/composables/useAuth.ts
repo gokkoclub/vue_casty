@@ -3,6 +3,7 @@ import {
     signInWithPopup,
     signOut as firebaseSignOut,
     onAuthStateChanged,
+    GoogleAuthProvider as GAuthProvider,
     type User
 } from 'firebase/auth'
 import { collection, query, where, getDocs } from 'firebase/firestore'
@@ -12,6 +13,9 @@ const user = ref<User | null>(null)
 const loading = ref(true)
 const isAdminChecked = ref(false)
 const isAdminValue = ref(false)
+const googleAccessToken = ref<string | null>(
+    sessionStorage.getItem('googleAccessToken')
+)
 
 /**
  * 管理者かどうかをFirestoreでチェック
@@ -30,6 +34,18 @@ async function checkIsAdmin(email: string): Promise<boolean> {
     } catch (error) {
         console.error('Admin check failed:', error)
         return false
+    }
+}
+
+/**
+ * トークンをsessionStorageに保存（ページリロード後も保持）
+ */
+function storeToken(token: string | null) {
+    googleAccessToken.value = token
+    if (token) {
+        sessionStorage.setItem('googleAccessToken', token)
+    } else {
+        sessionStorage.removeItem('googleAccessToken')
     }
 }
 
@@ -60,15 +76,37 @@ export function useAuth() {
             return
         }
         try {
-            await signInWithPopup(auth, googleProvider)
+            const result = await signInWithPopup(auth, googleProvider)
+            const credential = GAuthProvider.credentialFromResult(result)
+            storeToken(credential?.accessToken || null)
         } catch (error) {
             console.error('Sign in failed:', error)
             throw error
         }
     }
 
+    /**
+     * Google OAuth アクセストークンを取得
+     * 毎回 signInWithPopup で新鮮なトークンを取得（1時間で期限切れのため）
+     * カレンダーAPI等でOAuthトークンが必要な場合に使用
+     */
+    const getAccessToken = async (): Promise<string | null> => {
+        if (!auth || !user.value) return null
+        try {
+            console.log('[AUTH] Getting fresh access token via popup...')
+            const result = await signInWithPopup(auth, googleProvider)
+            const credential = GAuthProvider.credentialFromResult(result)
+            storeToken(credential?.accessToken || null)
+            return googleAccessToken.value
+        } catch (error) {
+            console.error('Failed to get access token:', error)
+            return null
+        }
+    }
+
     const signOut = async () => {
         if (!auth) return
+        storeToken(null)
         await firebaseSignOut(auth)
     }
 
@@ -79,6 +117,11 @@ export function useAuth() {
         }
         onAuthStateChanged(auth, async (newUser) => {
             user.value = newUser
+
+            // ログアウト時はトークンクリア
+            if (!newUser) {
+                storeToken(null)
+            }
 
             // 管理者チェック
             if (newUser?.email) {
@@ -99,6 +142,8 @@ export function useAuth() {
         userPhotoURL,
         isAdmin,
         isAdminChecked,
+        googleAccessToken,
+        getAccessToken,
         signIn,
         signOut,
         init,

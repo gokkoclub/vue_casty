@@ -2,6 +2,7 @@
 import { ref, reactive } from 'vue'
 import Button from 'primevue/button'
 import InputNumber from 'primevue/inputnumber'
+import InputText from 'primevue/inputtext'
 import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
 
@@ -20,6 +21,7 @@ const emit = defineEmits<{
   'delete': [castingId: string]
   'save-cost': [castingId: string, cost: number]
   'save-time': [castingId: string, startTime: string, endTime: string]
+  'save-project-name': [castingIds: string[], newProjectName: string]
   'additional-order': [casting: Casting]
   'open-summary': [castings: Casting[]]
   'open-email': [casting: Casting]
@@ -43,6 +45,28 @@ const cancelTimeEdit = () => {
 const saveTimeEdit = (castingId: string) => {
   emit('save-time', castingId, editingTime.startTime, editingTime.endTime)
   editingTimeId.value = null
+}
+
+// Project name editing state
+const editingProjectName = ref(false)
+const editProjectNameValue = ref('')
+
+const startProjectNameEdit = () => {
+  editProjectNameValue.value = props.projectName
+  editingProjectName.value = true
+}
+
+const cancelProjectNameEdit = () => {
+  editingProjectName.value = false
+}
+
+const saveProjectNameEdit = () => {
+  const newName = editProjectNameValue.value.trim()
+  if (newName && newName !== props.projectName) {
+    const castingIds = props.castings.map(c => c.id)
+    emit('save-project-name', castingIds, newName)
+  }
+  editingProjectName.value = false
 }
 
 const { isAdmin } = useAuth()
@@ -100,7 +124,22 @@ const handleSummaryClick = () => {
     <!-- Project Header -->
     <div class="csl-project-hdr">
       <div class="csl-project-left">
-        <span class="csl-project-name">{{ projectName }}</span>
+        <template v-if="editingProjectName">
+          <InputText
+            v-model="editProjectNameValue"
+            class="csl-project-name-input"
+            @keyup.enter="saveProjectNameEdit"
+            @keyup.escape="cancelProjectNameEdit"
+          />
+          <Button icon="pi pi-check" text size="small" severity="success" @click="saveProjectNameEdit" />
+          <Button icon="pi pi-times" text size="small" severity="secondary" @click="cancelProjectNameEdit" />
+        </template>
+        <template v-else>
+          <span class="csl-project-name" @click="startProjectNameEdit" title="クリックして作品名を編集">
+            {{ projectName }}
+            <i class="pi pi-pencil csl-edit-icon"></i>
+          </span>
+        </template>
         <span class="csl-cast-count">{{ castings.length }}人</span>
       </div>
       <div class="csl-project-actions">
@@ -253,6 +292,25 @@ const handleSummaryClick = () => {
   font-weight: 700;
   font-size: 0.9rem;
   color: var(--p-text-color);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.csl-project-name:hover {
+  color: var(--p-primary-color);
+}
+.csl-edit-icon {
+  font-size: 0.65rem;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.csl-project-name:hover .csl-edit-icon {
+  opacity: 0.6;
+}
+.csl-project-name-input {
+  width: 200px;
+  font-size: 0.85rem;
 }
 
 .csl-cast-count {

@@ -9,9 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/noto-sans-jp": "^5.2.9",
     "@primevue/themes": "^4.5.4",
     "@vueuse/core": "^14.1.0",
     "firebase": "^12.7.0",
+    "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",
     "pinia": "^3.0.4",
     "primeicons": "^7.0.0",

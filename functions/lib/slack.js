@@ -1,8 +1,4 @@
 "use strict";
-/**
- * Slack API ヘルパー
- * Cloud Functions から Slack Bot API を呼び出す
- */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.postToSlack = postToSlack;
 exports.uploadFileToSlack = uploadFileToSlack;
@@ -11,6 +7,12 @@ exports.buildOrderMessage = buildOrderMessage;
 exports.buildAdditionalOrderMessage = buildAdditionalOrderMessage;
 exports.buildOrderUpdateMessage = buildOrderUpdateMessage;
 exports.buildStatusMessage = buildStatusMessage;
+/**
+ * Slack API ヘルパー
+ * Cloud Functions から Slack Bot API を呼び出す
+ * ファイルアップロードは @slack/web-api SDK を使用（V1のPython slack_sdkと同等）
+ */
+const web_api_1 = require("@slack/web-api");
 /**
  * Slack にメッセージを投稿
  */
@@ -67,65 +69,39 @@ async function postToSlack(token, channel, text, blocks, threadTs) {
     }
 }
 /**
- * Slack にファイル付きメッセージを投稿（files.uploadV2 相当）
- * 1. files.getUploadURLExternal でアップロードURL取得
- * 2. PUT でファイルアップロード
- * 3. files.completeUploadExternal で完了 + メッセージ投稿
+ * Slack にファイル付きメッセージを投稿
+ * @slack/web-api の filesUploadV2 を使用（V1 の Python slack_sdk.files_upload_v2 と同等）
+ * SDK がリダイレクト処理・リトライを内部的に処理するため安定動作する
  */
 async function uploadFileToSlack(token, channel, text, fileBase64, fileName, threadTs) {
     try {
         const fileBuffer = Buffer.from(fileBase64, "base64");
-        const fileSize = fileBuffer.length;
-        // Step 1: Get upload URL
-        const getUrlResponse = await fetch("https://slack.com/api/files.getUploadURLExternal", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: `filename=${encodeURIComponent(fileName)}&length=${fileSize}`,
-        });
-        const getUrlResult = await getUrlResponse.json();
-        if (!getUrlResult.ok || !getUrlResult.upload_url || !getUrlResult.file_id) {
-            console.error("Failed to get upload URL:", getUrlResult.error);
-            // Fallback: テキストのみ送信
-            return await postToSlack(token, channel, text, undefined, threadTs);
-        }
-        // Step 2: Upload file
-        await fetch(getUrlResult.upload_url, {
-            method: "PUT",
-            headers: { "Content-Type": "application/pdf" },
-            body: fileBuffer,
-        });
-        // Step 3: Complete upload with message
-        const completePayload = {
-            files: [{ id: getUrlResult.file_id, title: fileName }],
+        console.log("[SLACK SDK] Uploading file:", fileName, "size:", fileBuffer.length);
+        const client = new web_api_1.WebClient(token);
+        // V1と同じ方式: filesUploadV2 でファイル + メッセージを同時投稿
+        // SDK が内部で getUploadURLExternal → PUT → completeUploadExternal を処理
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const uploadOptions = {
             channel_id: channel,
             initial_comment: text,
+            file: fileBuffer,
+            filename: fileName,
+            title: fileName,
         };
         if (threadTs) {
-            completePayload.thread_ts = threadTs;
+            uploadOptions.thread_ts = threadTs;
         }
-        const completeResponse = await fetch("https://slack.com/api/files.completeUploadExternal", {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(completePayload),
-        });
-        const completeResult = await completeResponse.json();
-        if (!completeResult.ok) {
-            console.error("Failed to complete upload:", completeResult.error);
-            return await postToSlack(token, channel, text, undefined, threadTs);
-        }
-        // Extract thread ts from file shares
+        const uploadResult = await client.filesUploadV2(uploadOptions);
+        console.log("[SLACK SDK] Upload result ok:", uploadResult.ok);
+        // ts を取得（filesUploadV2 のレスポンスから）
         let ts = "";
         let permalink = "";
-        const fileShares = completeResult.files?.[0]?.shares;
-        if (fileShares) {
-            // shares structure: { public: { channelId: [{ ts }] }, private: { ... } }
-            for (const shareType of Object.values(fileShares)) {
+        // files[0].shares からts取得を試みる
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const resultAny = uploadResult;
+        const files = resultAny.files;
+        if (files?.[0]?.shares) {
+            for (const shareType of Object.values(files[0].shares)) {
                 for (const channelShares of Object.values(shareType)) {
                     if (channelShares?.[0]?.ts) {
                         ts = channelShares[0].ts;
@@ -136,51 +112,48 @@ async function uploadFileToSlack(token, channel, text, fileBase64, fileName, thr
                     break;
             }
         }
-        // If no ts from shares, wait and use files.info
-        if (!ts) {
-            console.log("No ts from shares, trying files.info...");
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            const infoResponse = await fetch(`https://slack.com/api/files.info?file=${getUrlResult.file_id}`, {
-                headers: { "Authorization": `Bearer ${token}` },
-            });
-            const infoResult = await infoResponse.json();
-            const infoShares = infoResult.file?.shares;
-            if (infoShares) {
-                for (const shareType of Object.values(infoShares)) {
-                    for (const channelShares of Object.values(shareType)) {
-                        if (channelShares?.[0]?.ts) {
-                            ts = channelShares[0].ts;
-                            break;
+        // ts が取れない場合は files.info で再取得
+        if (!ts && files?.[0]?.id) {
+            console.log("[SLACK SDK] No ts from shares, trying files.info...");
+            try {
+                const infoResult = await client.files.info({ file: files[0].id });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const infoShares = infoResult.file?.shares;
+                if (infoShares) {
+                    for (const shareType of Object.values(infoShares)) {
+                        for (const channelShares of Object.values(shareType)) {
+                            if (channelShares?.[0]?.ts) {
+                                ts = channelShares[0].ts;
+                                break;
+                            }
                         }
+                        if (ts)
+                            break;
                     }
-                    if (ts)
-                        break;
                 }
             }
+            catch (infoErr) {
+                console.warn("[SLACK SDK] files.info failed:", infoErr);
+            }
         }
-        // Get permalink if we have ts
+        // permalink 取得
         if (ts) {
             try {
-                const plResponse = await fetch("https://slack.com/api/chat.getPermalink", {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${token}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({ channel, message_ts: ts }),
+                const plResult = await client.chat.getPermalink({
+                    channel,
+                    message_ts: ts,
                 });
-                const plResult = await plResponse.json();
                 permalink = plResult.permalink || "";
             }
-            catch (e) {
-                console.warn("Failed to get permalink:", e);
+            catch (plErr) {
+                console.warn("[SLACK SDK] getPermalink failed:", plErr);
             }
         }
-        console.log("File uploaded successfully, ts:", ts);
+        console.log("[SLACK SDK] File uploaded, ts:", ts, "permalink:", permalink);
         return { ok: true, ts, permalink };
     }
     catch (error) {
-        console.error("File upload error:", error);
+        console.error("[SLACK SDK] File upload error:", error);
         // Fallback to text-only
         return await postToSlack(token, channel, text, undefined, threadTs);
     }

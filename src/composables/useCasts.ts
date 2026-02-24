@@ -49,14 +49,15 @@ export function useCasts() {
         })
     }
 
-    const addCast = async (data: Omit<Cast, 'id' | 'createdAt' | 'updatedAt'>) => {
-        if (!db) return
+    const addCast = async (data: Omit<Cast, 'id' | 'createdAt' | 'updatedAt'>): Promise<string | undefined> => {
+        if (!db) return undefined
         const now = Timestamp.now()
-        await addDoc(collection(db, 'casts'), {
+        const docRef = await addDoc(collection(db, 'casts'), {
             ...data,
             createdAt: now,
             updatedAt: now
         })
+        return docRef.id
     }
 
     const updateCast = async (id: string, data: Partial<Cast>) => {

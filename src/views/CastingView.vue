@@ -15,6 +15,7 @@ import CartSidebar from '@/components/cart/CartSidebar.vue'
 import ShootingList from '@/components/shooting/ShootingList.vue'
 import OrderTypeDialog from '@/components/casting/OrderTypeDialog.vue'
 import ProgressModal from '@/components/common/ProgressModal.vue'
+import NewCastModal from '@/components/cast/NewCastModal.vue'
 import { useCasts } from '@/composables/useCasts'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAvailability } from '@/composables/useAvailability'
@@ -86,6 +87,7 @@ const _skipShootingWatch = ref(false) // Guard: prevent watcher from resetting m
 const showOrderTypeDialog = ref(false)
 const selectedCast = ref<Cast | null>(null)
 const showDetailDialog = ref(false)
+const showNewCastModal = ref(false)
 
 // Date update handler
 const handleDatesUpdate = (dates: Date[]) => {
@@ -269,6 +271,12 @@ const handleAddToCart = (cast: Cast) => {
   store.addItem(cast)
   // No longer auto-opening cart
   toast.add({ severity: 'success', summary: 'カートに追加', detail: cast.name, life: 2000 })
+}
+
+const handleNewCastSaved = (cast: Cast) => {
+  // 新規外部キャストをカートに自動追加
+  store.addItem(cast)
+  toast.add({ severity: 'success', summary: 'カートに追加', detail: `${cast.name} をカートに追加しました`, life: 3000 })
 }
 
 // Order submission with progress
@@ -499,6 +507,15 @@ onUnmounted(() => {
                 <!-- キャストグリッド -->
                 <div v-else-if="filteredCasts.length > 0" 
                      :class="['cast-view', viewMode === '3col' ? 'grid-3col' : 'grid-5col']">
+                  <!-- 新規外部キャスト追加カード（先頭） -->
+                  <div class="new-cast-card" @click="showNewCastModal = true">
+                    <div class="new-cast-card-icon">＋</div>
+                    <div class="new-cast-card-text">
+                      <strong>新規外部キャストを追加</strong>
+                      <small>DBに存在しない外部キャストを登録</small>
+                    </div>
+                  </div>
+
                   <CastCard 
                     v-for="cast in filteredCasts" 
                     :key="cast.id"
@@ -547,6 +564,12 @@ onUnmounted(() => {
       v-model:visible="showProgress"
       :progress="progressValue"
       :message="progressMessage"
+    />
+
+    <!-- 新規外部キャストモーダル -->
+    <NewCastModal
+      v-model:visible="showNewCastModal"
+      @saved="handleNewCastSaved"
     />
   </div>
 </template>
@@ -757,5 +780,51 @@ onUnmounted(() => {
   .cast-view.grid-5col {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+/* 新規外部キャスト追加カード */
+.new-cast-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+  border: 2px dashed var(--blue-300, #93c5fd);
+  border-radius: 12px;
+  background: var(--blue-50, #eff6ff);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 140px;
+  text-align: center;
+}
+
+.new-cast-card:hover {
+  border-color: var(--blue-500, #3b82f6);
+  background: var(--blue-100, #dbeafe);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+}
+
+.new-cast-card-icon {
+  font-size: 2rem;
+  color: var(--blue-500, #3b82f6);
+  font-weight: 300;
+  line-height: 1;
+}
+
+.new-cast-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.new-cast-card-text strong {
+  font-size: 0.85rem;
+  color: var(--blue-700, #1d4ed8);
+}
+
+.new-cast-card-text small {
+  font-size: 0.75rem;
+  color: var(--blue-500, #3b82f6);
 }
 </style>

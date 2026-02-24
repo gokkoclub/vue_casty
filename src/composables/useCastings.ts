@@ -206,6 +206,7 @@ export function useCastings() {
 
     /**
      * Delete casting (soft delete - set status to 削除済み)
+     * カレンダー削除 + Slack通知も同時実行
      */
     async function deleteCasting(castingId: string): Promise<boolean> {
         if (!db) return false
@@ -214,6 +215,16 @@ export function useCastings() {
         if (!casting) return false
 
         try {
+            // Cloud Function でカレンダー削除 + Slack通知
+            if (functions) {
+                try {
+                    const cleanup = httpsCallable(functions, 'deleteCastingCleanup')
+                    await cleanup({ castingId })
+                } catch (cfError) {
+                    console.warn('deleteCastingCleanup CF failed (proceeding with local delete):', cfError)
+                }
+            }
+
             const castingRef = doc(db, 'castings', castingId)
             await updateDoc(castingRef, {
                 status: '削除済み',
@@ -223,9 +234,6 @@ export function useCastings() {
 
             // Remove from local state
             castings.value = castings.value.filter(c => c.id !== castingId)
-
-            // TODO: Delete calendar event if exists
-            // TODO: Send Slack notification about deletion
 
             toast.add({
                 severity: 'success',
@@ -361,6 +369,65 @@ export function useCastings() {
                 severity: 'error',
                 summary: 'エラー',
                 detail: 'オーダー内容の更新に失敗しました',
+                life: 3000
+            })
+            return false
+        }
+    }
+
+    /**
+     * Update project name for multiple castings
+     * Cascades: Firestore更新 + Slack通知 + Calendar更新 + castMaster/shootingContacts更新
+     */
+    async function updateProjectName(castingIds: string[], newProjectName: string): Promise<boolean> {
+        if (!db) return false
+
+        try {
+            const oldProjectName = castings.value.find(c => castingIds.includes(c.id))?.projectName || ''
+
+            // 各castingを更新
+            for (const castingId of castingIds) {
+                // Cloud Function経由で更新（Slack + Calendar cascade）
+                if (functions) {
+                    const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
+                    await notifyUpdate({
+                        castingId,
+                        changes: {
+                            projectName: { from: oldProjectName, to: newProjectName }
+                        }
+                    })
+                } else {
+                    // CF無し: Firestoreのみ更新
+                    const castingRef = doc(db, 'castings', castingId)
+                    await updateDoc(castingRef, {
+                        projectName: newProjectName,
+                        updatedAt: Timestamp.now(),
+                        updatedBy: userEmail.value || 'unknown'
+                    })
+                }
+
+                // ローカルステート更新
+                const casting = castings.value.find(c => c.id === castingId)
+                if (casting) {
+                    casting.projectName = newProjectName
+                    casting.updatedAt = Timestamp.now()
+                }
+            }
+
+            toast.add({
+                severity: 'success',
+                summary: '保存完了',
+                detail: `作品名を「${newProjectName}」に更新しました`,
+                life: 2000
+            })
+
+            return true
+        } catch (error) {
+            console.error('Error updating project name:', error)
+            toast.add({
+                severity: 'error',
+                summary: 'エラー',
+                detail: '作品名の更新に失敗しました',
                 life: 3000
             })
             return false
@@ -821,6 +888,7 @@ export function useCastings() {
         updateCastingCost,
         updateCastingTime,
         updateCastingDetails,
+        updateProjectName,
         deleteCasting,
         getCastingById,
         getHierarchicalCastings,

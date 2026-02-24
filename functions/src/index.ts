@@ -14,7 +14,7 @@ import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2/options";
 import * as admin from "firebase-admin";
 import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage } from "./slack";
-import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime } from "./calendar";
+import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
 import { syncCastToNotion } from "./notion";
 
 // Re-export new Cloud Functions
@@ -35,7 +35,40 @@ function getEnv(key: string): string {
         console.warn(`Environment variable ${key} is not set`);
         return "";
     }
-    return value;
+    return value.trim();
+}
+
+/**
+ * 名前からSlack IDを検索するヘルパー
+ * casts → admins の順に検索
+ */
+async function lookupSlackIdByName(name: string): Promise<string> {
+    if (!name) return "";
+    try {
+        const firestore = admin.firestore();
+        // castsコレクションから名前で検索
+        const castSnap = await firestore.collection("casts")
+            .where("name", "==", name)
+            .limit(1)
+            .get();
+        if (!castSnap.empty) {
+            const data = castSnap.docs[0]!.data();
+            if (data.slackMentionId) return data.slackMentionId;
+        }
+
+        // adminsコレクションから名前で検索
+        const adminSnap = await firestore.collection("admins")
+            .where("name", "==", name)
+            .limit(1)
+            .get();
+        if (!adminSnap.empty) {
+            const data = adminSnap.docs[0]!.data();
+            if (data.slackMentionId) return data.slackMentionId;
+        }
+    } catch (e) {
+        console.warn(`Slack ID lookup failed for name: ${name}`, e);
+    }
+    return "";
 }
 
 // ──────────────────────────────────────
@@ -94,14 +127,25 @@ export const notifyOrderCreated = onCall(
         const orderMode = data.mode || "shooting";
         console.log("Order mode:", orderMode, "isAdditional:", isAdditional);
 
-        // ── CC欄構築 ──
+        // ── CC欄構築（Slack IDメンション解決付き） ──
         let ccString = "";
         if (orderMode === "shooting" && data.shootingData) {
-            // 撮影モード: CD/FD/Pをccに表示
             const ccParts: string[] = [];
-            if (data.shootingData.director) ccParts.push(`CD: ${data.shootingData.director}`);
-            if (data.shootingData.floorDirector) ccParts.push(`FD: ${data.shootingData.floorDirector}`);
-            if (data.shootingData.team) ccParts.push(`P: ${data.shootingData.team}`);
+            if (data.shootingData.director) {
+                const slackId = await lookupSlackIdByName(data.shootingData.director);
+                const mention = slackId ? `<@${slackId}>` : data.shootingData.director;
+                ccParts.push(`CD: ${mention}`);
+            }
+            if (data.shootingData.floorDirector) {
+                const slackId = await lookupSlackIdByName(data.shootingData.floorDirector);
+                const mention = slackId ? `<@${slackId}>` : data.shootingData.floorDirector;
+                ccParts.push(`FD: ${mention}`);
+            }
+            if (data.shootingData.team) {
+                const slackId = await lookupSlackIdByName(data.shootingData.team);
+                const mention = slackId ? `<@${slackId}>` : data.shootingData.team;
+                ccParts.push(`P: ${mention}`);
+            }
             ccString = ccParts.join(" / ");
         }
 
@@ -192,15 +236,21 @@ export const notifyOrderCreated = onCall(
                             .where("castId", "==", item.castId)
                             .where("startDate", ">=", admin.firestore.Timestamp.fromDate(searchDate))
                             .where("startDate", "<", admin.firestore.Timestamp.fromDate(nextDay))
-                            .where("status", "in", ["仮押さえ", "仮キャスティング", "打診中", "決定", "OK"])
-                            .limit(1)
+                            .where("status", "in", ["仮押さえ", "仮キャスティング", "打診中", "オーダー待ち", "決定", "OK"])
+                            .limit(10)
                             .get();
 
-                        debugEntry.conflictFound = !conflictSnap.empty;
-                        debugEntry.conflictCount = conflictSnap.size;
+                        // 今回のオーダーで作成された casting を除外（自己コンフリクト防止）
+                        const currentCastingIds: string[] = data.castingIds || [];
+                        const filteredDocs = conflictSnap.docs.filter(
+                            d => !currentCastingIds.includes(d.id)
+                        );
 
-                        if (!conflictSnap.empty) {
-                            const existing = conflictSnap.docs[0]!.data();
+                        debugEntry.conflictFound = filteredDocs.length > 0;
+                        debugEntry.conflictCount = filteredDocs.length;
+
+                        if (filteredDocs.length > 0) {
+                            const existing = filteredDocs[0]!.data();
                             conflictInfo = `同日に別の撮影があります（${existing.projectName || "不明"}）`;
                             debugEntry.existingProject = existing.projectName;
                             debugEntry.existingStatus = existing.status;
@@ -251,9 +301,15 @@ export const notifyOrderCreated = onCall(
         }
 
         // ── Slack送信 ──
-        // PDF添付がある場合はファイルアップロード、なければテキスト投稿
+        // PDF添付がある場合: Slack SDK でアップロード（V1と同じ方式）
         // 追加オーダー時は既存スレッドに返信
         const threadTsForReply = isAdditional ? existingThreadTs : undefined;
+        console.log("PDF check:", {
+            hasPdfBase64: !!data.pdfBase64,
+            pdfBase64Length: data.pdfBase64?.length || 0,
+            pdfFileName: data.pdfFileName || "(none)",
+        });
+
         let slackResult: { ok: boolean; ts?: string; permalink?: string } = { ok: false };
         try {
             slackResult = data.pdfBase64 && data.pdfFileName
@@ -280,7 +336,7 @@ export const notifyOrderCreated = onCall(
         // ── カレンダーイベント作成（内部キャストのみ）──
         const serviceAccountKey = getEnv("GOOGLE_SERVICE_ACCOUNT_KEY");
         const calendarId = getEnv("GOOGLE_CALENDAR_ID");
-        const calendarResults: Record<string, string> = {};
+        const calendarResults: Record<string, { eventId: string; castEmail: string }> = {};
         const calendarDebug: Record<string, unknown> = {
             hasServiceAccountKey: !!serviceAccountKey,
             serviceAccountKeyLength: serviceAccountKey?.length || 0,
@@ -324,6 +380,18 @@ export const notifyOrderCreated = onCall(
                 calendarDebug.internalItemsCount = internalItems.length;
 
                 for (const item of internalItems) {
+                    // キャストのメールアドレスを取得（カレンダー招待用）
+                    let castEmail = "";
+                    try {
+                        const castDoc = await db.collection("casts").doc(item.castId).get();
+                        if (castDoc.exists) {
+                            castEmail = castDoc.data()?.email || "";
+                        }
+                        console.log(`Calendar: castEmail for ${item.castName}:`, castEmail || "(none)");
+                    } catch (e) {
+                        console.warn(`Failed to get email for cast ${item.castId}:`, e);
+                    }
+
                     for (const dateRange of (data.dateRanges || [])) {
                         const [startDate] = dateRange.includes("~")
                             ? dateRange.split("~").map((s: string) => s.trim())
@@ -345,6 +413,7 @@ export const notifyOrderCreated = onCall(
                                 rank: item.rank || "",
                                 mainSub: item.mainSub || "その他",
                                 castingId: item.castId || "",
+                                castEmail: castEmail || undefined,
                                 status: "仮キャスティング",
                                 startDate: calendarDate,
                                 startTime: data.startTime || undefined,
@@ -354,7 +423,7 @@ export const notifyOrderCreated = onCall(
 
                             if (eventId) {
                                 const key = `${item.castName}_${startDate || dateRange}`;
-                                calendarResults[key] = eventId;
+                                calendarResults[key] = { eventId, castEmail: castEmail || "" };
                             }
                         } catch (eventError) {
                             const errMsg = eventError instanceof Error ? eventError.message : String(eventError);
@@ -402,7 +471,7 @@ export const notifyOrderCreated = onCall(
                             : dateRange;
                         const key = `${item.castName}_${startDate}`;
                         if (calendarResults[key]) {
-                            updateData.calendarEventId = calendarResults[key]!;
+                            updateData.calendarEventId = calendarResults[key]!.eventId;
                             break;
                         }
                     }
@@ -647,7 +716,7 @@ export const notifyOrderUpdated = onCall(
             endDate?: string;
             startTime?: string;
             endTime?: string;
-            projectName?: string;
+            projectName?: string | { from: string; to: string };
         };
 
         // 変更前の値を記録 & Firestore更新用オブジェクト構築
@@ -676,13 +745,74 @@ export const notifyOrderUpdated = onCall(
             changeDetails.endTime = { from: casting.endTime || "", to: changes.endTime };
             updateData.endTime = changes.endTime;
         }
+
+        // projectName の処理（{from, to} オブジェクト or 文字列に対応）
+        let projectNameFrom = "";
+        let projectNameTo = "";
         if (changes.projectName) {
-            changeDetails.projectName = { from: casting.projectName || "", to: changes.projectName };
-            updateData.projectName = changes.projectName;
+            if (typeof changes.projectName === "object" && "from" in changes.projectName && "to" in changes.projectName) {
+                projectNameFrom = changes.projectName.from;
+                projectNameTo = changes.projectName.to;
+            } else if (typeof changes.projectName === "string") {
+                projectNameFrom = casting.projectName || "";
+                projectNameTo = changes.projectName;
+            }
+            if (projectNameTo) {
+                changeDetails.projectName = { from: projectNameFrom, to: projectNameTo };
+                updateData.projectName = projectNameTo;
+            }
         }
 
         // Firestore更新
         await castingRef.update(updateData);
+
+        // ── projectName cascade: castMaster / shootingContacts 更新 ──
+        if (projectNameTo && projectNameFrom !== projectNameTo) {
+            const castId = casting.castId;
+            console.log(`Cascading projectName change for castId=${castId}: "${projectNameFrom}" → "${projectNameTo}"`);
+
+            // castMaster 更新
+            try {
+                const masterSnap = await db.collection("castMaster")
+                    .where("castId", "==", castId)
+                    .where("projectName", "==", projectNameFrom)
+                    .get();
+                const batch1 = db.batch();
+                masterSnap.docs.forEach(doc => {
+                    batch1.update(doc.ref, {
+                        projectName: projectNameTo,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                });
+                if (!masterSnap.empty) {
+                    await batch1.commit();
+                    console.log(`Updated ${masterSnap.size} castMaster docs`);
+                }
+            } catch (e) {
+                console.error("castMaster cascade failed:", e);
+            }
+
+            // shootingContacts 更新
+            try {
+                const contactSnap = await db.collection("shootingContacts")
+                    .where("castId", "==", castId)
+                    .where("projectName", "==", projectNameFrom)
+                    .get();
+                const batch2 = db.batch();
+                contactSnap.docs.forEach(doc => {
+                    batch2.update(doc.ref, {
+                        projectName: projectNameTo,
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                });
+                if (!contactSnap.empty) {
+                    await batch2.commit();
+                    console.log(`Updated ${contactSnap.size} shootingContacts docs`);
+                }
+            } catch (e) {
+                console.error("shootingContacts cascade failed:", e);
+            }
+        }
 
         // Slack通知（スレッド返信）
         const slackToken = getEnv("SLACK_BOT_TOKEN");
@@ -692,7 +822,7 @@ export const notifyOrderUpdated = onCall(
         if (slackToken && slackChannel && slackThreadTs) {
             const message = buildOrderUpdateMessage({
                 castName: casting.castName,
-                projectName: casting.projectName,
+                projectName: projectNameTo || casting.projectName,
                 changes: changeDetails,
             });
 
@@ -707,18 +837,37 @@ export const notifyOrderUpdated = onCall(
             serviceAccountKey &&
             calendarId &&
             casting.castType === "内部" &&
-            casting.calendarEventId &&
-            (changes.startDate || changes.startTime || changes.endTime)
+            casting.calendarEventId
         ) {
-            const newStartDate = changes.startDate || casting.startDate?.toDate?.()?.toISOString().split("T")[0] || "";
-            await updateCalendarEventTime({
-                serviceAccountKey,
-                calendarId,
-                eventId: casting.calendarEventId,
-                startDate: newStartDate,
-                startTime: changes.startTime || casting.startTime,
-                endTime: changes.endTime || casting.endTime,
-            });
+            // 日時変更
+            if (changes.startDate || changes.startTime || changes.endTime) {
+                const newStartDate = changes.startDate || casting.startDate?.toDate?.()?.toISOString().split("T")[0] || "";
+                await updateCalendarEventTime({
+                    serviceAccountKey,
+                    calendarId,
+                    eventId: casting.calendarEventId,
+                    startDate: newStartDate,
+                    startTime: changes.startTime || casting.startTime,
+                    endTime: changes.endTime || casting.endTime,
+                });
+            }
+
+            // 作品名変更時: カレンダーイベントのタイトル更新
+            if (projectNameTo && projectNameFrom !== projectNameTo) {
+                try {
+                    await updateCalendarEventTitle({
+                        serviceAccountKey,
+                        calendarId,
+                        eventId: casting.calendarEventId,
+                        castName: casting.castName,
+                        projectName: projectNameTo,
+                        isProvisional: ["仮キャスティング", "仮押さえ", "オーダー待ち", "打診中"].includes(casting.status || ""),
+                    });
+                    console.log("Calendar event title updated for projectName change");
+                } catch (e) {
+                    console.error("Calendar title update failed:", e);
+                }
+            }
         }
 
         return { success: true, changes: changeDetails };
