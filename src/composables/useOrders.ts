@@ -389,6 +389,21 @@ export function useOrders() {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
                     console.log('[DEBUG CF CALL] mode:', payload.mode)
 
+                    // ── カレンダー招待用OAuthトークンを先に取得 ──
+                    // ブラウザはユーザー操作に直結しないポップアップをブロックするため、
+                    // CF呼び出し前（クリック直後）にポップアップでトークンを取得しておく
+                    const hasInternalCasts = payload.items.some(i => i.castType === '内部')
+                    let calendarAccessToken: string | null = null
+                    if (hasInternalCasts) {
+                        try {
+                            const { getAccessToken } = useAuth()
+                            calendarAccessToken = await getAccessToken()
+                            console.log('[CALENDAR] OAuth token obtained (pre-CF)')
+                        } catch (authErr) {
+                            console.warn('[CALENDAR] OAuth token failed (pre-CF), attendees will be skipped:', authErr)
+                        }
+                    }
+
                     // PDF file → base64 (CFに渡してSlack SDKでアップロード)
                     let pdfBase64: string | undefined
                     let pdfFileName: string | undefined
@@ -436,16 +451,11 @@ export function useOrders() {
                         slackResult = result.data as { ts: string; permalink: string }
                         console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
 
-                        // ── カレンダー招待: ユーザーOAuthでattendees追加 ──
-                        // SA では attendees 追加に DWD が必要なため、フロントのユーザーOAuth で対応
-                        // トークンが無い/期限切れの場合はGoogleログインポップアップで再取得
+                        // ── カレンダー招待: 事前取得したOAuthトークンでattendees追加 ──
                         const cfData = result.data as Record<string, unknown>
                         const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
                         const calendarId = import.meta.env.VITE_CALENDAR_ID_INTERNAL
-                        const { getAccessToken } = useAuth()
-                        const accessToken = calendarResults && Object.keys(calendarResults).length > 0
-                            ? await getAccessToken()
-                            : null
+                        const accessToken = calendarAccessToken // 事前取得済み
 
                         if (calendarResults && calendarId && accessToken) {
                             for (const [key, { eventId, castEmail }] of Object.entries(calendarResults)) {
@@ -484,7 +494,7 @@ export function useOrders() {
                                 }
                             }
                         } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
-                            console.warn('[CALENDAR] Attendee addition skipped: failed to obtain OAuth token')
+                            console.warn('[CALENDAR] Attendee addition skipped: no OAuth token available')
                         }
                     } else {
                         console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)
