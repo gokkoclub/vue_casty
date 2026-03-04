@@ -88,6 +88,7 @@ const showOrderTypeDialog = ref(false)
 const selectedCast = ref<Cast | null>(null)
 const showDetailDialog = ref(false)
 const showNewCastModal = ref(false)
+const syncingShootings = ref(false)
 
 // Date update handler
 const handleDatesUpdate = (dates: Date[]) => {
@@ -165,7 +166,7 @@ watch(selectedShooting, (newShooting, oldShooting) => {
     // Reset projects for new shooting
     store.projects = []
     store.createProject({
-      title: newShooting.title,
+      title: '',
       roles: []
     })
   } else if (newShooting && !oldShooting) {
@@ -178,7 +179,7 @@ watch(selectedShooting, (newShooting, oldShooting) => {
     // Initialize projects for shooting mode
     if (store.projects.length === 0) {
       store.createProject({
-        title: newShooting.title,
+        title: '',
         roles: []
       })
     }
@@ -282,8 +283,8 @@ const handleNewCastSaved = (cast: Cast) => {
 // Order submission with progress
 const { submitOrder } = useOrders()
 
-const handleSubmitOrder = async (pdfFile?: File | null) => {
-  const success = await submitOrder(pdfFile ?? undefined)
+const handleSubmitOrder = async (pdfFile?: File | null, intimacy?: string) => {
+  const success = await submitOrder(pdfFile ?? undefined, intimacy)
   
   if (success) {
     // Use nextTick to avoid recursive updates
@@ -312,6 +313,35 @@ const handleOpenCart = () => {
   store.cartVisible = true
 }
 
+
+// 撮影日手動同期
+const SHOOTINGS_SYNC_URL = import.meta.env.VITE_SHOOTINGS_SYNC_URL || ''
+
+const handleSyncShootings = async () => {
+  if (!SHOOTINGS_SYNC_URL) {
+    toast.add({ severity: 'warn', summary: '未設定', detail: 'VITE_SHOOTINGS_SYNC_URL を .env.local に設定してください', life: 5000 })
+    return
+  }
+  syncingShootings.value = true
+  toast.add({ severity: 'info', summary: '同期中...', detail: 'Notionから撮影データを取得しています', life: 3000 })
+  try {
+    const res = await fetch(SHOOTINGS_SYNC_URL)
+    const json = await res.json()
+    if (json.success) {
+      toast.add({ severity: 'success', summary: '同期完了', detail: `更新${json.result?.updated || 0}件 / 新規${json.result?.added || 0}件 / 削除${json.result?.deleted || 0}件`, life: 5000 })
+      // Firestoreのshootingsを再取得
+      if (selectedDates.value.length > 0) {
+        await fetchShootingsByDates(selectedDates.value)
+      }
+    } else {
+      toast.add({ severity: 'error', summary: '同期失敗', detail: json.error || '不明なエラー', life: 5000 })
+    }
+  } catch (e: any) {
+    toast.add({ severity: 'error', summary: '通信エラー', detail: e.message, life: 5000 })
+  } finally {
+    syncingShootings.value = false
+  }
+}
 
 // Lifecycle
 let unsubscribe: (() => void) | null = null
@@ -382,9 +412,20 @@ onUnmounted(() => {
           <!-- 2. 案件選択 -->
           <Card class="shooting-card" :class="{ 'disabled-card': selectedDates.length === 0 }">
             <template #title>
-              <div class="step-title">
-                <span class="step-num">2</span>
-                <span>案件を選択</span>
+              <div class="step-title" style="justify-content: space-between; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <span class="step-num">2</span>
+                  <span>案件を選択</span>
+                </div>
+                <Button
+                  icon="pi pi-refresh"
+                  label="更新"
+                  severity="info"
+                  outlined
+                  size="small"
+                  :loading="syncingShootings"
+                  @click.stop="handleSyncShootings"
+                />
               </div>
             </template>
             <template #content>

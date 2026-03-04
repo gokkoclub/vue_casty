@@ -47,6 +47,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
+// リージョン設定（東京）- MUST be before any function re-exports
+(0, options_1.setGlobalOptions)({ region: "asia-northeast1" });
 const admin = __importStar(require("firebase-admin"));
 const slack_1 = require("./slack");
 const calendar_1 = require("./calendar");
@@ -58,8 +60,6 @@ Object.defineProperty(exports, "syncShootingDetailsToContacts", { enumerable: tr
 var driveSync_1 = require("./driveSync");
 Object.defineProperty(exports, "syncDriveLinksToContacts", { enumerable: true, get: function () { return driveSync_1.syncDriveLinksToContacts; } });
 admin.initializeApp();
-// リージョン設定（東京）
-(0, options_1.setGlobalOptions)({ region: "asia-northeast1" });
 // ──────────────────────────────────────
 // 環境変数の取得ヘルパー
 // ──────────────────────────────────────
@@ -702,10 +702,10 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
         catch (e) {
             console.error("castMaster cascade failed:", e);
         }
-        // shootingContacts 更新
+        // shootingContacts 更新（castingId で検索）
         try {
             const contactSnap = await db.collection("shootingContacts")
-                .where("castId", "==", castId)
+                .where("castingId", "==", data.castingId)
                 .where("projectName", "==", projectNameFrom)
                 .get();
             const batch2 = db.batch();

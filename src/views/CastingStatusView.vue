@@ -10,6 +10,7 @@ import { useBulkSelection } from '@/composables/useBulkSelection'
 import { useLoading } from '@/composables/useLoading'
 import CastingStatusList from '@/components/casting/CastingStatusList.vue'
 import StatusChangeModal from '@/components/status/StatusChangeModal.vue'
+import OrderWaitEmailModal from '@/components/status/OrderWaitEmailModal.vue'
 import BulkActionBar from '@/components/status/BulkActionBar.vue'
 import BulkStatusModal from '@/components/status/BulkStatusModal.vue'
 import SummaryModal from '@/components/common/SummaryModal.vue'
@@ -51,6 +52,7 @@ const orderWaitOnly = ref(false)
 const viewMode = ref<'date' | 'project'>('date')
 
 const showStatusModal = ref(false)
+const showOrderWaitEmail = ref(false)
 const selectedCasting = ref<Casting | null>(null)
 const showBulkStatusModal = ref(false)
 const showSummaryModal = ref(false)
@@ -144,9 +146,16 @@ const isCastOnDate = (casting: Casting, dateStr: string): boolean => {
   return target >= start && target <= end
 }
 
+const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
 const openStatusModal = (castingId: string) => {
   selectedCasting.value = getCastingById(castingId) || null
-  showStatusModal.value = true
+  const casting = selectedCasting.value
+  if (casting && casting.castType === '外部' && ORDER_WAIT_STATUSES.includes(casting.status)) {
+    showOrderWaitEmail.value = true
+  } else {
+    showStatusModal.value = true
+  }
 }
 
 const { withLoading } = useLoading()
@@ -202,6 +211,13 @@ const handleOpenSummary = (castings: Casting[]) => {
 
 const handleOpenEmail = (casting: Casting) => {
   console.log('Open email for:', casting)
+}
+
+const handleEmailCopied = async (castingId: string) => {
+  showOrderWaitEmail.value = false
+  await withLoading('ステータスを更新中...', async () => {
+    await updateCastingStatus(castingId, '打診中')
+  })
 }
 
 const getAllCastingIds = (): string[] => {
@@ -633,6 +649,12 @@ const countCastings = (dateGroup: any) => {
       v-model:visible="showStatusModal"
       :casting="selectedCasting"
       @confirm="handleModalStatusUpdate"
+    />
+
+    <OrderWaitEmailModal
+      v-model:visible="showOrderWaitEmail"
+      :casting="selectedCasting"
+      @copied="handleEmailCopied"
     />
 
     <SummaryModal

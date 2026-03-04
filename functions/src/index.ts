@@ -12,6 +12,10 @@
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { setGlobalOptions } from "firebase-functions/v2/options";
+
+// リージョン設定（東京）- MUST be before any function re-exports
+setGlobalOptions({ region: "asia-northeast1" });
+
 import * as admin from "firebase-admin";
 import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage } from "./slack";
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
@@ -22,9 +26,6 @@ export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDet
 export { syncDriveLinksToContacts } from "./driveSync";
 
 admin.initializeApp();
-
-// リージョン設定（東京）
-setGlobalOptions({ region: "asia-northeast1" });
 
 // ──────────────────────────────────────
 // 環境変数の取得ヘルパー
@@ -792,10 +793,10 @@ export const notifyOrderUpdated = onCall(
                 console.error("castMaster cascade failed:", e);
             }
 
-            // shootingContacts 更新
+            // shootingContacts 更新（castingId で検索）
             try {
                 const contactSnap = await db.collection("shootingContacts")
-                    .where("castId", "==", castId)
+                    .where("castingId", "==", data.castingId)
                     .where("projectName", "==", projectNameFrom)
                     .get();
                 const batch2 = db.batch();

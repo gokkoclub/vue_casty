@@ -1,0 +1,107 @@
+/**
+ * キャストごとの撮影日一覧を「撮影スケ_キャスト」に横持ちで出力
+ * 仕様：
+ *  A列：キャスト名（既存）
+ *  B列以降：そのキャストの全撮影日（昇順、重複排除、M/d表示）
+ */
+function buildCastShootCalendar() {
+  const TZ = 'Asia/Tokyo';
+  const DATE_FMT = 'M/d'; // 例: 10/9
+  const SRC_SHEET = '撮影スケ_日付';
+  const DST_SHEET = '撮影スケ_キャスト';
+
+  const ss = SpreadsheetApp.getActive();
+  const src = ss.getSheetByName(SRC_SHEET);
+  const dst = ss.getSheetByName(DST_SHEET);
+  if (!src || !dst) throw new Error('シート名を確認してください。');
+
+  // ---- 入力取得（「撮影スケ_日付」）----
+  const lastRow = src.getLastRow();
+  if (lastRow < 2) return;
+
+  // A〜L をまとめて取得（A:日付, B:チーム, C〜L:キャスト）
+  const range = src.getRange(2, 1, lastRow - 1, 12);
+  const values = range.getValues();
+
+  // 仕切り文字：, 、 ， ・ / を考慮（スペースはTRIMで圧縮）
+  const SPLIT_RE = /[,\u3001\uFF0C\u30FB\/]/;
+  const TRIM_RE = /[\s\u3000]+/g;
+
+  // name -> Set<dateString> のマップ
+  const nameToDates = new Map();
+
+  for (const row of values) {
+    const dateCell = row[0]; // A列
+    if (!dateCell) continue;
+
+    const d = (dateCell instanceof Date) ? dateCell : new Date(dateCell);
+    if (isNaN(d)) continue;
+    const dStr = Utilities.formatDate(d, TZ, DATE_FMT);
+
+    // C〜L（インデックス2〜11）
+    for (let c = 2; c <= 11; c++) {
+      const cell = row[c];
+      if (!cell) continue;
+
+      const raw = String(cell).split(SPLIT_RE)
+        .map(s => String(s).replace(TRIM_RE, ' ').trim())
+        .filter(s => s.length > 0);
+
+      for (const name of raw) {
+        if (!nameToDates.has(name)) nameToDates.set(name, new Set());
+        nameToDates.get(name).add(dStr);
+      }
+    }
+  }
+
+  // ---- 出力（「撮影スケ_キャスト」）----
+  const dstLastRow = dst.getLastRow();
+  if (dstLastRow < 2) return;
+
+  // 既存のB列以降を一旦クリア
+  const maxCols = Math.max(26, dst.getLastColumn());
+  if (maxCols >= 2) {
+    dst.getRange(2, 2, dstLastRow - 1, maxCols - 1).clearContent();
+  }
+
+  // キャスト名一覧（A列）
+  const names = dst.getRange(2, 1, dstLastRow - 1, 1).getValues().map(r => (r[0] || '').toString().trim());
+
+  const out = [];
+  let maxWidth = 0;
+
+  for (const cast of names) {
+    if (!cast) { out.push([]); continue; }
+    const dates = nameToDates.get(cast);
+    if (!dates || dates.size === 0) { out.push([]); continue; }
+
+    // "M/d" の昇順
+    const sorted = Array.from(dates).sort((a, b) => {
+      const [am, ad] = a.split('/').map(n => parseInt(n, 10));
+      const [bm, bd] = b.split('/').map(n => parseInt(n, 10));
+      return am === bm ? ad - bd : am - bm;
+    });
+    out.push(sorted);
+    if (sorted.length > maxWidth) maxWidth = sorted.length;
+  }
+
+  if (maxWidth > 0 && names.length > 0) {
+    dst.getRange(2, 2, names.length, maxWidth).setValues(
+      out.map(row => {
+        const r = row.slice();
+        while (r.length < maxWidth) r.push('');
+        return r;
+      })
+    );
+  }
+
+  // 見やすさ（シートの列数を超えないように）
+  const resizeCols = Math.min(Math.max(2 + maxWidth, 2), dst.getMaxColumns());
+  dst.autoResizeColumns(1, resizeCols);
+  dst.getRange(1, 2).setValue('撮影日一覧');
+}
+
+/**
+ * 補助：区切りに「・」「/」など別パターンを追加したい場合は SPLIT_RE を編集。
+ * 年跨ぎなどで厳密な日付ソートが必要なら、「元Dateも保持→最後にDateでsort→書式化」で対応。
+ */

@@ -493,7 +493,6 @@ function buildCastShootCalendar() {
  * 年跨ぎなどで厳密な日付ソートが必要なら、「元Dateも保持→最後にDateでsort→書式化」で対応。
  */
 
-
  /**
  * 新香盤 - Notion撮影DB → スプレッドシート → Firestore 完全同期
  * 
@@ -822,559 +821,6 @@ function syncShootScheduleFromNotion(){
 
   console.log(`同期完了: 更新 ${updateCount}件 / 新規 ${rowsToAppend.length}件 / 削除 ${deletedIds.length}件`);
 }
-
-/**
- * オフショット通知GAS
- * 
- * 機能:
- * 1. オフショット連絡用シートにNotionPageIDとDriveリンクを記録
- * 2. アウト時間の10分後に助監督へSlack通知
- * 
- * シート構造:
- * - オフショット連絡用: A:撮影日, B:チーム名, C:アウト時間, D:助監督名, E:助監督2, F:NotionPageID, G:オフショットリンク, H:通知済み
- * - 新香盤撮影リスト: A:PageID, B:タイトル, C:撮影日, D:撮影チーム, E:CD, F:FD, G:P
- * - オフショットDrive: A:NotionPageID, B:リンク
- * - 内部キャストDB: A:本名, B:fullname, C:displayname, D:email, E:userid
- */
-
-/* ========= 設定 ========= */
-const SPREADSHEET_ID = '1Wt7Y03D_s7ZPRZEli3WWERaFmNpHep8IE7vB-JiSyKc';
-const SHEET_OFFSHOT_CONTACT = 'オフショット連絡用';
-const SHEET_SHOOTING_LIST = '新香盤撮影リスト';
-const SHEET_OFFSHOT_DRIVE = 'オフショットDrive';
-const SHEET_INTERNAL_CAST_DB = '内部キャストDB';
-
-// Slack設定
-const SLACK_CHANNEL_ID = 'C04STCLS9MF'; // 通知先チャンネルID（#チャンネル名の右クリックでコピー可能）
-
-// Slack Bot Token（スクリプトプロパティから取得）
-function getSlackBotToken() {
-  return PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
-}
-
-/* ========= メイン処理 ========= */
-
-/**
- * オフショット連絡用シートにNotionPageIDとDriveリンクを追記する
- */
-function enrichOffshotData() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
-  const shootingListSheet = ss.getSheetByName(SHEET_SHOOTING_LIST);
-  const offshotDriveSheet = ss.getSheetByName(SHEET_OFFSHOT_DRIVE);
-
-  if (!offshotSheet || !shootingListSheet || !offshotDriveSheet) {
-    Logger.log('必要なシートが見つかりません');
-    return;
-  }
-
-  // 各シートのデータ取得
-  const offshotData = offshotSheet.getDataRange().getValues();
-  const shootingListData = shootingListSheet.getDataRange().getValues();
-  const offshotDriveData = offshotDriveSheet.getDataRange().getValues();
-
-  // ヘッダー行を確認・追加（F:NotionPageID, G:オフショットリンク, H:通知済み）
-  ensureHeaders(offshotSheet, offshotData);
-
-  // 2行目以降を処理（1行目はヘッダー）
-  for (let i = 1; i < offshotData.length; i++) {
-    const row = offshotData[i];
-    const shootingDate = row[0];      // A列: 撮影日
-    const teamName = safeString(row[1]); // B列: チーム名
-    const fdName = safeString(row[3]);   // D列: 助監督名
-    const notionPageId = safeString(row[5]); // F列: NotionPageID
-
-    // 既にNotionPageIDがあればスキップ
-    if (notionPageId) continue;
-
-    // 日付がなければスキップ
-    if (!shootingDate) continue;
-
-    // 新香盤撮影リストからNotionPageIDを検索
-    const matchedPageId = matchNotionPageId(shootingDate, teamName, fdName, shootingListData);
-    
-    if (matchedPageId) {
-      // NotionPageIDを記録（F列）
-      offshotSheet.getRange(i + 1, 6).setValue(matchedPageId);
-      Logger.log(`行${i + 1}: NotionPageID「${matchedPageId}」を記録`);
-
-      // オフショットDriveからリンクを取得
-      const driveLink = getDriveLinkByPageId(matchedPageId, offshotDriveData);
-      if (driveLink) {
-        offshotSheet.getRange(i + 1, 7).setValue(driveLink);
-        Logger.log(`行${i + 1}: Driveリンクを記録`);
-      }
-    } else {
-      Logger.log(`行${i + 1}: 一致するレコードが見つかりませんでした（${shootingDate} / ${teamName} / ${fdName}）`);
-    }
-  }
-
-  Logger.log('enrichOffshotData 完了');
-}
-
-/**
- * ヘッダーを確認し、必要に応じて追加
- */
-function ensureHeaders(sheet, data) {
-  const headers = data[0];
-  const expectedHeaders = ['撮影日', 'チーム名', 'アウト時間', '助監督名', '助監督2', 'NotionPageID', 'オフショットリンク', '通知済み'];
-  
-  // 既存ヘッダーが不足している場合は追加
-  for (let i = 0; i < expectedHeaders.length; i++) {
-    if (!headers[i] || headers[i] !== expectedHeaders[i]) {
-      sheet.getRange(1, i + 1).setValue(expectedHeaders[i]);
-    }
-  }
-}
-
-/**
- * 新香盤撮影リストから撮影日・チーム名・FDが一致するPageIDを取得
- * @param {Date|string} shootingDate 撮影日
- * @param {string} teamName チーム名
- * @param {string} fdName 助監督名
- * @param {Array} shootingListData 新香盤撮影リストのデータ
- * @returns {string|null} PageID
- */
-function matchNotionPageId(shootingDate, teamName, fdName, shootingListData) {
-  const normalizedTeamName = normalizeName(teamName);
-  const normalizedFdName = normalizeName(fdName);
-  const shootingDateStr = formatDateForComparison(shootingDate);
-
-  // 1行目はヘッダーなのでスキップ
-  for (let i = 1; i < shootingListData.length; i++) {
-    const row = shootingListData[i];
-    const pageId = safeString(row[0]);       // A列: PageID
-    const listDate = row[2];                  // C列: 撮影日
-    const listTeam = normalizeName(safeString(row[3])); // D列: 撮影チーム
-    const listFd = normalizeName(safeString(row[5]));   // F列: FD
-
-    const listDateStr = formatDateForComparison(listDate);
-
-    // 撮影日・チーム名・FDが一致するか確認
-    if (shootingDateStr === listDateStr && 
-        normalizedTeamName === listTeam && 
-        normalizedFdName === listFd) {
-      return pageId;
-    }
-  }
-  return null;
-}
-
-/**
- * オフショットDriveシートからNotionPageIDでDriveリンクを取得
- * @param {string} pageId NotionPageID
- * @param {Array} offshotDriveData オフショットDriveのデータ
- * @returns {string|null} Driveリンク
- */
-function getDriveLinkByPageId(pageId, offshotDriveData) {
-  const normalizedPageId = safeString(pageId).replace(/-/g, '');
-
-  for (let i = 1; i < offshotDriveData.length; i++) {
-    const row = offshotDriveData[i];
-    const drivePageId = safeString(row[0]).replace(/-/g, '');
-    const driveLink = safeString(row[1]);
-
-    if (normalizedPageId === drivePageId) {
-      return driveLink;
-    }
-  }
-  return null;
-}
-
-/* ========= Slack通知 ========= */
-
-/**
- * アウト時間の10分後に該当する行にSlack通知を送信
- * トリガーで5分ごとに実行することを推奨
- */
-function checkAndNotify() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
-  const castDbSheet = ss.getSheetByName(SHEET_INTERNAL_CAST_DB);
-
-  if (!offshotSheet || !castDbSheet) {
-    Logger.log('必要なシートが見つかりません');
-    return;
-  }
-
-  const offshotData = offshotSheet.getDataRange().getValues();
-  const castDbData = castDbSheet.getDataRange().getValues();
-  const now = new Date();
-
-  // 2行目以降を処理
-  for (let i = 1; i < offshotData.length; i++) {
-    const row = offshotData[i];
-    const shootingDate = row[0];           // A列: 撮影日
-    const teamName = safeString(row[1]);   // B列: チーム名
-    const outTimeValue = row[2];           // C列: アウト時間
-    const fdName = safeString(row[3]);     // D列: 助監督名
-    const fdName2 = safeString(row[4]);    // E列: 助監督2
-    const driveLink = safeString(row[6]);  // G列: オフショットリンク
-    const notified = safeString(row[7]);   // H列: 通知済み
-
-    // 既に通知済みならスキップ
-    if (notified === '済') continue;
-
-    // アウト時間がなければスキップ
-    if (!outTimeValue) continue;
-
-    // Driveリンクがなければスキップ（リンクがないと通知できない）
-    if (!driveLink) continue;
-
-    // 撮影日とアウト時間からDateTimeを構築
-    const outDateTime = buildDateTime(shootingDate, outTimeValue);
-    if (!outDateTime) continue;
-
-    // アウト時間+10分のタイミングをチェック
-    const notifyTime = new Date(outDateTime.getTime() + 10 * 60 * 1000);
-    
-    // 現在時刻が通知時刻を過ぎていて、かつ30分以内（古すぎる通知は無視）
-    const timeDiff = now.getTime() - notifyTime.getTime();
-    if (timeDiff >= 0 && timeDiff < 30 * 60 * 1000) {
-      // 助監督にSlack通知を送信
-      const sent = sendNotificationToFd(fdName, driveLink, shootingDate, teamName, castDbData);
-      if (fdName2) {
-        sendNotificationToFd(fdName2, driveLink, shootingDate, teamName, castDbData);
-      }
-
-      // 通知済みを記録
-      if (sent) {
-        offshotSheet.getRange(i + 1, 8).setValue('済');
-        Logger.log(`行${i + 1}: 通知送信 & 通知済みを記録`);
-      }
-    }
-  }
-
-  Logger.log('checkAndNotify 完了');
-}
-
-/**
- * 助監督にSlack通知を送信（チャンネルにメンション付きで投稿）
- * @param {string} fdName 助監督名
- * @param {string} driveLink Driveリンク
- * @param {Date|string} shootingDate 撮影日
- * @param {string} teamName チーム名
- * @param {Array} castDbData 内部キャストDBのデータ
- * @returns {boolean} 送信成功したかどうか
- */
-function sendNotificationToFd(fdName, driveLink, shootingDate, teamName, castDbData) {
-  const slackId = getSlackIdByName(fdName, castDbData);
-  if (!slackId) {
-    Logger.log(`SlackIDが見つかりません: ${fdName}`);
-    return false;
-  }
-
-  // 撮影日をフォーマット（M/D形式）
-  let dateStr = '';
-  if (shootingDate instanceof Date) {
-    dateStr = `${shootingDate.getMonth() + 1}/${shootingDate.getDate()}`;
-  } else if (shootingDate) {
-    const d = new Date(shootingDate);
-    if (!isNaN(d.getTime())) {
-      dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
-    } else {
-      dateStr = String(shootingDate);
-    }
-  }
-
-  // メッセージ作成（コードブロックで赤文字表示）
-  const message = `<@${slackId}> \n\`オフショット格納の連絡です。\`\n以下Driveに、${dateStr}_${teamName}撮影のオフショットを格納してください。\n${driveLink}`;
-  
-  return sendSlackChannelMessage(message);
-}
-
-/**
- * 内部キャストDBから名前でSlackIDを取得
- * @param {string} name 名前
- * @param {Array} castDbData 内部キャストDBのデータ
- * @returns {string|null} SlackID (userid)
- */
-function getSlackIdByName(name, castDbData) {
-  const normalizedName = normalizeName(name);
-
-  // 1行目はヘッダーなのでスキップ
-  for (let i = 1; i < castDbData.length; i++) {
-    const row = castDbData[i];
-    const honmyou = normalizeName(safeString(row[0]));     // A列: 本名
-    const fullname = normalizeName(safeString(row[1]));    // B列: fullname
-    const displayname = normalizeName(safeString(row[2])); // C列: displayname
-    const userid = safeString(row[4]);                      // E列: userid
-
-    // 本名、fullname、displaynameのいずれかに一致
-    if (normalizedName === honmyou || 
-        normalizedName === fullname || 
-        normalizedName === displayname) {
-      return userid;
-    }
-  }
-  return null;
-}
-
-/**
- * Slackチャンネルにメッセージを送信
- * @param {string} message メッセージ
- * @returns {boolean} 送信成功したかどうか
- */
-function sendSlackChannelMessage(message) {
-  const token = getSlackBotToken();
-  if (!token) {
-    Logger.log('SLACK_BOT_TOKENが設定されていません。スクリプトプロパティに設定してください。');
-    return false;
-  }
-
-  try {
-    // チャンネルにメッセージを送信
-    const postRes = UrlFetchApp.fetch('https://slack.com/api/chat.postMessage', {
-      method: 'post',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      payload: JSON.stringify({
-        channel: SLACK_CHANNEL_ID,
-        text: message,
-        link_names: true  // メンションを有効化
-      })
-    });
-
-    const postData = JSON.parse(postRes.getContentText());
-    if (!postData.ok) {
-      Logger.log(`Slack chat.postMessage 失敗: ${postData.error}`);
-      return false;
-    }
-
-    Logger.log(`Slackチャンネル通知送信成功`);
-    return true;
-
-  } catch (e) {
-    Logger.log(`Slack通知送信エラー: ${e}`);
-    return false;
-  }
-}
-
-/* ========= ユーティリティ ========= */
-
-/**
- * 安全な文字列化
- */
-function safeString(v) {
-  return (v == null) ? '' : String(v).trim();
-}
-
-/**
- * 名前の正規化（スペース除去、トリム、小文字化）
- */
-function normalizeName(s) {
-  if (!s) return '';
-  let t = s.toString().normalize('NFKC');
-  t = t.replace(/\s+/g, '').replace(/[\u3000]/g, ''); // 空白削除（半角・全角）
-  t = t.trim().toLowerCase();
-  return t;
-}
-
-/**
- * 日付を比較用の文字列に変換（YYYY-MM-DD形式）
- */
-function formatDateForComparison(date) {
-  if (!date) return '';
-  
-  let d;
-  if (date instanceof Date) {
-    d = date;
-  } else {
-    // 文字列の場合はパース試行
-    d = new Date(date);
-    if (isNaN(d.getTime())) return '';
-  }
-
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * 撮影日とアウト時間からDateTimeを構築
- */
-function buildDateTime(shootingDate, outTime) {
-  if (!shootingDate) return null;
-
-  let baseDate;
-  if (shootingDate instanceof Date) {
-    baseDate = new Date(shootingDate);
-  } else {
-    baseDate = new Date(shootingDate);
-    if (isNaN(baseDate.getTime())) return null;
-  }
-
-  // アウト時間をパース
-  let hours = 0, minutes = 0;
-  if (outTime instanceof Date) {
-    hours = outTime.getHours();
-    minutes = outTime.getMinutes();
-  } else if (typeof outTime === 'string') {
-    const match = outTime.match(/^(\d{1,2}):(\d{2})$/);
-    if (match) {
-      hours = parseInt(match[1], 10);
-      minutes = parseInt(match[2], 10);
-    }
-  }
-
-  baseDate.setHours(hours, minutes, 0, 0);
-  return baseDate;
-}
-
-/* ========= 初期設定用関数 ========= */
-
-/**
- * Slack Bot Tokenをスクリプトプロパティに設定する
- * GASエディタから手動で1回実行してください
- */
-function setSlackBotToken() {
-  const token = 'xoxb-YOUR-SLACK-BOT-TOKEN-HERE';  // ここにトークンを設定
-  PropertiesService.getScriptProperties().setProperty('SLACK_BOT_TOKEN', token);
-  Logger.log('SLACK_BOT_TOKENを設定しました');
-}
-
-/**
- * トリガーを設定する（5分ごとにcheckAndNotifyを実行）
- */
-function createNotifyTrigger() {
-  // 既存のトリガーを削除
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === 'checkAndNotify') {
-      ScriptApp.deleteTrigger(trigger);
-    }
-  });
-
-  // 5分ごとのトリガーを作成
-  ScriptApp.newTrigger('checkAndNotify')
-    .timeBased()
-    .everyMinutes(5)
-    .create();
-  
-  Logger.log('checkAndNotify のトリガーを作成しました（5分ごと）');
-}
-
-/* ========= デバッグ用関数 ========= */
-
-/**
- * Slack接続テスト - GASエディタから手動で実行してください
- * これでSlackへの接続が正しく動作するか確認できます
- */
-function testSlackConnection() {
-  Logger.log('=== Slack接続テスト開始 ===');
-  
-  // 1. トークンの確認
-  const token = getSlackBotToken();
-  if (!token) {
-    Logger.log('❌ SLACK_BOT_TOKENが設定されていません！');
-    Logger.log('→ setSlackBotToken()を実行してトークンを設定してください');
-    return;
-  }
-  Logger.log('✅ SLACK_BOT_TOKEN: 設定済み（' + token.substring(0, 10) + '...）');
-  
-  // 2. チャンネルIDの確認
-  Logger.log('📢 SLACK_CHANNEL_ID: ' + SLACK_CHANNEL_ID);
-  
-  // 3. テストメッセージ送信
-  Logger.log('📤 テストメッセージを送信中...');
-  const result = sendSlackChannelMessage('🔧 テストメッセージ：オフショット通知システムの接続テストです');
-  
-  if (result) {
-    Logger.log('✅ Slack送信成功！');
-  } else {
-    Logger.log('❌ Slack送信失敗 - 上記のエラーログを確認してください');
-  }
-  
-  Logger.log('=== Slack接続テスト完了 ===');
-}
-
-/**
- * 通知対象行を確認するデバッグ関数
- * 条件に合致する行があるか確認します
- */
-function debugCheckNotifyTargets() {
-  Logger.log('=== 通知対象行の確認 ===');
-  
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
-  const castDbSheet = ss.getSheetByName(SHEET_INTERNAL_CAST_DB);
-
-  if (!offshotSheet || !castDbSheet) {
-    Logger.log('❌ 必要なシートが見つかりません');
-    return;
-  }
-
-  const offshotData = offshotSheet.getDataRange().getValues();
-  const castDbData = castDbSheet.getDataRange().getValues();
-  const now = new Date();
-  Logger.log('現在時刻: ' + now);
-  
-  let targetCount = 0;
-
-  for (let i = 1; i < offshotData.length; i++) {
-    const row = offshotData[i];
-    const shootingDate = row[0];
-    const teamName = safeString(row[1]);
-    const outTimeValue = row[2];
-    const fdName = safeString(row[3]);
-    const driveLink = safeString(row[6]);
-    const notified = safeString(row[7]);
-
-    Logger.log(`--- 行${i + 1} ---`);
-    Logger.log(`  撮影日: ${shootingDate}`);
-    Logger.log(`  チーム: ${teamName}`);
-    Logger.log(`  アウト時間: ${outTimeValue}`);
-    Logger.log(`  助監督: ${fdName}`);
-    Logger.log(`  Driveリンク: ${driveLink ? '有り' : '無し'}`);
-    Logger.log(`  通知済み: ${notified}`);
-
-    // 条件チェック
-    if (notified === '済') {
-      Logger.log(`  → スキップ: 通知済み`);
-      continue;
-    }
-    if (!outTimeValue) {
-      Logger.log(`  → スキップ: アウト時間なし`);
-      continue;
-    }
-    if (!driveLink) {
-      Logger.log(`  → スキップ: Driveリンクなし`);
-      continue;
-    }
-
-    const outDateTime = buildDateTime(shootingDate, outTimeValue);
-    if (!outDateTime) {
-      Logger.log(`  → スキップ: 日時構築失敗`);
-      continue;
-    }
-
-    const notifyTime = new Date(outDateTime.getTime() + 10 * 60 * 1000);
-    const timeDiff = now.getTime() - notifyTime.getTime();
-    
-    Logger.log(`  アウト時間+10分: ${notifyTime}`);
-    Logger.log(`  時間差: ${Math.round(timeDiff / 1000 / 60)}分`);
-
-    if (timeDiff >= 0 && timeDiff < 30 * 60 * 1000) {
-      Logger.log(`  ✅ 通知対象！`);
-      
-      // SlackID確認
-      const slackId = getSlackIdByName(fdName, castDbData);
-      Logger.log(`  SlackID: ${slackId || '見つかりません'}`);
-      
-      targetCount++;
-    } else if (timeDiff < 0) {
-      Logger.log(`  → スキップ: まだ通知時刻前（${Math.round(-timeDiff / 1000 / 60)}分後）`);
-    } else {
-      Logger.log(`  → スキップ: 通知時刻から30分以上経過`);
-    }
-  }
-
-  Logger.log(`=== 通知対象: ${targetCount}件 ===`);
-}
-
 /**
  * スプレッドシート → Firestore 同期スクリプト
  * 
@@ -1646,7 +1092,7 @@ function syncCastsToFirestore_() {
       imageUrl: notion.imageUrl || '',
       email: internal ? internal.email : (notion.email || ''),
       slackMentionId: internal ? internal.slackMentionId : '',
-      appearanceCount: notion.appearanceCount || 0,
+      // appearanceCount は上書きしない（Vue側で castings から作品単位で計算）
       snsX: notion.snsX || '',
       snsInstagram: notion.snsInstagram || '',
       snsTikTok: notion.snsTikTok || '',
@@ -1912,6 +1358,13 @@ function syncAllToFirestore() {
     results.casts = 'ERROR: ' + e.message;
   }
   
+  // ext_ → cast_ のID付替え（casts同期後に実行）
+  try {
+    mergeExtCastIds_();
+  } catch (e) {
+    console.error('ext_マージエラー:', e);
+  }
+  
   try {
     results.shootings = syncShootingsToFirestore_();
   } catch (e) {
@@ -1945,6 +1398,165 @@ function syncAllToFirestore() {
   console.log('====================================');
   
   return results;
+}
+
+// =============================================
+// ext_ → cast_ ID付替え処理
+// =============================================
+
+/**
+ * ext_ キャストを cast_XXXXX に統合する
+ * 同じ名前の ext_ と cast_ がFirestoreに存在する場合:
+ *   1. castings コレクションの castId を ext_ → cast_ に付替え
+ *   2. shootingContacts コレクションの castId も付替え
+ *   3. ext_ ドキュメントを削除
+ */
+function mergeExtCastIds_() {
+  console.log('=== ext_ マージ処理 開始 ===');
+  var token = getFirestoreToken_();
+  
+  // 1. Firestore から全 casts を取得
+  var allDocs = [];
+  var pageToken = null;
+  
+  do {
+    var castsUrl = FS_API_BASE + '/casts?pageSize=300';
+    if (pageToken) castsUrl += '&pageToken=' + pageToken;
+    
+    var res = UrlFetchApp.fetch(castsUrl, {
+      headers: { 'Authorization': 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+    
+    if (res.getResponseCode() !== 200) {
+      console.error('casts取得失敗:', res.getContentText());
+      return;
+    }
+    
+    var json = JSON.parse(res.getContentText());
+    if (json.documents) allDocs = allDocs.concat(json.documents);
+    pageToken = json.nextPageToken || null;
+  } while (pageToken);
+  
+  // ext_ ドキュメントと cast_ ドキュメントの名前マップを構築
+  var extDocs = {};   // name → { docId, fullName }
+  var castDocs = {};  // name → docId
+  
+  allDocs.forEach(function(doc) {
+    var nameField = doc.fields && doc.fields.name;
+    var name = nameField ? (nameField.stringValue || '') : '';
+    var docPath = doc.name.split('/').pop();
+    
+    if (docPath.indexOf('ext_') === 0 || docPath.length > 20) {
+      // ext_ プレフィックス or Firestore自動生成ID（addDoc由来）
+      if (name && !castDocs[name]) {
+        extDocs[name] = { docId: docPath, fullName: doc.name };
+      }
+    } else if (docPath.indexOf('cast_') === 0) {
+      castDocs[name] = docPath;
+    }
+  });
+  
+  // 2. 名前が一致する ext_ → cast_ のペアを見つけて付替え
+  var mergeCount = 0;
+  var extNames = Object.keys(extDocs);
+  
+  for (var i = 0; i < extNames.length; i++) {
+    var name = extNames[i];
+    var newCastId = castDocs[name];
+    if (!newCastId) continue; // cast_ 側がまだ無い → スキップ
+    
+    var oldExtId = extDocs[name].docId;
+    console.log('マージ対象: ' + oldExtId + ' → ' + newCastId + ' (' + name + ')');
+    
+    // 2a. castings コレクションの castId を付替え
+    replaceFieldInCollection_('castings', 'castId', oldExtId, newCastId);
+    
+    // 2b. shootingContacts コレクションの castId を付替え
+    replaceFieldInCollection_('shootingContacts', 'castId', oldExtId, newCastId);
+    
+    // 2c. ext_ ドキュメントを削除
+    var delUrl = FS_API_BASE + '/casts/' + oldExtId;
+    var delRes = UrlFetchApp.fetch(delUrl, {
+      method: 'delete',
+      headers: { 'Authorization': 'Bearer ' + token },
+      muteHttpExceptions: true
+    });
+    
+    if (delRes.getResponseCode() === 200 || delRes.getResponseCode() === 404) {
+      console.log('ext_ ドキュメント削除: ' + oldExtId);
+    }
+    
+    mergeCount++;
+    Utilities.sleep(200); // API制限対策
+  }
+  
+  console.log('=== ext_ マージ完了: ' + mergeCount + '件 ===');
+}
+
+/**
+ * Firestoreコレクション内の特定フィールドを検索・置換
+ * @param {string} collectionName コレクション名
+ * @param {string} field フィールド名
+ * @param {string} oldValue 旧値
+ * @param {string} newValue 新値
+ */
+function replaceFieldInCollection_(collectionName, field, oldValue, newValue) {
+  var token = getFirestoreToken_();
+  
+  // Structured Query で検索
+  var queryUrl = 'https://firestore.googleapis.com/v1/' + FS_DOC_BASE + ':runQuery';
+  var queryBody = {
+    structuredQuery: {
+      from: [{ collectionId: collectionName }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: field },
+          op: 'EQUAL',
+          value: { stringValue: oldValue }
+        }
+      }
+    }
+  };
+  
+  var res = UrlFetchApp.fetch(queryUrl, {
+    method: 'post',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    payload: JSON.stringify(queryBody),
+    muteHttpExceptions: true
+  });
+  
+  if (res.getResponseCode() !== 200) {
+    console.error('Query error (' + collectionName + '):', res.getContentText());
+    return;
+  }
+  
+  var results = JSON.parse(res.getContentText());
+  var updateCount = 0;
+  
+  for (var i = 0; i < results.length; i++) {
+    var r = results[i];
+    if (!r.document) continue;
+    var docName = r.document.name;
+    
+    // フィールドを更新（PATCH）
+    var patchUrl = 'https://firestore.googleapis.com/v1/' + docName
+      + '?updateMask.fieldPaths=' + field;
+    var patchBody = { fields: {} };
+    patchBody.fields[field] = { stringValue: newValue };
+    
+    UrlFetchApp.fetch(patchUrl, {
+      method: 'patch',
+      headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+      payload: JSON.stringify(patchBody),
+      muteHttpExceptions: true
+    });
+    updateCount++;
+  }
+  
+  if (updateCount > 0) {
+    console.log(collectionName + ' の ' + field + ' を ' + updateCount + '件 更新 (' + oldValue + ' → ' + newValue + ')');
+  }
 }
 
 // =============================================
@@ -2014,308 +1626,4 @@ function setupFirestoreSyncTrigger() {
     .create();
   
   console.log('✅ syncAllToFirestore トリガーを毎日6:30に設定しました');
-}
-
-const NOTION_API_KEY = PropertiesService.getScriptProperties().getProperty("NOTION_API_KEY");
-
-function doPost(e) {
-  try {
-    const params = JSON.parse(e.postData.contents);
-    const result = syncCastToNotion(params);
-    return ContentService.createTextOutput(JSON.stringify(result)).setMimeType(ContentService.MimeType.JSON);
-  } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.toString() })).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-function syncCastToNotion(data) {
-  // data.pageId       : Notion Page ID (P列)
-  // data.castName     : キャスト名
-  // data.isInternal   : 内部キャストフラグ
-  // data.orderDetails : W列のJSON文字列 (structureData)
-
-  if (!data.pageId || !data.castName) {
-    throw new Error("必須データ(pageId, castName)が不足しています");
-  }
-
-  // --- 1. 更新先プロパティの決定ロジック ---
-  let targetPropName = "サブキャスト"; // デフォルト
-
-  if (data.isInternal === true || String(data.isInternal) === "true") {
-    targetPropName = "内部キャスト";
-  } else {
-    // 外部キャストの場合、orderDetails (W列のJSON) を見て判定
-    if (data.orderDetails) {
-      try {
-        // 文字列ならパース、すでにオブジェクトならそのまま
-        const details = typeof data.orderDetails === 'string' ? JSON.parse(data.orderDetails) : data.orderDetails;
-        
-        // 配列の1つ目を確認
-        if (Array.isArray(details) && details.length > 0) {
-          const type = details[0].type; // "メイン" or "その他"
-          if (type === "メイン") {
-            targetPropName = "メインキャスト";
-          }
-        }
-      } catch (e) {
-        // パースエラー時はデフォルト(サブキャスト)
-        console.error("JSON Parse Error:", e);
-      }
-    }
-  }
-
-  // --- 2. Notion API 実行 ---
-  // IDにハイフンがない場合を考慮して整形（基本的にはそのまま使用）
-  const pageIdFormatted = data.pageId.length === 32 ? 
-    `${data.pageId.slice(0,8)}-${data.pageId.slice(8,12)}-${data.pageId.slice(12,16)}-${data.pageId.slice(16,20)}-${data.pageId.slice(20)}` 
-    : data.pageId;
-
-  const pageUrl = `https://api.notion.com/v1/pages/${pageIdFormatted}`;
-  const headers = {
-    "Authorization": `Bearer ${NOTION_API_KEY}`,
-    "Notion-Version": "2022-06-28",
-    "Content-Type": "application/json"
-  };
-
-  // 現在のプロパティを取得（既存タグを消さないため）
-  const getResp = UrlFetchApp.fetch(pageUrl, { method: "get", headers: headers, muteHttpExceptions: true });
-  if (getResp.getResponseCode() !== 200) {
-    throw new Error(`Notion Page取得失敗: ${getResp.getContentText()}`);
-  }
-  
-  const pageJson = JSON.parse(getResp.getContentText());
-  const currentProps = pageJson.properties[targetPropName];
-
-  if (!currentProps || currentProps.type !== "multi_select") {
-    throw new Error(`プロパティ "${targetPropName}" が存在しないか、マルチセレクトではありません。`);
-  }
-
-  const currentTags = currentProps.multi_select.map(tag => ({ name: tag.name }));
-
-  // 重複チェック
-  if (currentTags.some(t => t.name === data.castName)) {
-    return { success: true, message: "既に登録済みです" };
-  }
-
-  // 追加
-  currentTags.push({ name: data.castName });
-
-  const updatePayload = {
-    properties: {
-      [targetPropName]: {
-        multi_select: currentTags
-      }
-    }
-  };
-
-  const updateResp = UrlFetchApp.fetch(pageUrl, {
-    method: "patch",
-    headers: headers,
-    payload: JSON.stringify(updatePayload),
-    muteHttpExceptions: true
-  });
-  
-  if (updateResp.getResponseCode() !== 200) {
-    throw new Error(`Notion更新失敗: ${updateResp.getContentText()}`);
-  }
-
-  return { success: true, message: `${targetPropName} に ${data.castName} を追加しました` };
-}
-
-/**
- * 設定
- */
-const CONFIG_SYNC = {
-  SOURCE_SHEET_NAME: "オフショットDrive", // データの参照元（リンクがある方）
-  TARGET_SHEET_NAME: "撮影連絡DB",      // 書き込み先（O列に書きたい方）
-  
-  // 列番号（A列=1, B列=2...）
-  SRC_KEY_COL: 1,   // 参照元のNotionID (A列)
-  SRC_VAL_COL: 2,   // 参照元のDriveLink (B列)
-  
-  TGT_KEY_COL: 4,   // 書き込み先のNotionID (D列)
-  TGT_VAL_COL: 15   // 書き込み先のDriveLink (O列)
-};
-
-/**
- * ★ここが重要：Webアプリとしてアクセスされた時の入り口
- */
-function doGet(e) {
-  try {
-    // 同期処理を実行
-    const result = syncDriveLinksToShootingDB();
-    
-    // 成功したらJSONを返す
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "success",
-      message: "Sync completed",
-      details: result
-    })).setMimeType(ContentService.MimeType.JSON);
-
-  } catch (error) {
-    // エラー時もJSONでエラー内容を返す
-    return ContentService.createTextOutput(JSON.stringify({
-      status: "error",
-      message: error.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-/**
- * リンク同期のメイン関数
- */
-function syncDriveLinksToShootingDB() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const srcSheet = ss.getSheetByName(CONFIG_SYNC.SOURCE_SHEET_NAME);
-  const tgtSheet = ss.getSheetByName(CONFIG_SYNC.TARGET_SHEET_NAME);
-
-  if (!srcSheet || !tgtSheet) {
-    throw new Error("指定されたシートが見つかりません。シート名を確認してください。");
-  }
-
-  // 1. 参照元データ（オフショットDrive）をすべて取得し、Map（連想配列）を作成
-  const srcLastRow = srcSheet.getLastRow();
-  if (srcLastRow < 2) return "No source data";
-  
-  const srcValues = srcSheet.getRange(2, 1, srcLastRow - 1, 2).getValues();
-  const linkMap = new Map();
-  
-  srcValues.forEach(row => {
-    const id = row[0].toString();
-    const link = row[1].toString();
-    if (id && link) {
-      linkMap.set(id, link);
-    }
-  });
-
-  // 2. 書き込み先データ（撮影連絡DB）のNotionID列（D列）を取得
-  const tgtLastRow = tgtSheet.getLastRow();
-  if (tgtLastRow < 2) return "No target data";
-  
-  const tgtIds = tgtSheet.getRange(2, CONFIG_SYNC.TGT_KEY_COL, tgtLastRow - 1, 1).getValues();
-  
-  // 3. 現在のO列（Link）の値も取得
-  const currentLinksRange = tgtSheet.getRange(2, CONFIG_SYNC.TGT_VAL_COL, tgtLastRow - 1, 1);
-  const currentLinks = currentLinksRange.getValues();
-  
-  let updateCount = 0;
-
-  // 4. マッチング処理
-  const updatedLinks = currentLinks.map((row, i) => {
-    const id = tgtIds[i][0].toString();
-    const currentVal = row[0];
-
-    if (linkMap.has(id)) {
-      const newVal = linkMap.get(id);
-      // 値が変わる場合のみカウント（ログ用）
-      if (newVal !== currentVal) updateCount++;
-      return [newVal];
-    } else {
-      return [currentVal];
-    }
-  });
-
-  // 5. 結果をO列に一括書き込み
-  currentLinksRange.setValues(updatedLinks);
-  
-  console.log(`同期完了: ${updateCount}件更新`);
-  return `${updateCount} items updated`;
-}
-
-function doGet(e) {
-  // Webアプリとして公開する場合のエントリーポイント
-  const result = syncShootingContact();
-  return ContentService.createTextOutput(JSON.stringify(result))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function syncShootingContact() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheetContact = ss.getSheetByName("撮影連絡DB");
-  const sheetSchedule = ss.getSheetByName("香盤DB");
-
-  // データがない場合のエラー回避
-  if (sheetContact.getLastRow() < 2 || sheetSchedule.getLastRow() < 2) {
-    return { status: "error", message: "データが存在しません" };
-  }
-
-  // 1. データの一括取得
-  // 撮影連絡DB: A列(1)〜N列(14)まで取得
-  // 取得範囲: 2行目から、最終行-1行分
-  const contactRange = sheetContact.getRange(2, 1, sheetContact.getLastRow() - 1, 14);
-  const contactValues = contactRange.getValues();
-
-  // 香盤DB: A列(1)〜T列(20)まで取得
-  // ※香盤DBの列構成が変わっていない前提です
-  const scheduleValues = sheetSchedule.getRange(2, 1, sheetSchedule.getLastRow() - 1, 20).getValues();
-
-  // 2. 香盤データのマップ化（検索しやすくする）
-  const scheduleMap = scheduleValues.map(r => {
-    // r[9] = J列 (Notion URL)
-    const notionId = extractNotionId(r[9]); 
-    return {
-      // 検索キーとなるデータ
-      notionId: notionId,
-      // r[4] = E列 (キャスト名)
-      cast: normalizeCast(r[4]), 
-      
-      // 転記したいデータ
-      inTime: r[5],   // F列
-      outTime: r[6],  // G列
-      location: r[7], // H列
-      address: r[8],  // I列
-    };
-  });
-
-  // 3. 書き込み用データの作成
-  // 現在の「K列〜N列（IN/OUT/場所/住所）」の値をベースにする
-  // contactValuesは [row][col] で、K列は index 10, N列は index 13
-  const outputValues = contactValues.map(row => {
-    const currentKtoN = [row[10], row[11], row[12], row[13]]; // 元の値を保持
-
-    // 検索キーを取得
-    const notionId = row[3];            // D列 (Notion ID)
-    const cast = normalizeCast(row[5]); // F列 (キャスト名)
-
-    // ★変更箇所: NotionPageID と キャスト名 だけを使って検索
-    const hit = scheduleMap.find(s =>
-      s.notionId &&           // 香盤側にIDが存在し
-      notionId &&             // 連絡DB側にもIDが存在し
-      s.notionId === notionId && // IDが完全一致し
-      s.cast === cast            // かつ、キャスト名も一致する
-    );
-
-    if (hit) {
-      // ヒットしたら新しい値を返す [IN, OUT, 場所, 住所]
-      return [
-        hit.inTime,
-        hit.outTime,
-        hit.location,
-        hit.address
-      ];
-    } else {
-      // ヒットしなければ元の値をそのまま返す（上書きしない）
-      return currentKtoN;
-    }
-  });
-
-  // 4. 一括書き込み（高速化の肝）
-  // 変更があるK列(11)〜N列(14)の範囲のみ書き換える
-  sheetContact.getRange(2, 11, outputValues.length, 4).setValues(outputValues);
-
-  return { status: "success", updatedRows: outputValues.length };
-}
-
-// Notion ID抽出（32桁の英数字）
-function extractNotionId(url) {
-  if (!url || typeof url !== 'string') return "";
-  // URLや文字列の中から32桁のHEXを探す
-  const match = url.match(/[0-9a-fA-F]{32}/);
-  return match ? match[0].toLowerCase() : "";
-}
-
-// キャスト名正規化（空白削除・「様」除去）
-function normalizeCast(name) {
-  if (!name) return "";
-  return String(name).replace(/様$/, "").trim();
 }

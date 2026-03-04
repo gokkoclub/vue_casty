@@ -115,6 +115,7 @@ export interface CartRole {
     type: 'メイン' | 'サブ' | 'その他'
     note: string
     castIds: string[]
+    castDates: Record<string, string[]>  // castId → selected dates (YYYY/MM/DD)
 }
 
 export interface CartProject {

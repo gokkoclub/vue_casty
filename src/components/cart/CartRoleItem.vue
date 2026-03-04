@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import draggable from 'vuedraggable'
 import InputText from 'primevue/inputtext'
 import SelectButton from 'primevue/selectbutton'
@@ -14,25 +14,49 @@ const props = defineProps<{
 
 const store = useOrderStore()
 
+const allDates = computed(() => store.context.dateRanges)
+const isMultiDate = computed(() => allDates.value.length > 1)
+
+// Format date for display: "2026/03/01" → "3/1"
+const formatDateShort = (dateStr: string) => {
+  const parts = dateStr.split('/')
+  return `${parseInt(parts[1]!)}/${parseInt(parts[2]!)}`
+}
+
 // Computes array of CartCast objects for this role
 const assignedCasts = computed({
   get: () => {
-    // Collect cast objects from pool using IDs
-    // Filter out any IDs that might not exist in pool anymore
     return props.role.castIds
       .map(id => store.pool[id])
       .filter(c => !!c) as CartCast[]
   },
   set: (newCasts: CartCast[]) => {
-    // Update role.castIds with new order
     props.role.castIds = newCasts.map(c => c.id)
   }
 })
+
+// Watch for new casts added via drag & drop — init their dates
+watch(() => props.role.castIds, (newIds, oldIds) => {
+  const added = newIds.filter(id => !oldIds?.includes(id))
+  for (const castId of added) {
+    store.initCastDatesForRole(props.role.id, castId)
+  }
+}, { deep: true })
 
 const typeOptions = ['メイン', 'サブ']
 
 const removeCast = (castId: string) => {
   store.removeCastFromRole(props.role.id, castId)
+}
+
+const isCastDateSelected = (castId: string, date: string): boolean => {
+  const dates = props.role.castDates[castId]
+  if (!dates) return true // not yet initialized = all selected
+  return dates.includes(date)
+}
+
+const toggleDate = (castId: string, date: string) => {
+  store.toggleCastDate(props.role.id, castId, date)
 }
 </script>
 
@@ -74,12 +98,26 @@ const removeCast = (castId: string) => {
         ghost-class="ghost"
       >
         <template #item="{ element, index }">
-          <div class="cast-chip">
-            <span class="rank-badge">{{ index + 1 }}</span>
-            <span class="cast-name">{{ element.cast.name }}</span>
-            <button class="remove-btn" @click.stop="removeCast(element.id)">
-              <i class="pi pi-times"></i>
-            </button>
+          <div class="cast-entry">
+            <div class="cast-chip">
+              <span class="rank-badge">{{ index + 1 }}</span>
+              <span class="cast-name">{{ element.cast.name }}</span>
+              <button class="remove-btn" @click.stop="removeCast(element.id)">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <!-- Per-cast date toggles (only when multiple dates) -->
+            <div v-if="isMultiDate" class="cast-dates">
+              <button
+                v-for="date in allDates"
+                :key="date"
+                class="date-toggle"
+                :class="{ active: isCastDateSelected(element.id, date) }"
+                @click.stop="toggleDate(element.id, date)"
+              >
+                {{ formatDateShort(date) }}
+              </button>
+            </div>
           </div>
         </template>
         
@@ -100,7 +138,7 @@ const removeCast = (castId: string) => {
   padding: 0.75rem;
   background: white;
   margin-bottom: 0.75rem;
-  user-select: none; /* Prevent text selection during drag */
+  user-select: none;
 }
 
 .role-header {
@@ -125,7 +163,6 @@ const removeCast = (castId: string) => {
   flex-shrink: 0;
 }
 
-/* Compact SelectButton overrides */
 :deep(.p-selectbutton .p-button) {
   padding: 0.25rem 0.5rem;
   font-size: 0.75rem;
@@ -141,9 +178,15 @@ const removeCast = (castId: string) => {
 
 .cast-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 0.5rem;
-  min-height: 30px; /* ensure drop target size */
+  min-height: 30px;
+}
+
+.cast-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .cast-chip {
@@ -174,6 +217,7 @@ const removeCast = (castId: string) => {
 .cast-name {
   font-size: 0.85rem;
   font-weight: 500;
+  flex: 1;
 }
 
 .remove-btn {
@@ -187,6 +231,35 @@ const removeCast = (castId: string) => {
 }
 .remove-btn:hover {
   color: var(--p-red-500);
+}
+
+/* Date toggles */
+.cast-dates {
+  display: flex;
+  gap: 0.25rem;
+  padding-left: 1.75rem;
+  flex-wrap: wrap;
+}
+
+.date-toggle {
+  background: var(--p-surface-200);
+  color: var(--p-text-muted-color);
+  border: none;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-weight: 500;
+}
+
+.date-toggle.active {
+  background: var(--p-primary-color);
+  color: white;
+}
+
+.date-toggle:hover {
+  opacity: 0.8;
 }
 
 .placeholder {

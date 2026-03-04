@@ -90,10 +90,6 @@ const getStatusStyle = (status: CastingStatus) => {
 
 const isRowDimmed = (status: string) => ['NG', 'キャンセル'].includes(status)
 
-const isOrderWait = (status: string) => {
-  return ['オーダー待ち', 'オーダー待ち（仮キャスティング）'].includes(status)
-}
-
 const editingCosts = new Map<string, number>()
 
 const handleCostChange = (castingId: string, value: number | null) => {

@@ -1,0 +1,551 @@
+/**
+ * オフショット通知GAS
+ * 
+ * 機能:
+ * 1. オフショット連絡用シートにNotionPageIDとDriveリンクを記録
+ * 2. アウト時間の10分後に助監督へSlack通知
+ * 
+ * シート構造:
+ * - オフショット連絡用: A:撮影日, B:チーム名, C:アウト時間, D:助監督名, E:助監督2, F:NotionPageID, G:オフショットリンク, H:通知済み
+ * - 新香盤撮影リスト: A:PageID, B:タイトル, C:撮影日, D:撮影チーム, E:CD, F:FD, G:P
+ * - オフショットDrive: A:NotionPageID, B:リンク
+ * - 内部キャストDB: A:本名, B:fullname, C:displayname, D:email, E:userid
+ */
+
+/* ========= 設定 ========= */
+const SPREADSHEET_ID = '1Wt7Y03D_s7ZPRZEli3WWERaFmNpHep8IE7vB-JiSyKc';
+const SHEET_OFFSHOT_CONTACT = 'オフショット連絡用';
+const SHEET_SHOOTING_LIST = '新香盤撮影リスト';
+const SHEET_OFFSHOT_DRIVE = 'オフショットDrive';
+const SHEET_INTERNAL_CAST_DB = '内部キャストDB';
+
+// Slack設定
+const SLACK_CHANNEL_ID = 'C04STCLS9MF'; // 通知先チャンネルID（#チャンネル名の右クリックでコピー可能）
+
+// Slack Bot Token（スクリプトプロパティから取得）
+function getSlackBotToken() {
+  return PropertiesService.getScriptProperties().getProperty('SLACK_BOT_TOKEN');
+}
+
+/* ========= メイン処理 ========= */
+
+/**
+ * オフショット連絡用シートにNotionPageIDとDriveリンクを追記する
+ */
+function enrichOffshotData() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
+  const shootingListSheet = ss.getSheetByName(SHEET_SHOOTING_LIST);
+  const offshotDriveSheet = ss.getSheetByName(SHEET_OFFSHOT_DRIVE);
+
+  if (!offshotSheet || !shootingListSheet || !offshotDriveSheet) {
+    Logger.log('必要なシートが見つかりません');
+    return;
+  }
+
+  // 各シートのデータ取得
+  const offshotData = offshotSheet.getDataRange().getValues();
+  const shootingListData = shootingListSheet.getDataRange().getValues();
+  const offshotDriveData = offshotDriveSheet.getDataRange().getValues();
+
+  // ヘッダー行を確認・追加（F:NotionPageID, G:オフショットリンク, H:通知済み）
+  ensureHeaders(offshotSheet, offshotData);
+
+  // 2行目以降を処理（1行目はヘッダー）
+  for (let i = 1; i < offshotData.length; i++) {
+    const row = offshotData[i];
+    const shootingDate = row[0];      // A列: 撮影日
+    const teamName = safeString(row[1]); // B列: チーム名
+    const fdName = safeString(row[3]);   // D列: 助監督名
+    const notionPageId = safeString(row[5]); // F列: NotionPageID
+
+    // 既にNotionPageIDがあればスキップ
+    if (notionPageId) continue;
+
+    // 日付がなければスキップ
+    if (!shootingDate) continue;
+
+    // 新香盤撮影リストからNotionPageIDを検索
+    const matchedPageId = matchNotionPageId(shootingDate, teamName, fdName, shootingListData);
+    
+    if (matchedPageId) {
+      // NotionPageIDを記録（F列）
+      offshotSheet.getRange(i + 1, 6).setValue(matchedPageId);
+      Logger.log(`行${i + 1}: NotionPageID「${matchedPageId}」を記録`);
+
+      // オフショットDriveからリンクを取得
+      const driveLink = getDriveLinkByPageId(matchedPageId, offshotDriveData);
+      if (driveLink) {
+        offshotSheet.getRange(i + 1, 7).setValue(driveLink);
+        Logger.log(`行${i + 1}: Driveリンクを記録`);
+      }
+    } else {
+      Logger.log(`行${i + 1}: 一致するレコードが見つかりませんでした（${shootingDate} / ${teamName} / ${fdName}）`);
+    }
+  }
+
+  Logger.log('enrichOffshotData 完了');
+}
+
+/**
+ * ヘッダーを確認し、必要に応じて追加
+ */
+function ensureHeaders(sheet, data) {
+  const headers = data[0];
+  const expectedHeaders = ['撮影日', 'チーム名', 'アウト時間', '助監督名', '助監督2', 'NotionPageID', 'オフショットリンク', '通知済み'];
+  
+  // 既存ヘッダーが不足している場合は追加
+  for (let i = 0; i < expectedHeaders.length; i++) {
+    if (!headers[i] || headers[i] !== expectedHeaders[i]) {
+      sheet.getRange(1, i + 1).setValue(expectedHeaders[i]);
+    }
+  }
+}
+
+/**
+ * 新香盤撮影リストから撮影日・チーム名・FDが一致するPageIDを取得
+ * @param {Date|string} shootingDate 撮影日
+ * @param {string} teamName チーム名
+ * @param {string} fdName 助監督名
+ * @param {Array} shootingListData 新香盤撮影リストのデータ
+ * @returns {string|null} PageID
+ */
+function matchNotionPageId(shootingDate, teamName, fdName, shootingListData) {
+  const normalizedTeamName = normalizeName(teamName);
+  const normalizedFdName = normalizeName(fdName);
+  const shootingDateStr = formatDateForComparison(shootingDate);
+
+  // 1行目はヘッダーなのでスキップ
+  for (let i = 1; i < shootingListData.length; i++) {
+    const row = shootingListData[i];
+    const pageId = safeString(row[0]);       // A列: PageID
+    const listDate = row[2];                  // C列: 撮影日
+    const listTeam = normalizeName(safeString(row[3])); // D列: 撮影チーム
+    const listFd = normalizeName(safeString(row[5]));   // F列: FD
+
+    const listDateStr = formatDateForComparison(listDate);
+
+    // 撮影日・チーム名・FDが一致するか確認
+    if (shootingDateStr === listDateStr && 
+        normalizedTeamName === listTeam && 
+        normalizedFdName === listFd) {
+      return pageId;
+    }
+  }
+  return null;
+}
+
+/**
+ * オフショットDriveシートからNotionPageIDでDriveリンクを取得
+ * @param {string} pageId NotionPageID
+ * @param {Array} offshotDriveData オフショットDriveのデータ
+ * @returns {string|null} Driveリンク
+ */
+function getDriveLinkByPageId(pageId, offshotDriveData) {
+  const normalizedPageId = safeString(pageId).replace(/-/g, '');
+
+  for (let i = 1; i < offshotDriveData.length; i++) {
+    const row = offshotDriveData[i];
+    const drivePageId = safeString(row[0]).replace(/-/g, '');
+    const driveLink = safeString(row[1]);
+
+    if (normalizedPageId === drivePageId) {
+      return driveLink;
+    }
+  }
+  return null;
+}
+
+/* ========= Slack通知 ========= */
+
+/**
+ * アウト時間の10分後に該当する行にSlack通知を送信
+ * トリガーで5分ごとに実行することを推奨
+ */
+function checkAndNotify() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
+  const castDbSheet = ss.getSheetByName(SHEET_INTERNAL_CAST_DB);
+
+  if (!offshotSheet || !castDbSheet) {
+    Logger.log('必要なシートが見つかりません');
+    return;
+  }
+
+  const offshotData = offshotSheet.getDataRange().getValues();
+  const castDbData = castDbSheet.getDataRange().getValues();
+  const now = new Date();
+
+  // 2行目以降を処理
+  for (let i = 1; i < offshotData.length; i++) {
+    const row = offshotData[i];
+    const shootingDate = row[0];           // A列: 撮影日
+    const teamName = safeString(row[1]);   // B列: チーム名
+    const outTimeValue = row[2];           // C列: アウト時間
+    const fdName = safeString(row[3]);     // D列: 助監督名
+    const fdName2 = safeString(row[4]);    // E列: 助監督2
+    const driveLink = safeString(row[6]);  // G列: オフショットリンク
+    const notified = safeString(row[7]);   // H列: 通知済み
+
+    // 既に通知済みならスキップ
+    if (notified === '済') continue;
+
+    // アウト時間がなければスキップ
+    if (!outTimeValue) continue;
+
+    // Driveリンクがなければスキップ（リンクがないと通知できない）
+    if (!driveLink) continue;
+
+    // 撮影日とアウト時間からDateTimeを構築
+    const outDateTime = buildDateTime(shootingDate, outTimeValue);
+    if (!outDateTime) continue;
+
+    // アウト時間+10分のタイミングをチェック
+    const notifyTime = new Date(outDateTime.getTime() + 10 * 60 * 1000);
+    
+    // 現在時刻が通知時刻を過ぎていて、かつ30分以内（古すぎる通知は無視）
+    const timeDiff = now.getTime() - notifyTime.getTime();
+    if (timeDiff >= 0 && timeDiff < 30 * 60 * 1000) {
+      // 助監督にSlack通知を送信
+      const sent = sendNotificationToFd(fdName, driveLink, shootingDate, teamName, castDbData);
+      if (fdName2) {
+        sendNotificationToFd(fdName2, driveLink, shootingDate, teamName, castDbData);
+      }
+
+      // 通知済みを記録
+      if (sent) {
+        offshotSheet.getRange(i + 1, 8).setValue('済');
+        Logger.log(`行${i + 1}: 通知送信 & 通知済みを記録`);
+      }
+    }
+  }
+
+  Logger.log('checkAndNotify 完了');
+}
+
+/**
+ * 助監督にSlack通知を送信（チャンネルにメンション付きで投稿）
+ * @param {string} fdName 助監督名
+ * @param {string} driveLink Driveリンク
+ * @param {Date|string} shootingDate 撮影日
+ * @param {string} teamName チーム名
+ * @param {Array} castDbData 内部キャストDBのデータ
+ * @returns {boolean} 送信成功したかどうか
+ */
+function sendNotificationToFd(fdName, driveLink, shootingDate, teamName, castDbData) {
+  const slackId = getSlackIdByName(fdName, castDbData);
+  if (!slackId) {
+    Logger.log(`SlackIDが見つかりません: ${fdName}`);
+    return false;
+  }
+
+  // 撮影日をフォーマット（M/D形式）
+  let dateStr = '';
+  if (shootingDate instanceof Date) {
+    dateStr = `${shootingDate.getMonth() + 1}/${shootingDate.getDate()}`;
+  } else if (shootingDate) {
+    const d = new Date(shootingDate);
+    if (!isNaN(d.getTime())) {
+      dateStr = `${d.getMonth() + 1}/${d.getDate()}`;
+    } else {
+      dateStr = String(shootingDate);
+    }
+  }
+
+  // メッセージ作成（コードブロックで赤文字表示）
+  const message = `<@${slackId}> \n\`オフショット格納の連絡です。\`\n以下Driveに、${dateStr}_${teamName}撮影のオフショットを格納してください。\n${driveLink}`;
+  
+  return sendSlackChannelMessage(message);
+}
+
+/**
+ * 内部キャストDBから名前でSlackIDを取得
+ * @param {string} name 名前
+ * @param {Array} castDbData 内部キャストDBのデータ
+ * @returns {string|null} SlackID (userid)
+ */
+function getSlackIdByName(name, castDbData) {
+  const normalizedName = normalizeName(name);
+
+  // 1行目はヘッダーなのでスキップ
+  for (let i = 1; i < castDbData.length; i++) {
+    const row = castDbData[i];
+    const honmyou = normalizeName(safeString(row[0]));     // A列: 本名
+    const fullname = normalizeName(safeString(row[1]));    // B列: fullname
+    const displayname = normalizeName(safeString(row[2])); // C列: displayname
+    const userid = safeString(row[4]);                      // E列: userid
+
+    // 本名、fullname、displaynameのいずれかに一致
+    if (normalizedName === honmyou || 
+        normalizedName === fullname || 
+        normalizedName === displayname) {
+      return userid;
+    }
+  }
+  return null;
+}
+
+/**
+ * Slackチャンネルにメッセージを送信
+ * @param {string} message メッセージ
+ * @returns {boolean} 送信成功したかどうか
+ */
+function sendSlackChannelMessage(message) {
+  const token = getSlackBotToken();
+  if (!token) {
+    Logger.log('SLACK_BOT_TOKENが設定されていません。スクリプトプロパティに設定してください。');
+    return false;
+  }
+
+  try {
+    // チャンネルにメッセージを送信
+    const postRes = UrlFetchApp.fetch('https://slack.com/api/chat.postMessage', {
+      method: 'post',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      payload: JSON.stringify({
+        channel: SLACK_CHANNEL_ID,
+        text: message,
+        link_names: true  // メンションを有効化
+      })
+    });
+
+    const postData = JSON.parse(postRes.getContentText());
+    if (!postData.ok) {
+      Logger.log(`Slack chat.postMessage 失敗: ${postData.error}`);
+      return false;
+    }
+
+    Logger.log(`Slackチャンネル通知送信成功`);
+    return true;
+
+  } catch (e) {
+    Logger.log(`Slack通知送信エラー: ${e}`);
+    return false;
+  }
+}
+
+/* ========= ユーティリティ ========= */
+
+/**
+ * 安全な文字列化
+ */
+function safeString(v) {
+  return (v == null) ? '' : String(v).trim();
+}
+
+/**
+ * 名前の正規化（スペース除去、トリム、小文字化）
+ */
+function normalizeName(s) {
+  if (!s) return '';
+  let t = s.toString().normalize('NFKC');
+  t = t.replace(/\s+/g, '').replace(/[\u3000]/g, ''); // 空白削除（半角・全角）
+  t = t.trim().toLowerCase();
+  return t;
+}
+
+/**
+ * 日付を比較用の文字列に変換（YYYY-MM-DD形式）
+ */
+function formatDateForComparison(date) {
+  if (!date) return '';
+  
+  let d;
+  if (date instanceof Date) {
+    d = date;
+  } else {
+    // 文字列の場合はパース試行
+    d = new Date(date);
+    if (isNaN(d.getTime())) return '';
+  }
+
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * 撮影日とアウト時間からDateTimeを構築
+ */
+function buildDateTime(shootingDate, outTime) {
+  if (!shootingDate) return null;
+
+  let baseDate;
+  if (shootingDate instanceof Date) {
+    baseDate = new Date(shootingDate);
+  } else {
+    baseDate = new Date(shootingDate);
+    if (isNaN(baseDate.getTime())) return null;
+  }
+
+  // アウト時間をパース
+  let hours = 0, minutes = 0;
+  if (outTime instanceof Date) {
+    hours = outTime.getHours();
+    minutes = outTime.getMinutes();
+  } else if (typeof outTime === 'string') {
+    const match = outTime.match(/^(\d{1,2}):(\d{2})$/);
+    if (match) {
+      hours = parseInt(match[1], 10);
+      minutes = parseInt(match[2], 10);
+    }
+  }
+
+  baseDate.setHours(hours, minutes, 0, 0);
+  return baseDate;
+}
+
+/* ========= 初期設定用関数 ========= */
+
+/**
+ * Slack Bot Tokenをスクリプトプロパティに設定する
+ * GASエディタから手動で1回実行してください
+ */
+function setSlackBotToken() {
+  const token = 'xoxb-YOUR-SLACK-BOT-TOKEN-HERE';  // ここにトークンを設定
+  PropertiesService.getScriptProperties().setProperty('SLACK_BOT_TOKEN', token);
+  Logger.log('SLACK_BOT_TOKENを設定しました');
+}
+
+/**
+ * トリガーを設定する（5分ごとにcheckAndNotifyを実行）
+ */
+function createNotifyTrigger() {
+  // 既存のトリガーを削除
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(trigger => {
+    if (trigger.getHandlerFunction() === 'checkAndNotify') {
+      ScriptApp.deleteTrigger(trigger);
+    }
+  });
+
+  // 5分ごとのトリガーを作成
+  ScriptApp.newTrigger('checkAndNotify')
+    .timeBased()
+    .everyMinutes(5)
+    .create();
+  
+  Logger.log('checkAndNotify のトリガーを作成しました（5分ごと）');
+}
+
+/* ========= デバッグ用関数 ========= */
+
+/**
+ * Slack接続テスト - GASエディタから手動で実行してください
+ * これでSlackへの接続が正しく動作するか確認できます
+ */
+function testSlackConnection() {
+  Logger.log('=== Slack接続テスト開始 ===');
+  
+  // 1. トークンの確認
+  const token = getSlackBotToken();
+  if (!token) {
+    Logger.log('❌ SLACK_BOT_TOKENが設定されていません！');
+    Logger.log('→ setSlackBotToken()を実行してトークンを設定してください');
+    return;
+  }
+  Logger.log('✅ SLACK_BOT_TOKEN: 設定済み（' + token.substring(0, 10) + '...）');
+  
+  // 2. チャンネルIDの確認
+  Logger.log('📢 SLACK_CHANNEL_ID: ' + SLACK_CHANNEL_ID);
+  
+  // 3. テストメッセージ送信
+  Logger.log('📤 テストメッセージを送信中...');
+  const result = sendSlackChannelMessage('🔧 テストメッセージ：オフショット通知システムの接続テストです');
+  
+  if (result) {
+    Logger.log('✅ Slack送信成功！');
+  } else {
+    Logger.log('❌ Slack送信失敗 - 上記のエラーログを確認してください');
+  }
+  
+  Logger.log('=== Slack接続テスト完了 ===');
+}
+
+/**
+ * 通知対象行を確認するデバッグ関数
+ * 条件に合致する行があるか確認します
+ */
+function debugCheckNotifyTargets() {
+  Logger.log('=== 通知対象行の確認 ===');
+  
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const offshotSheet = ss.getSheetByName(SHEET_OFFSHOT_CONTACT);
+  const castDbSheet = ss.getSheetByName(SHEET_INTERNAL_CAST_DB);
+
+  if (!offshotSheet || !castDbSheet) {
+    Logger.log('❌ 必要なシートが見つかりません');
+    return;
+  }
+
+  const offshotData = offshotSheet.getDataRange().getValues();
+  const castDbData = castDbSheet.getDataRange().getValues();
+  const now = new Date();
+  Logger.log('現在時刻: ' + now);
+  
+  let targetCount = 0;
+
+  for (let i = 1; i < offshotData.length; i++) {
+    const row = offshotData[i];
+    const shootingDate = row[0];
+    const teamName = safeString(row[1]);
+    const outTimeValue = row[2];
+    const fdName = safeString(row[3]);
+    const driveLink = safeString(row[6]);
+    const notified = safeString(row[7]);
+
+    Logger.log(`--- 行${i + 1} ---`);
+    Logger.log(`  撮影日: ${shootingDate}`);
+    Logger.log(`  チーム: ${teamName}`);
+    Logger.log(`  アウト時間: ${outTimeValue}`);
+    Logger.log(`  助監督: ${fdName}`);
+    Logger.log(`  Driveリンク: ${driveLink ? '有り' : '無し'}`);
+    Logger.log(`  通知済み: ${notified}`);
+
+    // 条件チェック
+    if (notified === '済') {
+      Logger.log(`  → スキップ: 通知済み`);
+      continue;
+    }
+    if (!outTimeValue) {
+      Logger.log(`  → スキップ: アウト時間なし`);
+      continue;
+    }
+    if (!driveLink) {
+      Logger.log(`  → スキップ: Driveリンクなし`);
+      continue;
+    }
+
+    const outDateTime = buildDateTime(shootingDate, outTimeValue);
+    if (!outDateTime) {
+      Logger.log(`  → スキップ: 日時構築失敗`);
+      continue;
+    }
+
+    const notifyTime = new Date(outDateTime.getTime() + 10 * 60 * 1000);
+    const timeDiff = now.getTime() - notifyTime.getTime();
+    
+    Logger.log(`  アウト時間+10分: ${notifyTime}`);
+    Logger.log(`  時間差: ${Math.round(timeDiff / 1000 / 60)}分`);
+
+    if (timeDiff >= 0 && timeDiff < 30 * 60 * 1000) {
+      Logger.log(`  ✅ 通知対象！`);
+      
+      // SlackID確認
+      const slackId = getSlackIdByName(fdName, castDbData);
+      Logger.log(`  SlackID: ${slackId || '見つかりません'}`);
+      
+      targetCount++;
+    } else if (timeDiff < 0) {
+      Logger.log(`  → スキップ: まだ通知時刻前（${Math.round(-timeDiff / 1000 / 60)}分後）`);
+    } else {
+      Logger.log(`  → スキップ: 通知時刻から30分以上経過`);
+    }
+  }
+
+  Logger.log(`=== 通知対象: ${targetCount}件 ===`);
+}

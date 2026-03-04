@@ -20,6 +20,7 @@ export interface OrderItem {
     mainSub: 'メイン' | 'サブ' | 'その他'
     projectName: string
     slackMentionId?: string
+    selectedDates?: string[]  // per-cast selected dates (YYYY/MM/DD)
 }
 
 export interface OrderPayload {
@@ -30,6 +31,7 @@ export interface OrderPayload {
     dateRanges: string[]
     items: OrderItem[]
     pdfFile?: File
+    intimacy?: 'なし' | 'あり' | '未定'
     shootingData?: {
         title: string
         team: string
@@ -207,16 +209,23 @@ export function useOrders() {
                         const cartCast = pool[castId]
                         if (!cartCast) return
 
+                        // Get per-cast dates (fallback to all dates)
+                        const castDates = role.castDates[castId]
+                        const selectedDates = castDates && castDates.length > 0
+                            ? castDates
+                            : [...context.dateRanges]
+
                         items.push({
                             castId,
                             castName: cartCast.cast.name,
                             castType: cartCast.cast.castType,
                             roleName: role.name || '役名なし',
-                            rank: index + 1, // 1-based rank
+                            rank: index + 1,
                             note: role.note || '',
                             mainSub: role.type,
                             projectName: project.title || orderStore.displayProjectName,
-                            slackMentionId: cartCast.cast.slackMentionId
+                            slackMentionId: cartCast.cast.slackMentionId,
+                            selectedDates
                         })
                     })
                 })
@@ -257,7 +266,7 @@ export function useOrders() {
     /**
      * オーダーをFirestoreに保存
      */
-    const submitOrder = async (pdfFile?: File | null): Promise<boolean> => {
+    const submitOrder = async (pdfFile?: File | null, intimacy?: string): Promise<boolean> => {
         if (!db) {
             toast.add({
                 severity: 'error',
@@ -292,7 +301,12 @@ export function useOrders() {
 
             // Create casting documents
             for (const item of payload.items) {
-                for (const dateRange of payload.dateRanges) {
+                // Use per-cast selectedDates if available, otherwise all dateRanges
+                const itemDates = item.selectedDates && item.selectedDates.length > 0
+                    ? item.selectedDates
+                    : payload.dateRanges
+
+                for (const dateRange of itemDates) {
                     const [startDateStr, endDateStr] = dateRange.includes('~')
                         ? dateRange.split('~').map(s => s.trim())
                         : [dateRange, dateRange]
@@ -336,7 +350,7 @@ export function useOrders() {
                             // shooting mode
                             return item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング'
                         })(),
-                        note: item.note,
+                        note: item.note + (intimacy === 'あり' ? '\n【インティマシーシーンあり】' : ''),
                         mainSub: item.mainSub,
                         cost: 0,
                         slackThreadTs: '',
@@ -361,6 +375,9 @@ export function useOrders() {
                             current.setDate(current.getDate() + 1)
                         }
                         castingData.shootingDates = dates
+                    } else if (item.selectedDates && item.selectedDates.length > 0) {
+                        // Store per-cast selected dates
+                        castingData.shootingDates = item.selectedDates
                     }
 
                     // Add time fields for external/internal events
@@ -432,6 +449,7 @@ export function useOrders() {
                         endTime: orderStore.manualMeta.endTime || undefined,
                         ccMention: userName.value || undefined,
                         hasInternal: payload.items.some(i => i.castType === '内部'),
+                        hasIntimacy: intimacy === 'あり',
                         pdfBase64,
                         pdfFileName,
                         items: payload.items.map(i => ({

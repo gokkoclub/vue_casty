@@ -244,7 +244,16 @@ const buildMailBody = () => {
                         severity="secondary"
                         outlined
                         :loading="pdfLoading"
-                        @click="generateOrderDocument(contact)"
+                        @click="generateOrderDocument({
+                            date: new Date().toLocaleDateString('ja-JP'),
+                            castName: contact.castName,
+                            project: contact.projectName,
+                            role: contact.roleName || '',
+                            shootDate: formattedDate,
+                            cost: String(contact.fee || ''),
+                            note: '',
+                            uuid: contact.id
+                        })"
                     />
                 </div>
             </div>
