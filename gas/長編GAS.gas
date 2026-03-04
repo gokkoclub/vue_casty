@@ -190,6 +190,23 @@ function runDecisionAfterChecklist() {
         ];
         const startRow = ctbdSheet.getLastRow() + 1;
         ctbdSheet.getRange(startRow, 1, 1, ctbdRow.length).setValues([ctbdRow]);
+
+        // ★ Firestore shootingDetails にも直接書き込み
+        try {
+          pushToFirestoreShootingDetails_({
+            castName: String(staff || '').trim(),
+            inTime: formatTime(inTime),
+            outTime: formatTime(outTime),
+            location: String(location || ''),
+            address: String(address || ''),
+            notionPageId: extractNotionPageId_(String(notion || '')),
+            work: String(work || ''),
+            team: String(team || ''),
+            shootingDate: date
+          });
+        } catch (fsErr) {
+          Logger.log('Firestore shootingDetails エラー（続行）: ' + fsErr);
+        }
       }
 
       // マーク更新
@@ -247,4 +264,159 @@ function formatTime(time) {
     return Utilities.formatDate(time, Session.getScriptTimeZone(), "HH:mm");
   }
   return time;
+}
+
+// =============================================
+// Firestore 直接書き込み（shootingDetails）
+// =============================================
+
+const FS_PROJECT_ID_CHOHEN = 'gokko-casty';
+const FS_DOC_BASE_CHOHEN = 'projects/' + FS_PROJECT_ID_CHOHEN + '/databases/(default)/documents';
+const FS_API_BASE_CHOHEN = 'https://firestore.googleapis.com/v1/' + FS_DOC_BASE_CHOHEN;
+
+var _cachedFsTokenChohen = null;
+var _fsTokenExpiryChohen = 0;
+
+function getFirestoreTokenChohen_() {
+  if (_cachedFsTokenChohen && Date.now() < _fsTokenExpiryChohen) return _cachedFsTokenChohen;
+  
+  var saKey = PropertiesService.getScriptProperties().getProperty('FIREBASE_SA_KEY');
+  if (!saKey) throw new Error('FIREBASE_SA_KEY が未設定。スクリプトプロパティに設定してください');
+  
+  var sa = JSON.parse(saKey);
+  var now = Math.floor(Date.now() / 1000);
+  
+  var header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  var claimSet = Utilities.base64EncodeWebSafe(JSON.stringify({
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600
+  }));
+  
+  var signatureInput = header + '.' + claimSet;
+  var signatureBytes = Utilities.computeRsaSha256Signature(signatureInput, sa.private_key);
+  var signature = Utilities.base64EncodeWebSafe(signatureBytes);
+  var jwt = signatureInput + '.' + signature;
+  
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    payload: {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt
+    },
+    muteHttpExceptions: true
+  });
+  
+  if (res.getResponseCode() !== 200) {
+    throw new Error('Firestore認証失敗: ' + res.getContentText());
+  }
+  
+  _cachedFsTokenChohen = JSON.parse(res.getContentText()).access_token;
+  _fsTokenExpiryChohen = Date.now() + 3500 * 1000;
+  return _cachedFsTokenChohen;
+}
+
+function toFsValueChohen_(v) {
+  if (v === null || v === undefined || v === '') return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'number') {
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  return { stringValue: String(v) };
+}
+
+function toFsFieldsChohen_(data) {
+  var fields = {};
+  for (var key in data) {
+    if (data.hasOwnProperty(key)) {
+      fields[key] = toFsValueChohen_(data[key]);
+    }
+  }
+  return fields;
+}
+
+/**
+ * shootingDetails を Firestore に直接書き込み
+ */
+function pushToFirestoreShootingDetails_(data) {
+  var notionId = data.notionPageId;
+  if (!notionId || !data.castName) return;
+  
+  // ドキュメントID: NotionPageID_キャスト名（ユニーク）
+  var rawId = notionId + '_' + data.castName.replace(/\s+/g, '');
+  var docId = String(rawId).replace(/[\/\.]/g, '_').replace(/^__/, 'xx').trim();
+  
+  var docData = {
+    castName: data.castName,
+    inTime: data.inTime || '',
+    outTime: data.outTime || '',
+    location: data.location || '',
+    address: data.address || '',
+    notionPageId: notionId,
+    updatedAt: new Date()
+  };
+  
+  var token = getFirestoreTokenChohen_();
+  var url = FS_API_BASE_CHOHEN + '/shootingDetails/' + docId;
+  
+  var res = UrlFetchApp.fetch(url, {
+    method: 'patch',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    payload: JSON.stringify({ fields: toFsFieldsChohen_(docData) }),
+    muteHttpExceptions: true
+  });
+  
+  if (res.getResponseCode() !== 200) {
+    Logger.log('Firestore shootingDetails 書き込みエラー: ' + res.getContentText());
+  } else {
+    Logger.log('Firestore shootingDetails 書き込み成功: ' + data.castName);
+  }
+}
+
+/**
+ * Notion URLや文字列から32桁のPageIDを抽出
+ */
+function extractNotionPageId_(str) {
+  if (!str) return '';
+  var match = str.match(/[0-9a-fA-F]{32}/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+/**
+ * セットアップ＆テスト
+ * スクリプトプロパティで FIREBASE_SA_KEY を設定済みならテストのみ実行
+ * 未設定の場合は SA_KEY_JSON に貼り付けてから実行
+ */
+function setupFirestoreForChohen() {
+  // まずスクリプトプロパティを確認
+  var existing = PropertiesService.getScriptProperties().getProperty('FIREBASE_SA_KEY');
+  
+  if (existing) {
+    Logger.log('✅ FIREBASE_SA_KEY は設定済みです');
+  } else {
+    // ★ 未設定の場合: ここにサービスアカウントキーのJSONを貼り付けて実行
+    var SA_KEY_JSON = '';
+    
+    if (!SA_KEY_JSON) {
+      Logger.log('❌ FIREBASE_SA_KEY が未設定です。');
+      Logger.log('→ 方法1: プロジェクトの設定 → スクリプトプロパティ → FIREBASE_SA_KEY を追加');
+      Logger.log('→ 方法2: この関数内の SA_KEY_JSON にJSONを貼り付けて再実行');
+      return;
+    }
+    
+    PropertiesService.getScriptProperties().setProperty('FIREBASE_SA_KEY', SA_KEY_JSON);
+    Logger.log('✅ FIREBASE_SA_KEY を保存しました');
+  }
+  
+  // テスト接続
+  try {
+    var token = getFirestoreTokenChohen_();
+    Logger.log('✅ Firestore認証テスト成功！トークン取得OK');
+  } catch (e) {
+    Logger.log('❌ Firestore認証テスト失敗: ' + e);
+  }
 }
