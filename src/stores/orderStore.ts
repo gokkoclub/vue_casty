@@ -55,13 +55,12 @@ export const useOrderStore = defineStore('order', () => {
     }
 
     function initializeForShooting(_title: string) {
-        // Reset projects if empty — title is left blank for user to input
+        // Reset projects if empty — 2作品分の枠を用意
         if (projects.value.length === 0) {
-            projects.value = [{
-                id: crypto.randomUUID(),
-                title: '',
-                roles: []
-            }]
+            projects.value = [
+                { id: crypto.randomUUID(), title: '', roles: [] },
+                { id: crypto.randomUUID(), title: '', roles: [] }
+            ]
         }
     }
 

@@ -106,11 +106,11 @@ function parseCost(costStr: string): number {
 // ====== 1. キャスティングリスト インポート ======
 async function importCastings() {
     console.log('\n=== キャスティングリスト インポート ===')
-    const filePath = resolve(PROJECT_ROOT, 'キャストDB - キャスティングリスト.csv')
+    const filePath = resolve(PROJECT_ROOT, 'キャストDB - キャスティングリスト (1).csv')
     const rows = parseCsv(filePath)
     console.log(`CSV行数: ${rows.length}`)
 
-    const batch = db.batch()
+    let batch = db.batch()
     let count = 0
     let batchCount = 0
 
@@ -151,6 +151,7 @@ async function importCastings() {
         if (batchCount >= 450) {
             await batch.commit()
             console.log(`  バッチコミット: ${count}件完了`)
+            batch = db.batch()
             batchCount = 0
         }
     }
@@ -164,11 +165,11 @@ async function importCastings() {
 // ====== 2. 撮影連絡DB インポート ======
 async function importShootingContacts() {
     console.log('\n=== 撮影連絡DB インポート ===')
-    const filePath = resolve(PROJECT_ROOT, 'キャストDB - 撮影連絡DB.csv')
+    const filePath = resolve(PROJECT_ROOT, 'キャストDB - 撮影連絡DB (1).csv')
     const rows = parseCsv(filePath)
     console.log(`CSV行数: ${rows.length}`)
 
-    const batch = db.batch()
+    let batch = db.batch()
     let count = 0
     let batchCount = 0
 
@@ -207,6 +208,7 @@ async function importShootingContacts() {
         if (batchCount >= 450) {
             await batch.commit()
             console.log(`  バッチコミット: ${count}件完了`)
+            batch = db.batch()
             batchCount = 0
         }
     }
@@ -220,11 +222,11 @@ async function importShootingContacts() {
 // ====== 3. マスターデータ インポート ======
 async function importMasterData() {
     console.log('\n=== マスターデータ インポート ===')
-    const filePath = resolve(PROJECT_ROOT, 'キャストDB - マスターデータ.csv')
+    const filePath = resolve(PROJECT_ROOT, 'キャストDB - マスターデータ (1).csv')
     const rows = parseCsv(filePath)
     console.log(`CSV行数: ${rows.length}`)
 
-    const batch = db.batch()
+    let batch = db.batch()
     let count = 0
     let batchCount = 0
 
@@ -262,6 +264,7 @@ async function importMasterData() {
         if (batchCount >= 450) {
             await batch.commit()
             console.log(`  バッチコミット: ${count}件完了`)
+            batch = db.batch()
             batchCount = 0
         }
     }

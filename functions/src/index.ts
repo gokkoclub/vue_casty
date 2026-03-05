@@ -24,6 +24,7 @@ import { syncCastToNotion } from "./notion";
 // Re-export new Cloud Functions
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
+export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
 
 admin.initializeApp();
 

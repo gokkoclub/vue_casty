@@ -58,6 +58,19 @@ const emit = defineEmits<{
 }>()
 
 const handleSubmitClick = () => {
+  // 作品名バリデーション
+  if (store.isShootingMode) {
+    const emptyProjects = store.projects.filter(p => !p.title.trim())
+    if (emptyProjects.length > 0) {
+      alert('すべてのプロジェクトに作品名を入力してください。')
+      return
+    }
+  } else {
+    if (!store.manualMeta.projectName.trim()) {
+      alert('案件タイトルを入力してください。')
+      return
+    }
+  }
   // Show confirmation popup
   showConfirmDialog.value = true
 }
