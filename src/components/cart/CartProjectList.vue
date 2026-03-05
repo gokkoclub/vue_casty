@@ -27,7 +27,7 @@ const handleAddProject = () => {
 <template>
   <div class="project-list">
     <Card 
-      v-for="project in store.projects" 
+      v-for="(project, index) in store.projects" 
       :key="project.id"
       class="project-card mb-3"
     >
@@ -36,7 +36,7 @@ const handleAddProject = () => {
           <span class="label">作品:</span>
           <InputText 
             v-model="project.title" 
-            placeholder="作品名・イベント名" 
+            :placeholder="`${index + 1}作品目のタイトルのみを入力してください`" 
             class="project-title-input"
           />
           <Button 

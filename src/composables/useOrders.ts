@@ -20,6 +20,7 @@ export interface OrderItem {
     mainSub: 'メイン' | 'サブ' | 'その他'
     projectName: string
     slackMentionId?: string
+    selectedDates?: string[]  // per-cast selected dates (YYYY/MM/DD)
 }
 
 export interface OrderPayload {
@@ -30,6 +31,7 @@ export interface OrderPayload {
     dateRanges: string[]
     items: OrderItem[]
     pdfFile?: File
+    intimacy?: 'なし' | 'あり' | '未定'
     shootingData?: {
         title: string
         team: string
@@ -207,16 +209,23 @@ export function useOrders() {
                         const cartCast = pool[castId]
                         if (!cartCast) return
 
+                        // Get per-cast dates (fallback to all dates)
+                        const castDates = role.castDates[castId]
+                        const selectedDates = castDates && castDates.length > 0
+                            ? castDates
+                            : [...context.dateRanges]
+
                         items.push({
                             castId,
                             castName: cartCast.cast.name,
                             castType: cartCast.cast.castType,
                             roleName: role.name || '役名なし',
-                            rank: index + 1, // 1-based rank
+                            rank: index + 1,
                             note: role.note || '',
                             mainSub: role.type,
                             projectName: project.title || orderStore.displayProjectName,
-                            slackMentionId: cartCast.cast.slackMentionId
+                            slackMentionId: cartCast.cast.slackMentionId,
+                            selectedDates
                         })
                     })
                 })
@@ -257,7 +266,7 @@ export function useOrders() {
     /**
      * オーダーをFirestoreに保存
      */
-    const submitOrder = async (pdfFile?: File | null): Promise<boolean> => {
+    const submitOrder = async (pdfFile?: File | null, intimacy?: string): Promise<boolean> => {
         if (!db) {
             toast.add({
                 severity: 'error',
@@ -292,7 +301,12 @@ export function useOrders() {
 
             // Create casting documents
             for (const item of payload.items) {
-                for (const dateRange of payload.dateRanges) {
+                // Use per-cast selectedDates if available, otherwise all dateRanges
+                const itemDates = item.selectedDates && item.selectedDates.length > 0
+                    ? item.selectedDates
+                    : payload.dateRanges
+
+                for (const dateRange of itemDates) {
                     const [startDateStr, endDateStr] = dateRange.includes('~')
                         ? dateRange.split('~').map(s => s.trim())
                         : [dateRange, dateRange]
@@ -336,7 +350,7 @@ export function useOrders() {
                             // shooting mode
                             return item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング'
                         })(),
-                        note: item.note,
+                        note: item.note + (intimacy === 'あり' ? '\n【インティマシーシーンあり】' : ''),
                         mainSub: item.mainSub,
                         cost: 0,
                         slackThreadTs: '',
@@ -361,6 +375,9 @@ export function useOrders() {
                             current.setDate(current.getDate() + 1)
                         }
                         castingData.shootingDates = dates
+                    } else if (item.selectedDates && item.selectedDates.length > 0) {
+                        // Store per-cast selected dates
+                        castingData.shootingDates = item.selectedDates
                     }
 
                     // Add time fields for external/internal events
@@ -388,6 +405,21 @@ export function useOrders() {
                 try {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
                     console.log('[DEBUG CF CALL] mode:', payload.mode)
+
+                    // ── カレンダー招待用OAuthトークンを先に取得 ──
+                    // ブラウザはユーザー操作に直結しないポップアップをブロックするため、
+                    // CF呼び出し前（クリック直後）にポップアップでトークンを取得しておく
+                    const hasInternalCasts = payload.items.some(i => i.castType === '内部')
+                    let calendarAccessToken: string | null = null
+                    if (hasInternalCasts) {
+                        try {
+                            const { getAccessToken } = useAuth()
+                            calendarAccessToken = await getAccessToken()
+                            console.log('[CALENDAR] OAuth token obtained (pre-CF)')
+                        } catch (authErr) {
+                            console.warn('[CALENDAR] OAuth token failed (pre-CF), attendees will be skipped:', authErr)
+                        }
+                    }
 
                     // PDF file → base64 (CFに渡してSlack SDKでアップロード)
                     let pdfBase64: string | undefined
@@ -417,6 +449,7 @@ export function useOrders() {
                         endTime: orderStore.manualMeta.endTime || undefined,
                         ccMention: userName.value || undefined,
                         hasInternal: payload.items.some(i => i.castType === '内部'),
+                        hasIntimacy: intimacy === 'あり',
                         pdfBase64,
                         pdfFileName,
                         items: payload.items.map(i => ({
@@ -436,16 +469,11 @@ export function useOrders() {
                         slackResult = result.data as { ts: string; permalink: string }
                         console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
 
-                        // ── カレンダー招待: ユーザーOAuthでattendees追加 ──
-                        // SA では attendees 追加に DWD が必要なため、フロントのユーザーOAuth で対応
-                        // トークンが無い/期限切れの場合はGoogleログインポップアップで再取得
+                        // ── カレンダー招待: 事前取得したOAuthトークンでattendees追加 ──
                         const cfData = result.data as Record<string, unknown>
                         const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
                         const calendarId = import.meta.env.VITE_CALENDAR_ID_INTERNAL
-                        const { getAccessToken } = useAuth()
-                        const accessToken = calendarResults && Object.keys(calendarResults).length > 0
-                            ? await getAccessToken()
-                            : null
+                        const accessToken = calendarAccessToken // 事前取得済み
 
                         if (calendarResults && calendarId && accessToken) {
                             for (const [key, { eventId, castEmail }] of Object.entries(calendarResults)) {
@@ -484,7 +512,7 @@ export function useOrders() {
                                 }
                             }
                         } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
-                            console.warn('[CALENDAR] Attendee addition skipped: failed to obtain OAuth token')
+                            console.warn('[CALENDAR] Attendee addition skipped: no OAuth token available')
                         }
                     } else {
                         console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)

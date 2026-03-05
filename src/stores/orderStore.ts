@@ -54,14 +54,13 @@ export const useOrderStore = defineStore('order', () => {
         }
     }
 
-    function initializeForShooting(title: string) {
-        // Reset projects if empty, or update existing? For now reset to 1 default project
+    function initializeForShooting(_title: string) {
+        // Reset projects if empty — 2作品分の枠を用意
         if (projects.value.length === 0) {
-            projects.value = [{
-                id: crypto.randomUUID(),
-                title: title,
-                roles: []
-            }]
+            projects.value = [
+                { id: crypto.randomUUID(), title: '', roles: [] },
+                { id: crypto.randomUUID(), title: '', roles: [] }
+            ]
         }
     }
 
@@ -75,7 +74,8 @@ export const useOrderStore = defineStore('order', () => {
                     name: '役名なし',
                     type: 'その他',
                     note: '',
-                    castIds: []
+                    castIds: [],
+                    castDates: {}
                 }]
             }]
         }
@@ -105,7 +105,7 @@ export const useOrderStore = defineStore('order', () => {
     function createProject(options?: { title?: string; roles?: any[] }) {
         const newProject = {
             id: crypto.randomUUID(),
-            title: options?.title || displayProjectName.value,
+            title: options?.title || '',
             roles: options?.roles || []
         }
         projects.value.push(newProject)
@@ -115,7 +115,7 @@ export const useOrderStore = defineStore('order', () => {
     function addProject(title: string = '') {
         projects.value.push({
             id: crypto.randomUUID(),
-            title: title || displayProjectName.value,
+            title: title,
             roles: []
         })
     }
@@ -128,7 +128,8 @@ export const useOrderStore = defineStore('order', () => {
                 name: '',
                 type: 'その他',
                 note: '',
-                castIds: []
+                castIds: [],
+                castDates: {}
             })
         }
     }
@@ -149,8 +150,53 @@ export const useOrderStore = defineStore('order', () => {
             const role = p.roles.find(r => r.id === roleId)
             if (role) {
                 role.castIds = role.castIds.filter(id => id !== castId)
+                delete role.castDates[castId]
             }
         })
+    }
+
+    // Initialize dates for a cast when added to a role (all dates selected by default)
+    function initCastDatesForRole(roleId: string, castId: string) {
+        projects.value.forEach(p => {
+            const role = p.roles.find(r => r.id === roleId)
+            if (role && !role.castDates[castId]) {
+                role.castDates[castId] = [...context.value.dateRanges]
+            }
+        })
+    }
+
+    // Toggle a specific date for a cast in a role
+    function toggleCastDate(roleId: string, castId: string, date: string) {
+        projects.value.forEach(p => {
+            const role = p.roles.find(r => r.id === roleId)
+            if (role) {
+                if (!role.castDates[castId]) {
+                    role.castDates[castId] = [...context.value.dateRanges]
+                }
+                const dates = role.castDates[castId]!
+                const idx = dates.indexOf(date)
+                if (idx !== -1) {
+                    // Don't allow removing last date
+                    if (dates.length > 1) {
+                        dates.splice(idx, 1)
+                    }
+                } else {
+                    dates.push(date)
+                    dates.sort()
+                }
+            }
+        })
+    }
+
+    // Get selected dates for a cast in a role
+    function getCastDates(roleId: string, castId: string): string[] {
+        for (const p of projects.value) {
+            const role = p.roles.find(r => r.id === roleId)
+            if (role) {
+                return role.castDates[castId] || [...context.value.dateRanges]
+            }
+        }
+        return [...context.value.dateRanges]
     }
 
     // Clean up empty roles and projects before submission
@@ -226,15 +272,16 @@ export const useOrderStore = defineStore('order', () => {
         addToPool,
         removeFromPool,
         createProject,
-        addProject, // Assuming createProject maps to addProject
-        removeProject, // Assuming deleteProject maps to removeProject
-        addRole, // Assuming createRole maps to addRole
-        removeRole, // Assuming deleteRole maps to removeRole
-        // addCastToRole is not defined, keeping existing removeCastFromRole
+        addProject,
+        removeProject,
+        addRole,
+        removeRole,
         removeCastFromRole,
+        initCastDatesForRole,
+        toggleCastDate,
+        getCastDates,
         clear,
-        // updateNote is not defined
-        addItem, // Keeping existing actions
+        addItem,
         removeItem,
         cleanupEmpty,
         getFlattenedOrders

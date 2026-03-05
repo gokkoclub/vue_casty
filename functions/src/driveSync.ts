@@ -13,7 +13,7 @@ import * as admin from "firebase-admin";
  * 対応する shootingContacts の makingUrl を更新する
  */
 export const syncDriveLinksToContacts = onCall(
-    { maxInstances: 10 },
+    { maxInstances: 10, cors: true, region: "asia-northeast1" },
     async (request) => {
         const data = request.data;
 

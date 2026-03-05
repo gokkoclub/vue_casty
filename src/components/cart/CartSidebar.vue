@@ -8,6 +8,7 @@ import InputText from 'primevue/inputtext'
 import CartCastPool from './CartCastPool.vue'
 import CartProjectList from './CartProjectList.vue'
 import SimpleCastList from './SimpleCastList.vue'
+import OrderConfirmDialog from './OrderConfirmDialog.vue'
 import { useOrderStore } from '@/stores/orderStore'
 
 const store = useOrderStore()
@@ -29,13 +30,53 @@ const handlePdfUpload = (event: Event) => {
   }
 }
 
+// Check if pool contains any cast under 18
+const hasMinorCast = computed(() => {
+  const pool = store.pool
+  const now = new Date()
+  for (const key of Object.keys(pool)) {
+    const cast = pool[key]?.cast
+    if (cast?.dateOfBirth) {
+      const dob = cast.dateOfBirth.toDate()
+      const age = now.getFullYear() - dob.getFullYear()
+      const monthDiff = now.getMonth() - dob.getMonth()
+      const actualAge = monthDiff < 0 || (monthDiff === 0 && now.getDate() < dob.getDate())
+        ? age - 1
+        : age
+      if (actualAge < 18) return true
+    }
+  }
+  return false
+})
+
+// Confirmation dialog
+const showConfirmDialog = ref(false)
+
 // Emit events to parent
 const emit = defineEmits<{
-  submit: [pdfFile?: File | null]
+  submit: [pdfFile?: File | null, intimacy?: string]
 }>()
 
-const handleSubmit = () => {
-  emit('submit', uploadedPdf.value)
+const handleSubmitClick = () => {
+  // 作品名バリデーション
+  if (store.isShootingMode) {
+    const emptyProjects = store.projects.filter(p => !p.title.trim())
+    if (emptyProjects.length > 0) {
+      alert('すべてのプロジェクトに作品名を入力してください。')
+      return
+    }
+  } else {
+    if (!store.manualMeta.projectName.trim()) {
+      alert('案件タイトルを入力してください。')
+      return
+    }
+  }
+  // Show confirmation popup
+  showConfirmDialog.value = true
+}
+
+const handleConfirmed = (intimacy: string) => {
+  emit('submit', uploadedPdf.value, intimacy)
 }
 </script>
 
@@ -180,7 +221,7 @@ const handleSubmit = () => {
             
             <Button 
                 label="オーダー送信" 
-                @click="handleSubmit"
+                @click="handleSubmitClick"
                 icon="pi pi-check"
                 :disabled="store.count === 0"
                 severity="success"
@@ -189,6 +230,14 @@ const handleSubmit = () => {
         </div>
     </div>
   </Drawer>
+
+  <!-- Confirmation Dialog (shown after submit click) -->
+  <OrderConfirmDialog
+    v-model:visible="showConfirmDialog"
+    :hasPdf="!!uploadedPdf"
+    :hasMinorCast="hasMinorCast"
+    @confirm="handleConfirmed"
+  />
 </template>
 
 <style scoped>

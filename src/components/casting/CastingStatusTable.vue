@@ -22,12 +22,6 @@ const emit = defineEmits<{
 
 const { isAdmin } = useAuth()
 
-// Status options for quick change
-const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
-
-// Check if casting is in order wait status
-const isOrderWait = (status: string) => ORDER_WAIT_STATUSES.includes(status)
-
 // Get status severity
 const getStatusSeverity = (status: CastingStatus): 'success' | 'info' | 'warning' | 'danger' | 'secondary' | 'contrast' => {
   switch (status) {

@@ -1,0 +1,422 @@
+/** 入口：ボタン（通常版：最後の項目も表示） */
+function onPressConfirmDecision() {
+  showPreDecisionChecklistModal({ hideLastItem: false });
+}
+
+/** モーダル生成（テンプレートにフラグを渡す） */
+function showPreDecisionChecklistModal(opts) {
+  const t = HtmlService.createTemplateFromFile('PreDecisionChecklist'); // テンプレ化
+  t.HIDE_LAST_ITEM = !!(opts && opts.hideLastItem);                     // 表示制御フラグ
+  const html = t.evaluate().setWidth(460).setHeight(420);
+  SpreadsheetApp.getUi().showModalDialog(html, '事前チェック');
+}
+
+/** ============ 追加：作品名取得 送信設定 ============
+ * 送信先スプレッドシートとシート名
+ */
+const TITLE_TARGET_SPREADSHEET_ID = '1AqaO8SkIGFwa3R0ZnDkvNmDEOgkyG4MccseTFvCH3lM';
+const TITLE_TARGET_SHEET_NAME     = '作品名取得';
+
+/** onOpen：手動メニュー（テスト用） */
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('作品名取得')
+    .addItem('先頭の1件だけ送る', 'pushFirstCompleteTitleRow_')
+    .addToUi();
+}
+
+/** 作品名取得：最初に4要素が揃っている1行だけ送信
+ *  データ送信用シートの「撮影日(C)・チーム名(D)・Notion(M)・作品(K)」が揃った最初の行を、
+ *  送信先 SS「作品名取得」に A:撮影日, B:チーム名, C:Notion, D:作品, E:元シートURL で追記。
+ *  すでに（撮影日＋チーム名＋Notion）が同一の行が送信先にある場合は重複を避けてスキップ。
+ */
+function pushFirstCompleteTitleRow_() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const relaySheet = ss.getSheetByName('データ送信用シート');
+  if (!relaySheet) throw new Error('「データ送信用シート」が見つかりません。');
+
+  const data = relaySheet.getDataRange().getValues();
+  if (data.length <= 1) {
+    Logger.log('データ行がありません。');
+    return;
+  }
+
+  // 送信先の準備
+  const targetSS = SpreadsheetApp.openById(TITLE_TARGET_SPREADSHEET_ID);
+  const targetSh = targetSS.getSheetByName(TITLE_TARGET_SHEET_NAME) || targetSS.insertSheet(TITLE_TARGET_SHEET_NAME);
+
+  // 送信先の既存データを読み、重複チェック用のキー集合を作成（撮影日|チーム名|Notion）
+  const targetValues = targetSh.getDataRange().getValues();
+  const keySet = new Set();
+  if (targetValues.length > 1) {
+    for (let i = 1; i < targetValues.length; i++) {
+      const [tDate, tTeam, tNotion] = [String(targetValues[i][0]||''), String(targetValues[i][1]||''), String(targetValues[i][2]||'')];
+      keySet.add(`${tDate}|${tTeam}|${tNotion}`);
+    }
+  }
+
+  const sourceUrl = ss.getUrl();
+
+  // ヘッダー推定：A:送信済み, B:送信先, C:撮影日, D:チーム名, ... K:作品, L:配役, M:Notion
+  const COL = { DATE: 3, TEAM: 4, WORK: 11, NOTION: 13 }; // 1-based index
+
+  // 先頭から走査して、4要素が揃った最初の行を送る
+  for (let r = 2; r <= data.length; r++) {
+    const row = data[r-1];
+
+    const dateVal   = row[COL.DATE-1];
+    const teamVal   = row[COL.TEAM-1];
+    const workVal   = row[COL.WORK-1];
+    const notionVal = row[COL.NOTION-1];
+
+    if (!dateVal || !teamVal || !workVal || !notionVal) continue; // 4つのいずれかが空 → 次
+
+    // 撮影日フォーマット
+    let dateOut = '';
+    if (dateVal instanceof Date) {
+      dateOut = Utilities.formatDate(dateVal, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    } else {
+      dateOut = String(dateVal);
+    }
+
+    const teamOut   = String(teamVal).trim();
+    const notionOut = String(notionVal).trim();
+    const workOut   = String(workVal).trim();
+
+    // 重複チェック
+    const key = `${dateOut}|${teamOut}|${notionOut}`;
+    if (keySet.has(key)) {
+      Logger.log(`重複のためスキップ: ${key}`);
+      return; // 最初の「揃っている」行が既に送信済みなら終わり
+    }
+
+    // ヘッダーが空なら作る
+    if (targetSh.getLastRow() === 0 || targetSh.getRange(1,1).getValue() === '') {
+      targetSh.getRange(1,1,1,5).setValues([['撮影日','チーム名','Notion','作品','元シートURL']]);
+    }
+
+    // 挿入
+    targetSh.appendRow([dateOut, teamOut, notionOut, workOut, sourceUrl]);
+    Logger.log(`送信しました: 撮影日=${dateOut}, チーム=${teamOut}, Notion=${notionOut}, 作品=${workOut}`);
+    return; // 最初の1行だけ送る
+  }
+
+  Logger.log('4要素（撮影日/チーム名/Notion/作品）が揃った行が見つかりませんでした。');
+}
+
+/** 本処理：アラートは使わず、結果オブジェクトを返す */
+function runDecisionAfterChecklist() {
+  const sheet = SpreadsheetApp.getActiveSheet();
+  const statusCell = sheet.getRange("C18");
+  const currentStatus = statusCell.getValue();
+
+  // 既に「決」の場合もアラートは出さず、結果を返す
+  if (currentStatus === "決") {
+    // ★ ここで「作品名取得」への送信も一度だけ試す（重複は内部でスキップ）
+    try { pushFirstCompleteTitleRow_(); } catch (e) { Logger.log('作品名取得送信（既決）: ' + e); }
+    return { ok: true, status: "already", message: "すでに決定済みです。" };
+  }
+
+  try {
+    // ★ 本処理前に「作品名取得」への送信を一度だけ試す（重複は内部でスキップ）
+    try { pushFirstCompleteTitleRow_(); } catch (e) { Logger.log('作品名取得送信: ' + e); }
+
+    const shootingDate = sheet.getRange("C9").getValue();
+    if (!(shootingDate instanceof Date)) {
+      throw new Error("C9の撮影日が取得できません。");
+    }
+    const formattedDate = Utilities.formatDate(shootingDate, Session.getScriptTimeZone(), "MM-dd");
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const relaySheet = ss.getSheetByName("データ送信用シート");
+    const data = relaySheet.getDataRange().getValues();
+
+    const targetSpreadsheetId = '1epvhONAUa0tbd3jxNxmNVB693FJ_pE-1CJmXE2Q4XQU'; // 撮影用
+    const ctbdSpreadsheetId   = '1LMI_GHLwHX0XODg7a85E_Sr9jF4MYSMiS0HzzIiUkB4'; // CTDB用
+    const calendarSS = SpreadsheetApp.openById(targetSpreadsheetId);
+    const ctbdSheet  = SpreadsheetApp.openById(ctbdSpreadsheetId).getSheetByName("from香盤");
+
+    const calendarMap    = new Map();
+    const groupedBySheet = new Map();
+    const now = new Date();
+
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      const [sent, target, date, team, group, staff, inTime, outTime, location, address, work, role, notion, emergency] = row;
+      const rowFormatted = Utilities.formatDate(new Date(date), Session.getScriptTimeZone(), "MM-dd");
+
+      if (sent === "✅" || !target || rowFormatted !== formattedDate) continue;
+
+      const requiredIndexes = [2, 3, 4, 5]; // 撮影日, チーム名, グループ名, スタッフ名
+      const hasAllData = requiredIndexes.every(index => row[index] && row[index].toString().trim() !== "");
+      if (!hasAllData) continue;
+
+      // 撮影側送信
+      if (target === "カレンダー" || target === "両方") {
+        const sheetName = `${team}_${rowFormatted}`;
+
+        if (group === "キャスト") {
+          const rowData = [rowFormatted, team, group, formatTime(inTime), formatTime(outTime), location, staff];
+          if (!groupedBySheet.has(sheetName)) groupedBySheet.set(sheetName, []);
+          groupedBySheet.get(sheetName).push(rowData);
+        } else {
+          const key = `${sheetName}_${group}_${formatTime(inTime)}_${formatTime(outTime)}_${location}`;
+          if (!calendarMap.has(key)) {
+            calendarMap.set(key, {
+              sheetName,
+              rowData: [rowFormatted, team, group, formatTime(inTime), formatTime(outTime), location, staff]
+            });
+          } else {
+            calendarMap.get(key).rowData.push(staff);
+          }
+        }
+      }
+
+      // CTDB送信
+      if (target === "CTDB" || target === "両方") {
+        const ctbdRow = [
+          false,                     // チェックボックス
+          date,                      // 日付（C列）
+          staff,                     // 名前（F列）
+          formatTime(inTime),        // IN時間（G列）
+          formatTime(outTime),       // OUT時間（H列）
+          work,                      // 作品（K列）
+          role,                      // 配役（L列）
+          location,                  // 集合場所（I列）
+          address,                   // 住所（J列）
+          notion,                    // Notion（M列）
+          emergency,                 // 緊急連絡先（N列）
+          team                       // アカウント（D列）
+        ];
+        const startRow = ctbdSheet.getLastRow() + 1;
+        ctbdSheet.getRange(startRow, 1, 1, ctbdRow.length).setValues([ctbdRow]);
+
+        // ★ Firestore shootingDetails にも直接書き込み
+        try {
+          pushToFirestoreShootingDetails_({
+            castName: String(staff || '').trim(),
+            inTime: formatTime(inTime),
+            outTime: formatTime(outTime),
+            location: String(location || ''),
+            address: String(address || ''),
+            notionPageId: extractNotionPageId_(String(notion || '')),
+            work: String(work || ''),
+            team: String(team || ''),
+            shootingDate: date
+          });
+        } catch (fsErr) {
+          Logger.log('Firestore shootingDetails エラー（続行）: ' + fsErr);
+        }
+      }
+
+      // マーク更新
+      relaySheet.getRange(i + 1, 1).setValue("✅"); // A列: 転送済み
+      relaySheet.getRange(i + 1, 17).setValue(now); // Q列: 転送日時
+    }
+
+    // 撮影データまとめて送信
+    calendarMap.forEach((value) => {
+      const { sheetName, rowData } = value;
+      if (!groupedBySheet.has(sheetName)) groupedBySheet.set(sheetName, []);
+      groupedBySheet.get(sheetName).push(rowData);
+    });
+
+    groupedBySheet.forEach((rows, sheetName) => {
+      let sheet = calendarSS.getSheetByName(sheetName);
+      if (!sheet) {
+        sheet = calendarSS.insertSheet(sheetName);
+      } else {
+        sheet.clear();
+      }
+
+      const maxStaff = Math.max(...rows.map(r => r.length - 6));
+      const headers = ["撮影日", "チーム名", "グループ名", "入り時間", "出る時間", "集合場所"];
+      for (let i = 1; i <= maxStaff; i++) headers.push(`スタッフ${i}`);
+
+      const formatted = rows.map(row => {
+        const copy = [...row];
+        while (copy.length < headers.length) copy.push('');
+        return copy;
+      });
+
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      sheet.getRange(2, 1, formatted.length, headers.length).setValues(formatted);
+      sheet.insertRows(1);
+      sheet.getRange(1, 1).setValue("元のスプレッドシートリンク:");
+      sheet.getRange(1, 2).setValue(SpreadsheetApp.getActiveSpreadsheet().getUrl());
+    });
+
+    // ステータス更新
+    statusCell.setValue("決");
+
+    // 成功レスポンス（既決でない）
+    return { ok: true, status: "done", message: "決定香盤に変更されました。Slackへの共有をお願いします。" };
+
+  } catch (error) {
+    // ここでもアラートは出さず、エラーを返す
+    return { ok: false, status: "error", message: error.message || "不明なエラーが発生しました。" };
+  }
+}
+
+/** 時刻フォーマット関数 */
+function formatTime(time) {
+  if (time instanceof Date) {
+    return Utilities.formatDate(time, Session.getScriptTimeZone(), "HH:mm");
+  }
+  return time;
+}
+
+// =============================================
+// Firestore 直接書き込み（shootingDetails）
+// =============================================
+
+const FS_PROJECT_ID_KOUHAN = 'gokko-casty';
+const FS_DOC_BASE_KOUHAN = 'projects/' + FS_PROJECT_ID_KOUHAN + '/databases/(default)/documents';
+const FS_API_BASE_KOUHAN = 'https://firestore.googleapis.com/v1/' + FS_DOC_BASE_KOUHAN;
+
+var _cachedFsTokenKouhan = null;
+var _fsTokenExpiryKouhan = 0;
+
+function getFirestoreTokenKouhan_() {
+  if (_cachedFsTokenKouhan && Date.now() < _fsTokenExpiryKouhan) return _cachedFsTokenKouhan;
+  
+  var saKey = PropertiesService.getScriptProperties().getProperty('FIREBASE_SA_KEY');
+  if (!saKey) throw new Error('FIREBASE_SA_KEY が未設定。スクリプトプロパティに設定してください');
+  
+  var sa = JSON.parse(saKey);
+  var now = Math.floor(Date.now() / 1000);
+  
+  var header = Utilities.base64EncodeWebSafe(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  var claimSet = Utilities.base64EncodeWebSafe(JSON.stringify({
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/datastore',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600
+  }));
+  
+  var signatureInput = header + '.' + claimSet;
+  var signatureBytes = Utilities.computeRsaSha256Signature(signatureInput, sa.private_key);
+  var signature = Utilities.base64EncodeWebSafe(signatureBytes);
+  var jwt = signatureInput + '.' + signature;
+  
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/token', {
+    method: 'post',
+    payload: {
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt
+    },
+    muteHttpExceptions: true
+  });
+  
+  if (res.getResponseCode() !== 200) {
+    throw new Error('Firestore認証失敗: ' + res.getContentText());
+  }
+  
+  _cachedFsTokenKouhan = JSON.parse(res.getContentText()).access_token;
+  _fsTokenExpiryKouhan = Date.now() + 3500 * 1000;
+  return _cachedFsTokenKouhan;
+}
+
+function toFsValueKouhan_(v) {
+  if (v === null || v === undefined || v === '') return { nullValue: null };
+  if (typeof v === 'string') return { stringValue: v };
+  if (typeof v === 'number') {
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  }
+  if (typeof v === 'boolean') return { booleanValue: v };
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  return { stringValue: String(v) };
+}
+
+function toFsFieldsKouhan_(data) {
+  var fields = {};
+  for (var key in data) {
+    if (data.hasOwnProperty(key)) {
+      fields[key] = toFsValueKouhan_(data[key]);
+    }
+  }
+  return fields;
+}
+
+/**
+ * shootingDetails を Firestore に直接書き込み
+ */
+function pushToFirestoreShootingDetails_(data) {
+  var notionId = data.notionPageId;
+  if (!notionId || !data.castName) return;
+  
+  // ドキュメントID: NotionPageID_キャスト名（ユニーク）
+  var rawId = notionId + '_' + data.castName.replace(/\s+/g, '');
+  var docId = String(rawId).replace(/[\/\.]/g, '_').replace(/^__/, 'xx').trim();
+  
+  var docData = {
+    castName: data.castName,
+    inTime: data.inTime || '',
+    outTime: data.outTime || '',
+    location: data.location || '',
+    address: data.address || '',
+    notionPageId: notionId,
+    updatedAt: new Date()
+  };
+  
+  var token = getFirestoreTokenKouhan_();
+  var url = FS_API_BASE_KOUHAN + '/shootingDetails/' + docId;
+  
+  var res = UrlFetchApp.fetch(url, {
+    method: 'patch',
+    headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+    payload: JSON.stringify({ fields: toFsFieldsKouhan_(docData) }),
+    muteHttpExceptions: true
+  });
+  
+  if (res.getResponseCode() !== 200) {
+    Logger.log('Firestore shootingDetails 書き込みエラー: ' + res.getContentText());
+  } else {
+    Logger.log('Firestore shootingDetails 書き込み成功: ' + data.castName);
+  }
+}
+
+/**
+ * Notion URLや文字列から32桁のPageIDを抽出
+ */
+function extractNotionPageId_(str) {
+  if (!str) return '';
+  var match = str.match(/[0-9a-fA-F]{32}/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+/**
+ * セットアップ＆テスト
+ * スクリプトプロパティで FIREBASE_SA_KEY を設定済みならテストのみ実行
+ * 未設定の場合は SA_KEY_JSON に貼り付けてから実行
+ */
+function setupFirestoreForKouhan() {
+  // まずスクリプトプロパティを確認
+  var existing = PropertiesService.getScriptProperties().getProperty('FIREBASE_SA_KEY');
+  
+  if (existing) {
+    Logger.log('✅ FIREBASE_SA_KEY は設定済みです');
+  } else {
+    // ★ 未設定の場合: ここにサービスアカウントキーのJSONを貼り付けて実行
+    var SA_KEY_JSON = '';
+    
+    if (!SA_KEY_JSON) {
+      Logger.log('❌ FIREBASE_SA_KEY が未設定です。');
+      Logger.log('→ 方法1: プロジェクトの設定 → スクリプトプロパティ → FIREBASE_SA_KEY を追加');
+      Logger.log('→ 方法2: この関数内の SA_KEY_JSON にJSONを貼り付けて再実行');
+      return;
+    }
+    
+    PropertiesService.getScriptProperties().setProperty('FIREBASE_SA_KEY', SA_KEY_JSON);
+    Logger.log('✅ FIREBASE_SA_KEY を保存しました');
+  }
+  
+  // テスト接続
+  try {
+    var token = getFirestoreTokenKouhan_();
+    Logger.log('✅ Firestore認証テスト成功！トークン取得OK');
+  } catch (e) {
+    Logger.log('❌ Firestore認証テスト失敗: ' + e);
+  }
+}
