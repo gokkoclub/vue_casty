@@ -37,6 +37,11 @@ const menuItems = computed(() => [
     label: '管理画面',
     icon: 'pi pi-cog',
     command: () => router.push('/management')
+  },
+  {
+    label: 'ヘルプ',
+    icon: 'pi pi-question-circle',
+    command: () => router.push('/help')
   }
 ])
 </script>
