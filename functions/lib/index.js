@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -62,6 +62,8 @@ Object.defineProperty(exports, "syncDriveLinksToContacts", { enumerable: true, g
 var syncFromSam_1 = require("./syncFromSam");
 Object.defineProperty(exports, "syncScheduleFromSam", { enumerable: true, get: function () { return syncFromSam_1.syncScheduleFromSam; } });
 Object.defineProperty(exports, "scheduledSyncFromSam", { enumerable: true, get: function () { return syncFromSam_1.scheduledSyncFromSam; } });
+var slackInteraction_1 = require("./slackInteraction");
+Object.defineProperty(exports, "handleSlackInteraction", { enumerable: true, get: function () { return slackInteraction_1.handleSlackInteraction; } });
 admin.initializeApp();
 // ──────────────────────────────────────
 // 環境変数の取得ヘルパー
@@ -447,6 +449,39 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             batch.update(db.collection("castings").doc(castingIds[i]), updateData);
         }
         await batch.commit();
+    }
+    // ── 内部キャストへ Slack DM 送信 ──
+    // Slack投稿後（threadTs/permalink確定後）に送信
+    if (threadTs && permalink) {
+        const internalItemsForDm = data.items.filter(item => item.castType === "内部" && item.slackMentionId);
+        for (let i = 0; i < internalItemsForDm.length; i++) {
+            const item = internalItemsForDm[i];
+            // castingId を取得（items と castingIds は同じ順序）
+            const allItems = data.items;
+            const originalIndex = allItems.findIndex((ai) => ai.castName === item.castName && ai.castType === item.castType);
+            const castingId = castingIds[originalIndex] || "";
+            if (!castingId || !item.slackMentionId)
+                continue;
+            try {
+                const dmBlocks = (0, slack_1.buildCastOrderDmBlocks)({
+                    castName: item.castName,
+                    projectName: item.projectName,
+                    roleName: item.roleName || "出演",
+                    dateRanges: data.dateRanges || [],
+                    accountName: data.accountName || "",
+                    castingId,
+                    slackThreadTs: threadTs,
+                    slackChannel: slackChannel,
+                    permalink,
+                });
+                const dmText = `📋 ${(data.dateRanges || []).join(", ")} 撮影オーダーが来ています（${item.projectName}）`;
+                await (0, slack_1.sendDmToUser)(slackToken, item.slackMentionId, dmText, dmBlocks);
+                console.log(`[DM] Sent order DM to ${item.castName}`);
+            }
+            catch (dmError) {
+                console.error(`[DM] Failed for ${item.castName}:`, dmError);
+            }
+        }
     }
     return {
         ts: threadTs,

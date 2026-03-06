@@ -17,7 +17,7 @@ import { setGlobalOptions } from "firebase-functions/v2/options";
 setGlobalOptions({ region: "asia-northeast1" });
 
 import * as admin from "firebase-admin";
-import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage } from "./slack";
+import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage, sendDmToUser, buildCastOrderDmBlocks } from "./slack";
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
 import { syncCastToNotion } from "./notion";
 
@@ -25,6 +25,7 @@ import { syncCastToNotion } from "./notion";
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
+export { handleSlackInteraction } from "./slackInteraction";
 
 admin.initializeApp();
 
@@ -483,6 +484,51 @@ export const notifyOrderCreated = onCall(
             }
 
             await batch.commit();
+        }
+
+        // ── 内部キャストへ Slack DM 送信 ──
+        // Slack投稿後（threadTs/permalink確定後）に送信
+        if (threadTs && permalink) {
+            const internalItemsForDm = (data.items as Array<{
+                castName: string;
+                castId: string;
+                castType: string;
+                slackMentionId?: string;
+                projectName: string;
+                roleName?: string;
+            }>).filter(item => item.castType === "内部" && item.slackMentionId);
+
+            for (let i = 0; i < internalItemsForDm.length; i++) {
+                const item = internalItemsForDm[i]!;
+                // castingId を取得（items と castingIds は同じ順序）
+                const allItems = data.items as Array<{ castName: string; castType: string }>;
+                const originalIndex = allItems.findIndex(
+                    (ai: { castName: string; castType: string }) => ai.castName === item.castName && ai.castType === item.castType
+                );
+                const castingId = castingIds[originalIndex] || "";
+
+                if (!castingId || !item.slackMentionId) continue;
+
+                try {
+                    const dmBlocks = buildCastOrderDmBlocks({
+                        castName: item.castName,
+                        projectName: item.projectName,
+                        roleName: item.roleName || "出演",
+                        dateRanges: data.dateRanges || [],
+                        accountName: data.accountName || "",
+                        castingId,
+                        slackThreadTs: threadTs,
+                        slackChannel: slackChannel,
+                        permalink,
+                    });
+
+                    const dmText = `📋 ${(data.dateRanges || []).join(", ")} 撮影オーダーが来ています（${item.projectName}）`;
+                    await sendDmToUser(slackToken, item.slackMentionId, dmText, dmBlocks);
+                    console.log(`[DM] Sent order DM to ${item.castName}`);
+                } catch (dmError) {
+                    console.error(`[DM] Failed for ${item.castName}:`, dmError);
+                }
+            }
         }
 
         return {
