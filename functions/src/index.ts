@@ -487,8 +487,9 @@ export const notifyOrderCreated = onCall(
         }
 
         // ── 内部キャストへ Slack DM 送信 ──
-        // Slack投稿後（threadTs/permalink確定後）に送信
-        if (threadTs && permalink) {
+        // 撮影オーダー時のみDM送信（外部案件・社内イベントはスキップ）
+        const dmPermalink = permalink || (threadTs ? `https://slack.com/app` : "");
+        if (threadTs && (orderMode === "shooting" || !orderMode)) {
             const internalItemsForDm = (data.items as Array<{
                 castName: string;
                 castId: string;
@@ -519,7 +520,7 @@ export const notifyOrderCreated = onCall(
                         castingId,
                         slackThreadTs: threadTs,
                         slackChannel: slackChannel,
-                        permalink,
+                        permalink: dmPermalink,
                     });
 
                     const dmText = `📋 ${(data.dateRanges || []).join(", ")} 撮影オーダーが来ています（${item.projectName}）`;

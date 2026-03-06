@@ -81,11 +81,30 @@ exports.handleSlackInteraction = (0, https_1.onRequest)({
         return;
     }
     // ── Slack署名検証 ──
-    const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
+    const signingSecret = (process.env.SLACK_SIGNING_SECRET || "").trim();
     const timestamp = req.headers["x-slack-request-timestamp"] || "";
     const signature = req.headers["x-slack-signature"] || "";
-    const rawBody = req.rawBody?.toString("utf8") || "";
-    if (signingSecret && !verifySlackSignature(signingSecret, timestamp, rawBody, signature)) {
+    // rawBody を取得（2nd gen では req.rawBody が undefined の場合がある）
+    let rawBody = "";
+    if (req.rawBody) {
+        rawBody = req.rawBody.toString("utf8");
+    }
+    else if (typeof req.body === "string") {
+        rawBody = req.body;
+    }
+    else if (req.body && typeof req.body === "object") {
+        // Express が application/x-www-form-urlencoded をパース済みの場合
+        rawBody = new URLSearchParams(req.body).toString();
+    }
+    console.log("[SlackInteraction] Debug:", {
+        hasSigningSecret: !!signingSecret,
+        hasTimestamp: !!timestamp,
+        hasSignature: !!signature,
+        hasRawBody: !!rawBody,
+        rawBodyLength: rawBody.length,
+        hasReqRawBody: !!req.rawBody,
+    });
+    if (signingSecret && signature && !verifySlackSignature(signingSecret, timestamp, rawBody, signature)) {
         console.error("[SlackInteraction] Signature verification failed");
         res.status(401).send("Unauthorized");
         return;
