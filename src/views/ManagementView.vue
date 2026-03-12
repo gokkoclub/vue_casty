@@ -78,6 +78,66 @@ const filteredMasters = computed(() => {
     )
 })
 
+// Cast master grouping view
+const masterViewMode = ref<'flat' | 'project' | 'date'>('flat')
+
+interface MasterGroup {
+    key: string
+    label: string
+    items: CastMaster[]
+}
+
+const groupedMasters = computed<MasterGroup[]>(() => {
+    const list = filteredMasters.value
+    if (masterViewMode.value === 'flat') return []
+    
+    const map = new Map<string, CastMaster[]>()
+    
+    for (const m of list) {
+        let key: string
+        if (masterViewMode.value === 'project') {
+            key = `${m.accountName}__${m.projectName}`
+        } else {
+            // date
+            if (m.shootDate?.toDate) {
+                const d = m.shootDate.toDate()
+                key = d.toISOString().split('T')[0] || '未定'
+            } else {
+                key = '日付未定'
+            }
+        }
+        if (!map.has(key)) map.set(key, [])
+        map.get(key)!.push(m)
+    }
+    
+    const groups: MasterGroup[] = []
+    for (const [key, items] of map) {
+        const labelParts = key.split('__')
+        const label = masterViewMode.value === 'project'
+            ? `${labelParts[0]} / ${labelParts[1] || ''}` 
+            : (key === '日付未定' ? '📅 日付未定' : `📅 ${formatDate(items[0]?.shootDate)}`)
+        groups.push({ key, label, items })
+    }
+    
+    if (masterViewMode.value === 'date') {
+        groups.sort((a, b) => b.key.localeCompare(a.key))
+    } else {
+        groups.sort((a, b) => a.label.localeCompare(b.label))
+    }
+    return groups
+})
+
+const expandedMasterGroups = ref<Set<string>>(new Set())
+
+function toggleMasterGroup(key: string) {
+    if (expandedMasterGroups.value.has(key)) {
+        expandedMasterGroups.value.delete(key)
+    } else {
+        expandedMasterGroups.value.add(key)
+    }
+    expandedMasterGroups.value = new Set(expandedMasterGroups.value)
+}
+
 function startEditMaster(m: CastMaster) {
     editingMasterId.value = m.id
     editMasterCost.value = m.cost || 0
@@ -288,6 +348,26 @@ function setAllNewDate(date: Date | null) {
                             placeholder="🔍 キャスト名・作品名・アカウント名で検索"
                             class="filter-input"
                         />
+                        <div class="view-toggle">
+                            <Button
+                                label="一覧"
+                                :severity="masterViewMode === 'flat' ? 'primary' : 'secondary'"
+                                text size="small"
+                                @click="masterViewMode = 'flat'"
+                            />
+                            <Button
+                                label="作品別"
+                                :severity="masterViewMode === 'project' ? 'primary' : 'secondary'"
+                                text size="small"
+                                @click="masterViewMode = 'project'"
+                            />
+                            <Button
+                                label="日付別"
+                                :severity="masterViewMode === 'date' ? 'primary' : 'secondary'"
+                                text size="small"
+                                @click="masterViewMode = 'date'"
+                            />
+                        </div>
                         <Button
                             label="再読み込み"
                             icon="pi pi-refresh"
@@ -307,7 +387,8 @@ function setAllNewDate(date: Date | null) {
                         <p>データがありません</p>
                     </div>
 
-                    <table v-else class="master-table">
+                    <!-- Flat view -->
+                    <table v-else-if="masterViewMode === 'flat'" class="master-table">
                         <thead>
                             <tr>
                                 <th>キャスト名</th>
@@ -333,7 +414,7 @@ function setAllNewDate(date: Date | null) {
                                 </td>
                                 <td>{{ m.accountName }}</td>
                                 <td>{{ m.projectName }}</td>
-                                <td>{{ m.mainSub === 'メイン' ? 'M' : m.mainSub === 'サブ' ? 'S' : '-' }}</td>
+                                <td>{{ m.mainSub === 'メイン' ? 'M' : '-' }}</td>
                                 <td class="date-col">{{ formatDate(m.shootDate) }}</td>
                                 <td>
                                     <template v-if="editingMasterId === m.id">
@@ -358,6 +439,41 @@ function setAllNewDate(date: Date | null) {
                             </tr>
                         </tbody>
                     </table>
+
+                    <!-- Grouped view (作品別 / 日付別) -->
+                    <div v-else class="master-groups">
+                        <div v-for="group in groupedMasters" :key="group.key" class="master-group">
+                            <div class="master-group-header" @click="toggleMasterGroup(group.key)">
+                                <i :class="['pi', expandedMasterGroups.has(group.key) ? 'pi-chevron-down' : 'pi-chevron-right']"></i>
+                                <span class="master-group-label">{{ group.label }}</span>
+                                <Badge :value="group.items.length" severity="secondary" />
+                            </div>
+                            <table v-if="expandedMasterGroups.has(group.key)" class="master-table grouped-table">
+                                <thead>
+                                    <tr>
+                                        <th>キャスト名</th>
+                                        <th>タイプ</th>
+                                        <th v-if="masterViewMode === 'date'">作品名</th>
+                                        <th v-if="masterViewMode === 'project'">撮影日</th>
+                                        <th>M/S</th>
+                                        <th>金額</th>
+                                        <th>決定日</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr v-for="m in group.items" :key="m.id">
+                                        <td class="cast-name">{{ m.castName }}</td>
+                                        <td><Tag :value="m.castType" :severity="m.castType === '外部' ? 'warning' : 'info'" class="type-tag" /></td>
+                                        <td v-if="masterViewMode === 'date'">{{ m.projectName }}</td>
+                                        <td v-if="masterViewMode === 'project'" class="date-col">{{ formatDate(m.shootDate) }}</td>
+                                        <td>{{ m.mainSub === 'メイン' ? 'M' : '-' }}</td>
+                                        <td>{{ m.cost ? `¥${m.cost.toLocaleString()}` : '-' }}</td>
+                                        <td class="date-col">{{ formatDate(m.decidedAt) }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </TabPanel>
 
@@ -671,4 +787,53 @@ function setAllNewDate(date: Date | null) {
 
 .bulk-date-picker { width: 200px; }
 .date-input { width: 160px; }
+
+/* ======== Master Group View ======== */
+.view-toggle {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+}
+
+.master-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.master-group {
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.master-group-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface-50);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+}
+
+.master-group-header:hover {
+    background: var(--surface-100);
+}
+
+.master-group-header i {
+    font-size: 0.8rem;
+    color: var(--text-color-secondary);
+    width: 1rem;
+}
+
+.master-group-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.grouped-table {
+    border-top: 1px solid var(--surface-border);
+}
 </style>

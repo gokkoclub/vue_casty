@@ -22,6 +22,7 @@ const emit = defineEmits<{
   'save-cost': [castingId: string, cost: number]
   'save-time': [castingId: string, startTime: string, endTime: string]
   'save-project-name': [castingIds: string[], newProjectName: string]
+  'save-role-name': [castingId: string, newRoleName: string]
   'additional-order': [casting: Casting]
   'open-summary': [castings: Casting[]]
   'open-email': [casting: Casting]
@@ -67,6 +68,25 @@ const saveProjectNameEdit = () => {
     emit('save-project-name', castingIds, newName)
   }
   editingProjectName.value = false
+}
+
+// Role name editing state
+const editingRoleId = ref<string | null>(null)
+const editRoleNameValue = ref('')
+
+const startRoleEdit = (casting: Casting) => {
+  editingRoleId.value = casting.id
+  editRoleNameValue.value = casting.roleName || ''
+}
+
+const cancelRoleEdit = () => {
+  editingRoleId.value = null
+}
+
+const saveRoleEdit = (castingId: string) => {
+  const newName = editRoleNameValue.value.trim()
+  emit('save-role-name', castingId, newName)
+  editingRoleId.value = null
 }
 
 const { isAdmin } = useAuth()
@@ -186,9 +206,28 @@ const handleSummaryClick = () => {
         </div>
 
         <!-- Role & Rank -->
-        <div class="csl-cell csl-role">
-          <span class="csl-role-name">{{ casting.roleName || '-' }}</span>
-          <span v-if="casting.mainSub === 'メイン'" class="csl-main-badge">メイン</span>
+        <div class="csl-cell csl-role" @click.stop>
+          <template v-if="editingRoleId === casting.id">
+            <InputText
+              v-model="editRoleNameValue"
+              class="csl-role-input"
+              @keyup.enter="saveRoleEdit(casting.id)"
+              @keyup.escape="cancelRoleEdit"
+            />
+            <button class="csl-save-btn" @click="saveRoleEdit(casting.id)" title="保存">
+              <i class="pi pi-check"></i>
+            </button>
+            <button class="csl-act-btn" @click="cancelRoleEdit" title="キャンセル">
+              <i class="pi pi-times"></i>
+            </button>
+          </template>
+          <template v-else>
+            <span class="csl-role-name clickable" @click="startRoleEdit(casting)" title="クリックして役名を編集">
+              {{ casting.roleName || '-' }}
+              <i class="pi pi-pencil csl-role-edit-icon"></i>
+            </span>
+            <span v-if="casting.mainSub === 'メイン'" class="csl-main-badge">メイン</span>
+          </template>
         </div>
 
         <!-- Time (for external/internal events) -->
@@ -443,6 +482,28 @@ const handleSummaryClick = () => {
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
   font-weight: 600;
+}
+
+.csl-role-name.clickable {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+.csl-role-name.clickable:hover {
+  color: var(--p-primary-color);
+}
+.csl-role-edit-icon {
+  font-size: 0.6rem;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.csl-role-name.clickable:hover .csl-role-edit-icon {
+  opacity: 0.6;
+}
+.csl-role-input {
+  width: 120px;
+  font-size: 0.8rem;
 }
 
 /* Time */

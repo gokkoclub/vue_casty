@@ -23,6 +23,7 @@ const {
   updateCastingCost,
   updateCastingTime,
   updateProjectName,
+  updateRoleName,
   getCastingById, 
   deleteCasting,
   getHierarchicalCastings,
@@ -196,6 +197,12 @@ const handleDelete = async (castingId: string) => {
 const handleSaveProjectName = async (castingIds: string[], newProjectName: string) => {
   await withLoading('作品名を更新中...', async () => {
     await updateProjectName(castingIds, newProjectName)
+  })
+}
+
+const handleSaveRoleName = async (castingId: string, newRoleName: string) => {
+  await withLoading('役名を更新中...', async () => {
+    await updateRoleName(castingId, newRoleName)
   })
 }
 
@@ -487,6 +494,7 @@ const countCastings = (dateGroup: any) => {
                 @save-cost="handleSaveCost"
                 @save-time="handleSaveTime"
                 @save-project-name="handleSaveProjectName"
+                @save-role-name="handleSaveRoleName"
                 @additional-order="handleAdditionalOrder"
                 @open-summary="handleOpenSummary"
                 @open-email="handleOpenEmail"
@@ -552,6 +560,7 @@ const countCastings = (dateGroup: any) => {
               @save-cost="handleSaveCost"
               @save-time="handleSaveTime"
               @save-project-name="handleSaveProjectName"
+              @save-role-name="handleSaveRoleName"
               @additional-order="handleAdditionalOrder"
               @open-summary="handleOpenSummary"
               @open-email="handleOpenEmail"

@@ -15,7 +15,7 @@ const {
     loading, syncing,
     contactsByStatus, statusCounts,
     fetchAll, getDateGrouped, getProjectGrouped,
-    updateContact, advanceStatus,
+    updateContact, advanceStatus, revertStatus,
     syncSchedule, syncMaking
 } = useShootingContact()
 
@@ -94,6 +94,11 @@ async function handleSave(id: string, data: Partial<ShootingContact>) {
 // -- Advance status handler
 async function handleAdvance(id: string) {
     await advanceStatus(id)
+}
+
+// -- Revert status handler
+async function handleRevert(id: string) {
+    await revertStatus(id)
 }
 
 // -- Sync handler
@@ -239,6 +244,7 @@ function openPdf(contact: ShootingContact) {
                                             :status="tab.status"
                                             @save="handleSave"
                                             @advance-status="handleAdvance"
+                                            @revert-status="handleRevert"
                                             @open-mail="openMail"
                                             @open-pdf="openPdf"
                                         />
@@ -267,6 +273,7 @@ function openPdf(contact: ShootingContact) {
                                     :status="tab.status"
                                     @save="handleSave"
                                     @advance-status="handleAdvance"
+                                    @revert-status="handleRevert"
                                     @open-mail="openMail"
                                     @open-pdf="openPdf"
                                 />

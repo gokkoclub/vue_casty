@@ -152,44 +152,50 @@ export const notifyOrderCreated = onCall(
             ccString = ccParts.join(" / ");
         }
 
-        // ── CC用Slack ID解決 ──
-        // ログインユーザーのSlack IDをcastsコレクションから検索
-        let resolvedCcMention = data.ccMention || "";
-        if (resolvedCcMention && !resolvedCcMention.startsWith("<@")) {
-            try {
-                // メールアドレスでcastsから検索
-                const userEmail = request.auth?.token?.email;
-                if (userEmail) {
-                    const castSnap = await db.collection("casts")
+        // ── オーダー主のSlack IDを解決 ──
+        // ログインユーザーのメールアドレスからSlack IDを検索
+        let orderCreatorMention = "";
+        try {
+            const userEmail = request.auth?.token?.email;
+            if (userEmail) {
+                // castsコレクションから検索
+                const castSnap = await db.collection("casts")
+                    .where("email", "==", userEmail)
+                    .limit(1)
+                    .get();
+
+                if (!castSnap.empty) {
+                    const castData = castSnap.docs[0]!.data();
+                    if (castData.slackMentionId) {
+                        orderCreatorMention = `<@${castData.slackMentionId}>`;
+                    }
+                }
+
+                // castsで見つからない場合、adminsから検索
+                if (!orderCreatorMention) {
+                    const adminSnap = await db.collection("admins")
                         .where("email", "==", userEmail)
                         .limit(1)
                         .get();
 
-                    if (!castSnap.empty) {
-                        const castData = castSnap.docs[0]!.data();
-                        if (castData.slackMentionId) {
-                            resolvedCcMention = `<@${castData.slackMentionId}>`;
-                        }
-                    }
-
-                    // castsで見つからない場合、adminsから検索
-                    if (!resolvedCcMention.startsWith("<@")) {
-                        const adminSnap = await db.collection("admins")
-                            .where("email", "==", userEmail)
-                            .limit(1)
-                            .get();
-
-                        if (!adminSnap.empty) {
-                            const adminData = adminSnap.docs[0]!.data();
-                            if (adminData.slackMentionId) {
-                                resolvedCcMention = `<@${adminData.slackMentionId}>`;
-                            }
+                    if (!adminSnap.empty) {
+                        const adminData = adminSnap.docs[0]!.data();
+                        if (adminData.slackMentionId) {
+                            orderCreatorMention = `<@${adminData.slackMentionId}>`;
                         }
                     }
                 }
-            } catch (e) {
-                console.warn("CC Slack ID lookup failed:", e);
+
+                console.log("Order creator mention resolved:", orderCreatorMention, "from email:", userEmail);
             }
+        } catch (e) {
+            console.warn("Order creator Slack ID lookup failed:", e);
+        }
+
+        // オーダー主をCC末尾に追加
+        let resolvedCcMention = data.ccMention || orderCreatorMention || "";
+        if (orderCreatorMention && ccString) {
+            ccString = ccString + " / オーダー主: " + orderCreatorMention;
         }
 
         // ── 衝突チェック ──
