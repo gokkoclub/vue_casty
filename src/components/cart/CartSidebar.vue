@@ -5,6 +5,7 @@ import Button from 'primevue/button'
 import Divider from 'primevue/divider'
 import Badge from 'primevue/badge'
 import InputText from 'primevue/inputtext'
+import Checkbox from 'primevue/checkbox'
 import CartCastPool from './CartCastPool.vue'
 import CartProjectList from './CartProjectList.vue'
 import SimpleCastList from './SimpleCastList.vue'
@@ -22,6 +23,7 @@ const modeLabel = computed(() => {
 
 // PDF upload handling
 const uploadedPdf = ref<File | null>(null)
+const skipPdf = ref(false)
 
 const handlePdfUpload = (event: Event) => {
   const target = event.target as HTMLInputElement
@@ -65,6 +67,11 @@ const handleSubmitClick = () => {
       alert('すべてのプロジェクトに作品名を入力してください。')
       return
     }
+    // PDF必須チェック（スキップされていない場合）
+    if (!uploadedPdf.value && !skipPdf.value) {
+      alert('脚本PDFを添付してください。\n添付しない場合は「今回は添付せずにオーダー」にチェックを入れてください。')
+      return
+    }
   } else {
     if (!store.manualMeta.projectName.trim()) {
       alert('案件タイトルを入力してください。')
@@ -77,6 +84,12 @@ const handleSubmitClick = () => {
 
 const handleConfirmed = (intimacy: string) => {
   emit('submit', uploadedPdf.value, intimacy)
+  // PDF添付ファイルをリセット
+  uploadedPdf.value = null
+  skipPdf.value = false
+  // file input要素もリセット
+  const fileInput = document.querySelector('input[type="file"][accept=".pdf"]') as HTMLInputElement | null
+  if (fileInput) fileInput.value = ''
 }
 </script>
 
@@ -206,16 +219,25 @@ const handleConfirmed = (intimacy: string) => {
             </div>
             
             <!-- PDF Upload (shooting mode only) -->
-            <div v-if="store.isShootingMode" class="mb-3">
-                <label class="block text-sm font-bold mb-2">脚本PDF（任意）</label>
-                <input 
-                    type="file" 
-                    accept=".pdf"
-                    @change="handlePdfUpload"
-                    class="w-full text-sm"
-                />
+            <div v-if="store.isShootingMode" class="pdf-section mb-3">
+                <label class="block text-sm font-bold mb-2">脚本PDF <span class="text-red-500">*</span></label>
+                <div class="pdf-upload-row">
+                    <input 
+                        type="file" 
+                        accept=".pdf"
+                        @change="handlePdfUpload"
+                        class="pdf-file-input"
+                    />
+                    <div class="skip-pdf-check">
+                        <Checkbox v-model="skipPdf" inputId="skipPdf" binary />
+                        <label for="skipPdf" class="skip-pdf-label">今回は添付せずにオーダー</label>
+                    </div>
+                </div>
                 <p v-if="uploadedPdf" class="text-xs mt-1 text-green-600">
                     ✓ {{ uploadedPdf.name }}
+                </p>
+                <p v-else-if="!skipPdf" class="text-xs mt-1 text-orange-500">
+                    ⚠ PDFが未添付です
                 </p>
             </div>
             
@@ -303,5 +325,39 @@ const handleConfirmed = (intimacy: string) => {
 .summary {
   font-size: 1.1rem;
   text-align: center;
+}
+
+/* PDF Upload Section */
+.pdf-section {
+  background: var(--surface-50);
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+.pdf-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.pdf-file-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
+.skip-pdf-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.skip-pdf-label {
+  font-size: 0.8rem;
+  color: var(--text-color-secondary);
+  cursor: pointer;
+  user-select: none;
 }
 </style>

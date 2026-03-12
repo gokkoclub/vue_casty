@@ -17,7 +17,7 @@ import { setGlobalOptions } from "firebase-functions/v2/options";
 setGlobalOptions({ region: "asia-northeast1" });
 
 import * as admin from "firebase-admin";
-import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage } from "./slack";
+import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage, sendDmToUser, buildCastOrderDmBlocks } from "./slack";
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
 import { syncCastToNotion } from "./notion";
 
@@ -25,6 +25,7 @@ import { syncCastToNotion } from "./notion";
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
+export { handleSlackInteraction } from "./slackInteraction";
 
 admin.initializeApp();
 
@@ -151,44 +152,50 @@ export const notifyOrderCreated = onCall(
             ccString = ccParts.join(" / ");
         }
 
-        // ── CC用Slack ID解決 ──
-        // ログインユーザーのSlack IDをcastsコレクションから検索
-        let resolvedCcMention = data.ccMention || "";
-        if (resolvedCcMention && !resolvedCcMention.startsWith("<@")) {
-            try {
-                // メールアドレスでcastsから検索
-                const userEmail = request.auth?.token?.email;
-                if (userEmail) {
-                    const castSnap = await db.collection("casts")
+        // ── オーダー主のSlack IDを解決 ──
+        // ログインユーザーのメールアドレスからSlack IDを検索
+        let orderCreatorMention = "";
+        try {
+            const userEmail = request.auth?.token?.email;
+            if (userEmail) {
+                // castsコレクションから検索
+                const castSnap = await db.collection("casts")
+                    .where("email", "==", userEmail)
+                    .limit(1)
+                    .get();
+
+                if (!castSnap.empty) {
+                    const castData = castSnap.docs[0]!.data();
+                    if (castData.slackMentionId) {
+                        orderCreatorMention = `<@${castData.slackMentionId}>`;
+                    }
+                }
+
+                // castsで見つからない場合、adminsから検索
+                if (!orderCreatorMention) {
+                    const adminSnap = await db.collection("admins")
                         .where("email", "==", userEmail)
                         .limit(1)
                         .get();
 
-                    if (!castSnap.empty) {
-                        const castData = castSnap.docs[0]!.data();
-                        if (castData.slackMentionId) {
-                            resolvedCcMention = `<@${castData.slackMentionId}>`;
-                        }
-                    }
-
-                    // castsで見つからない場合、adminsから検索
-                    if (!resolvedCcMention.startsWith("<@")) {
-                        const adminSnap = await db.collection("admins")
-                            .where("email", "==", userEmail)
-                            .limit(1)
-                            .get();
-
-                        if (!adminSnap.empty) {
-                            const adminData = adminSnap.docs[0]!.data();
-                            if (adminData.slackMentionId) {
-                                resolvedCcMention = `<@${adminData.slackMentionId}>`;
-                            }
+                    if (!adminSnap.empty) {
+                        const adminData = adminSnap.docs[0]!.data();
+                        if (adminData.slackMentionId) {
+                            orderCreatorMention = `<@${adminData.slackMentionId}>`;
                         }
                     }
                 }
-            } catch (e) {
-                console.warn("CC Slack ID lookup failed:", e);
+
+                console.log("Order creator mention resolved:", orderCreatorMention, "from email:", userEmail);
             }
+        } catch (e) {
+            console.warn("Order creator Slack ID lookup failed:", e);
+        }
+
+        // オーダー主をCC末尾に追加
+        let resolvedCcMention = data.ccMention || orderCreatorMention || "";
+        if (orderCreatorMention && ccString) {
+            ccString = ccString + " / オーダー主: " + orderCreatorMention;
         }
 
         // ── 衝突チェック ──
@@ -483,6 +490,52 @@ export const notifyOrderCreated = onCall(
             }
 
             await batch.commit();
+        }
+
+        // ── 内部キャストへ Slack DM 送信 ──
+        // 撮影オーダー時のみDM送信（外部案件・社内イベントはスキップ）
+        const dmPermalink = permalink || (threadTs ? `https://slack.com/app` : "");
+        if (threadTs && (orderMode === "shooting" || !orderMode)) {
+            const internalItemsForDm = (data.items as Array<{
+                castName: string;
+                castId: string;
+                castType: string;
+                slackMentionId?: string;
+                projectName: string;
+                roleName?: string;
+            }>).filter(item => item.castType === "内部" && item.slackMentionId);
+
+            for (let i = 0; i < internalItemsForDm.length; i++) {
+                const item = internalItemsForDm[i]!;
+                // castingId を取得（items と castingIds は同じ順序）
+                const allItems = data.items as Array<{ castName: string; castType: string }>;
+                const originalIndex = allItems.findIndex(
+                    (ai: { castName: string; castType: string }) => ai.castName === item.castName && ai.castType === item.castType
+                );
+                const castingId = castingIds[originalIndex] || "";
+
+                if (!castingId || !item.slackMentionId) continue;
+
+                try {
+                    const dmBlocks = buildCastOrderDmBlocks({
+                        castName: item.castName,
+                        projectName: item.projectName,
+                        roleName: item.roleName || "出演",
+                        dateRanges: data.dateRanges || [],
+                        accountName: data.accountName || "",
+                        castingId,
+                        slackThreadTs: threadTs,
+                        slackChannel: slackChannel,
+                        permalink: dmPermalink,
+                    });
+
+                    const dmText = `📋 ${(data.dateRanges || []).join(", ")} 撮影オーダーが来ています（${item.projectName}）`;
+                    await sendDmToUser(slackToken, item.slackMentionId, dmText, dmBlocks);
+                    console.log(`[DM] Sent order DM to ${item.castName}`);
+                } catch (dmError) {
+                    console.error(`[DM] Failed for ${item.castName}:`, dmError);
+                }
+            }
         }
 
         return {

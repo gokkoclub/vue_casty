@@ -43,7 +43,12 @@ const availableStatuses = computed(() => {
 const canChangeStatus = computed(() => availableStatuses.value.length > 0)
 
 // Check if confirm button should be enabled
-const canConfirm = computed(() => selectedStatus.value !== null)
+const isConditionalOk = computed(() => selectedStatus.value === '条件つきOK')
+const canConfirm = computed(() => {
+    if (!selectedStatus.value) return false
+    if (isConditionalOk.value && !extraMessage.value.trim()) return false
+    return true
+})
 
 // Get severity for tag
 const getTagSeverity = (status: CastingStatus): 'success' | 'info' | 'warning' | 'danger' | 'secondary' => {
@@ -138,15 +143,17 @@ const handleClose = () => {
 
             <!-- Extra Message -->
             <div class="extra-message" v-if="canChangeStatus">
-                <label>追記メッセージ（任意）</label>
+                <label>{{ isConditionalOk ? '条件メッセージ（必須）' : '追記メッセージ（任意）' }}</label>
                 <Textarea
                     v-model="extraMessage"
                     rows="3"
-                    placeholder="Slackスレッドに追記するメッセージを入力..."
+                    :placeholder="isConditionalOk ? 'OKの条件を入力してください...' : 'Slackスレッドに追記するメッセージを入力...'"
                     class="w-full"
+                    :class="{ 'p-invalid': isConditionalOk && !extraMessage.trim() }"
                     :disabled="loading"
                 />
-                <small>スレッドに返信として投稿されます</small>
+                <small v-if="isConditionalOk" style="color: var(--p-orange-500);">⚠ 条件つきOKの場合、条件の入力が必須です</small>
+                <small v-else>スレッドに返信として投稿されます</small>
             </div>
 
             <!-- Status Change Preview -->

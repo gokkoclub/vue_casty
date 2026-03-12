@@ -247,6 +247,27 @@ export function useShootingContact() {
     }
 
     /**
+     * ステータスを前に戻す
+     */
+    async function revertStatus(contactId: string): Promise<boolean> {
+        const contact = contacts.value.find(c => c.id === contactId)
+        if (!contact) return false
+
+        const statusOrder: ShootingContactStatus[] = [
+            '香盤連絡待ち', '発注書送信待ち', 'メイキング共有待ち', '投稿日連絡待ち', '完了'
+        ]
+        const idx = statusOrder.indexOf(contact.status)
+        if (idx <= 0) return false
+
+        const prevStatus = statusOrder[idx - 1]!
+        const success = await updateContact(contactId, { status: prevStatus })
+        if (success) {
+            contact.status = prevStatus
+        }
+        return success
+    }
+
+    /**
      * 香盤DB同期: shootingDetails → IN/OUT/場所
      * castName（様付き対応）で直接マッチング
      */
@@ -373,6 +394,7 @@ export function useShootingContact() {
         addFromCasting,
         updateContact,
         advanceStatus,
+        revertStatus,
         syncSchedule,
         syncMaking
     }

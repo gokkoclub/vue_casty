@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
+import Dialog from 'primevue/dialog'
 import type { ShootingContact, ShootingContactStatus } from '@/types'
 
 const props = defineProps<{
@@ -13,6 +14,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     save: [id: string, data: Partial<ShootingContact>]
     advanceStatus: [id: string]
+    revertStatus: [id: string]
     openMail: [contact: ShootingContact]
     openPdf: [contact: ShootingContact]
 }>()
@@ -60,6 +62,31 @@ function formatDate(contact: ShootingContact): string {
         return `${d.getMonth() + 1}/${d.getDate()}(${weekdays[d.getDay()]})`
     }
     return '-'
+}
+
+// Status change confirmation
+const confirmAction = ref<{ id: string; type: 'advance' | 'revert'; name: string } | null>(null)
+
+function requestAdvance(contact: ShootingContact) {
+    confirmAction.value = { id: contact.id, type: 'advance', name: contact.castName }
+}
+
+function requestRevert(contact: ShootingContact) {
+    confirmAction.value = { id: contact.id, type: 'revert', name: contact.castName }
+}
+
+function executeConfirm() {
+    if (!confirmAction.value) return
+    if (confirmAction.value.type === 'advance') {
+        emit('advanceStatus', confirmAction.value.id)
+    } else {
+        emit('revertStatus', confirmAction.value.id)
+    }
+    confirmAction.value = null
+}
+
+function cancelConfirm() {
+    confirmAction.value = null
 }
 </script>
 
@@ -231,14 +258,41 @@ function formatDate(contact: ShootingContact): string {
                             size="small"
                             severity="success"
                             outlined
-                            @click="emit('advanceStatus', contact.id)"
+                            @click="requestAdvance(contact)"
                             v-tooltip.top="'次のステータスへ'"
+                        />
+                        <!-- Revert status -->
+                        <Button
+                            icon="pi pi-arrow-left"
+                            size="small"
+                            severity="warning"
+                            outlined
+                            @click="requestRevert(contact)"
+                            v-tooltip.top="'前のステータスへ'"
                         />
                     </div>
                 </td>
             </tr>
         </tbody>
     </table>
+
+    <!-- Confirmation Dialog -->
+    <Dialog
+        :visible="!!confirmAction"
+        @update:visible="cancelConfirm"
+        modal
+        :header="confirmAction?.type === 'advance' ? 'ステータスを進めますか？' : 'ステータスを戻しますか？'"
+        :style="{ width: '350px' }"
+    >
+        <p style="margin: 0; text-align: center;">
+            <strong>{{ confirmAction?.name }}</strong> の<br>
+            ステータスを{{ confirmAction?.type === 'advance' ? '次' : '前' }}に移動します。
+        </p>
+        <template #footer>
+            <Button label="いいえ" severity="secondary" outlined @click="cancelConfirm" />
+            <Button :label="confirmAction?.type === 'advance' ? 'はい、進める' : 'はい、戻す'" :severity="confirmAction?.type === 'advance' ? 'success' : 'warning'" @click="executeConfirm" />
+        </template>
+    </Dialog>
 </template>
 
 <style scoped>

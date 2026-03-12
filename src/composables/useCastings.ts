@@ -878,6 +878,44 @@ export function useCastings() {
         return result
     }
 
+    /**
+     * Update role name for a single casting
+     */
+    async function updateRoleName(castingId: string, newRoleName: string): Promise<boolean> {
+        if (!db) return false
+        const casting = castings.value.find(c => c.id === castingId)
+        if (!casting) return false
+
+        try {
+            const castingRef = doc(db, 'castings', castingId)
+            await updateDoc(castingRef, {
+                roleName: newRoleName,
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'unknown'
+            })
+
+            casting.roleName = newRoleName
+            casting.updatedAt = Timestamp.now()
+
+            toast.add({
+                severity: 'success',
+                summary: '保存完了',
+                detail: `役名を「${newRoleName || '-'}」に更新しました`,
+                life: 2000
+            })
+            return true
+        } catch (error) {
+            console.error('Error updating role name:', error)
+            toast.add({
+                severity: 'error',
+                summary: 'エラー',
+                detail: '役名の更新に失敗しました',
+                life: 3000
+            })
+            return false
+        }
+    }
+
     return {
         castings,
         loading,
@@ -889,6 +927,7 @@ export function useCastings() {
         updateCastingTime,
         updateCastingDetails,
         updateProjectName,
+        updateRoleName,
         deleteCasting,
         getCastingById,
         getHierarchicalCastings,

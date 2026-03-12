@@ -491,3 +491,187 @@ export function buildStatusMessage(params: {
 
     return text;
 }
+
+/**
+ * Slack DM を送信（Bot → ユーザー）
+ * conversations.open でDMチャンネルを取得してから chat.postMessage
+ */
+export async function sendDmToUser(
+    token: string,
+    userId: string,
+    text: string,
+    blocks?: unknown[]
+): Promise<SlackPostResult> {
+    try {
+        // 1. DM チャンネルを開く
+        const openRes = await fetch("https://slack.com/api/conversations.open", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ users: userId }),
+        });
+        const openResult = await openRes.json() as {
+            ok: boolean;
+            channel?: { id: string };
+            error?: string;
+        };
+
+        if (!openResult.ok || !openResult.channel?.id) {
+            console.error("conversations.open failed:", openResult.error);
+            return { ok: false };
+        }
+
+        const dmChannelId = openResult.channel.id;
+
+        // 2. DM にメッセージ送信
+        const payload: Record<string, unknown> = {
+            channel: dmChannelId,
+            text,
+            mrkdwn: true,
+        };
+        if (blocks) payload.blocks = blocks;
+
+        const postRes = await fetch("https://slack.com/api/chat.postMessage", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const postResult = await postRes.json() as {
+            ok: boolean;
+            ts?: string;
+            error?: string;
+        };
+
+        if (!postResult.ok) {
+            console.error("DM send failed:", postResult.error);
+            return { ok: false };
+        }
+
+        console.log(`[DM] Sent to ${userId}, ts: ${postResult.ts}`);
+        return { ok: true, ts: postResult.ts };
+    } catch (error) {
+        console.error("sendDmToUser error:", error);
+        return { ok: false };
+    }
+}
+
+/**
+ * 既存のSlackメッセージを更新（ボタン → 結果テキストに差し替え等）
+ */
+export async function updateSlackMessage(
+    token: string,
+    channel: string,
+    ts: string,
+    text: string,
+    blocks?: unknown[]
+): Promise<boolean> {
+    try {
+        const payload: Record<string, unknown> = {
+            channel,
+            ts,
+            text,
+        };
+        if (blocks) payload.blocks = blocks;
+
+        const res = await fetch("https://slack.com/api/chat.update", {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await res.json() as { ok: boolean; error?: string };
+        if (!result.ok) {
+            console.error("chat.update failed:", result.error);
+        }
+        return result.ok;
+    } catch (error) {
+        console.error("updateSlackMessage error:", error);
+        return false;
+    }
+}
+
+/**
+ * 内部キャスト向けDM用 Block Kit ブロック構築
+ * ボタンの value に castingId と slackThreadTs を埋め込み、
+ * webhook で受信時にステータス更新 + スレッド返信が可能
+ */
+export function buildCastOrderDmBlocks(params: {
+    castName: string;
+    projectName: string;
+    roleName: string;
+    dateRanges: string[];
+    accountName: string;
+    castingId: string;
+    slackThreadTs: string;
+    slackChannel: string;
+    permalink: string;
+}): unknown[] {
+    const dateText = params.dateRanges.join(", ");
+
+    return [
+        {
+            type: "header",
+            text: {
+                type: "plain_text",
+                text: "📋 撮影オーダーのお知らせ",
+                emoji: true,
+            },
+        },
+        {
+            type: "section",
+            fields: [
+                { type: "mrkdwn", text: `*📅 撮影日*\n${dateText}` },
+                { type: "mrkdwn", text: `*🏢 アカウント*\n${params.accountName || "未入力"}` },
+            ],
+        },
+        {
+            type: "section",
+            fields: [
+                { type: "mrkdwn", text: `*🎬 作品名*\n${params.projectName}` },
+                { type: "mrkdwn", text: `*🎭 役名*\n${params.roleName || "未定"}` },
+            ],
+        },
+        {
+            type: "divider",
+        },
+        {
+            type: "actions",
+            elements: [
+                {
+                    type: "button",
+                    text: {
+                        type: "plain_text",
+                        text: "✅ 出演OK",
+                        emoji: true,
+                    },
+                    style: "primary",
+                    action_id: "cast_ok",
+                    value: JSON.stringify({
+                        castingId: params.castingId,
+                        castName: params.castName,
+                        projectName: params.projectName,
+                        slackThreadTs: params.slackThreadTs,
+                        slackChannel: params.slackChannel,
+                    }),
+                },
+                {
+                    type: "button",
+                    text: {
+                        type: "plain_text",
+                        text: "🔗 スレッドを見る",
+                        emoji: true,
+                    },
+                    action_id: "cast_view_thread",
+                    url: params.permalink,
+                },
+            ],
+        },
+    ];
+}

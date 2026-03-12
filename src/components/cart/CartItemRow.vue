@@ -17,7 +17,6 @@ const store = useOrderStore()
 
 const mainSubOptions = [
   { label: 'メイン', value: 'メイン' },
-  { label: 'サブ', value: 'サブ' },
   { label: 'その他', value: 'その他' }
 ]
 

@@ -272,6 +272,18 @@ export async function handleCalendarStatusChange(params: {
             });
             break;
 
+        case "仮キャスティング":
+        case "仮押さえ":
+        case "打診中":
+        case "オーダー待ち":
+        case "条件つきOK":
+            // [仮] を再付与
+            await updateCalendarEventTitle({
+                ...params,
+                isProvisional: true,
+            });
+            break;
+
         case "NG":
         case "キャンセル":
             // イベント削除

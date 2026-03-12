@@ -518,9 +518,13 @@ onUnmounted(() => {
                       :options="agencyOptions"
                       optionLabel="label"
                       optionValue="value"
-                      placeholder="事務所を選択"
+                      placeholder="事務所で絞り込み"
                       :maxSelectedLabels="2"
+                      selectedItemsLabel="{0}件の事務所を選択中"
+                      filter
+                      filterPlaceholder="事務所名を検索..."
                       class="agency-select"
+                      :showToggleAll="true"
                     />
                   </div>
                   
