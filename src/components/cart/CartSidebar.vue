@@ -258,6 +258,7 @@ const handleConfirmed = (intimacy: string) => {
     v-model:visible="showConfirmDialog"
     :hasPdf="!!uploadedPdf"
     :hasMinorCast="hasMinorCast"
+    :isShootingMode="store.isShootingMode"
     @confirm="handleConfirmed"
   />
 </template>

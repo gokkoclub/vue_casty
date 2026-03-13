@@ -9,6 +9,7 @@ const props = defineProps<{
   visible: boolean
   hasPdf: boolean
   hasMinorCast: boolean
+  isShootingMode: boolean
 }>()
 
 const emit = defineEmits<{
@@ -50,8 +51,8 @@ const handleCancel = () => {
     :closable="true"
   >
     <div class="confirm-content">
-      <!-- PDF Warning -->
-      <div v-if="!hasPdf" class="pdf-warning mb-3">
+      <!-- PDF Warning (shooting mode only) -->
+      <div v-if="isShootingMode && !hasPdf" class="pdf-warning mb-3">
         <i class="pi pi-exclamation-triangle"></i>
         <span>脚本PDFが添付されていません。</span>
       </div>

@@ -70,8 +70,8 @@ const sortOptions = [
   { label: '50音順', value: 'kana' }
 ]
 
-// View Mode: 3 columns (comfort) or 5 columns (dense)
-const viewMode = ref<'3col' | '5col'>('3col')
+
+
 
 // Progress Modal State
 const showProgress = ref(false)
@@ -467,21 +467,6 @@ onUnmounted(() => {
                   <span class="step-num">3</span>
                   <span>キャストを選択</span>
                 </div>
-                
-                <div class="view-toggle">
-                  <Button 
-                    label="3列"
-                    text 
-                    :severity="viewMode === '3col' ? 'primary' : 'secondary'"
-                    @click="viewMode = '3col'"
-                  />
-                  <Button 
-                    label="5列" 
-                    text
-                    :severity="viewMode === '5col' ? 'primary' : 'secondary'"
-                    @click="viewMode = '5col'"
-                  />
-                </div>
               </div>
             </template>
             <template #content>
@@ -551,7 +536,7 @@ onUnmounted(() => {
 
                 <!-- キャストグリッド -->
                 <div v-else-if="filteredCasts.length > 0" 
-                     :class="['cast-view', viewMode === '3col' ? 'grid-3col' : 'grid-5col']">
+                     class="cast-view grid-5col">
                   <!-- 新規外部キャスト追加カード（先頭） -->
                   <div class="new-cast-card" @click="showNewCastModal = true">
                     <div class="new-cast-card-icon">＋</div>

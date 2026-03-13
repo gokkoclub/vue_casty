@@ -66,12 +66,13 @@ export async function createCalendarEvent(params: {
             throw new Error(`Calendar access check failed: ${getMsg}`);
         }
 
-        // ガイド仕様: {アカウント名}_{候補順位}候補_仮キャスティング
+        // ガイド仕様: {作品名}_{アカウント名}_{候補順位}候補_{ステータス}
         const rankPart = params.rank ? `_${params.rank}候補` : "";
         const statusLabel = params.status || (params.isProvisional ? "仮キャスティング" : "決定キャスティング");
+        const projectPart = params.projectName ? `${params.projectName}_` : "";
         const summary = params.isProvisional
-            ? `${params.accountName}${rankPart}_${statusLabel}`
-            : `${params.accountName}_決定キャスティング`;
+            ? `${projectPart}${params.accountName}${rankPart}_${statusLabel}`
+            : `${projectPart}${params.accountName}_決定キャスティング`;
 
         // ガイド仕様の説明文テンプレート
         const description = [

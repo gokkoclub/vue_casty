@@ -252,8 +252,9 @@ function cancelConfirm() {
                             v-tooltip.top="'メール作成'"
                         />
 
-                        <!-- Advance status -->
+                        <!-- Advance status (not on 完了) -->
                         <Button
+                            v-if="status !== '完了'"
                             icon="pi pi-arrow-right"
                             size="small"
                             severity="success"
@@ -261,8 +262,9 @@ function cancelConfirm() {
                             @click="requestAdvance(contact)"
                             v-tooltip.top="'次のステータスへ'"
                         />
-                        <!-- Revert status -->
+                        <!-- Revert status (not on 香盤連絡待ち) -->
                         <Button
+                            v-if="status !== '香盤連絡待ち'"
                             icon="pi pi-arrow-left"
                             size="small"
                             severity="warning"
