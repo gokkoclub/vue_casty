@@ -891,7 +891,6 @@ export const notifyOrderUpdated = onCall(
         if (
             serviceAccountKey &&
             calendarId &&
-            casting.castType === "内部" &&
             casting.calendarEventId
         ) {
             // 日時変更

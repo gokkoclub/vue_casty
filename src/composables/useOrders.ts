@@ -266,7 +266,7 @@ export function useOrders() {
     /**
      * オーダーをFirestoreに保存
      */
-    const submitOrder = async (pdfFile?: File | null, intimacy?: string): Promise<boolean> => {
+    const submitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }): Promise<boolean> => {
         if (!db) {
             toast.add({
                 severity: 'error',
@@ -388,6 +388,12 @@ export function useOrders() {
                         if (orderStore.manualMeta.endTime) {
                             castingData.endTime = orderStore.manualMeta.endTime
                         }
+                    }
+
+                    // Add competition data for external/internal if provided
+                    if (competition && (payload.mode === 'external' || payload.mode === 'internal')) {
+                        castingData.competitionType = competition.type
+                        castingData.competitionPeriod = competition.period
                     }
 
                     batch.set(castingRef, castingData)

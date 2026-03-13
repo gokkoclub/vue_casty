@@ -784,7 +784,6 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
     const calendarId = getEnv("GOOGLE_CALENDAR_ID");
     if (serviceAccountKey &&
         calendarId &&
-        casting.castType === "内部" &&
         casting.calendarEventId) {
         // 日時変更
         if (changes.startDate || changes.startTime || changes.endTime) {

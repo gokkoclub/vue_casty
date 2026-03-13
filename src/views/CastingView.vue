@@ -283,8 +283,8 @@ const handleNewCastSaved = (cast: Cast) => {
 // Order submission with progress
 const { submitOrder } = useOrders()
 
-const handleSubmitOrder = async (pdfFile?: File | null, intimacy?: string) => {
-  const success = await submitOrder(pdfFile ?? undefined, intimacy)
+const handleSubmitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }) => {
+  const success = await submitOrder(pdfFile ?? undefined, intimacy, competition)
   
   if (success) {
     // Use nextTick to avoid recursive updates
@@ -578,6 +578,7 @@ onUnmounted(() => {
     <CastDetailDialog 
       v-model:visible="showDetailDialog"
       :cast="selectedCast"
+      :activeCastings="activeCastings"
     />
 
     <OrderTypeDialog 
