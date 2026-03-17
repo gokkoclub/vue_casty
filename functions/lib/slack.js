@@ -277,6 +277,50 @@ function buildOrderMessage(params) {
             });
         }
     }
+    // 📅 日付ごとのスケジュール（中長編: selectedDatesを持つアイテムがある場合のみ）
+    const hasPerCastDates = params.items.some(i => i.selectedDates && i.selectedDates.length > 0);
+    if (hasPerCastDates) {
+        lines.push("");
+        lines.push("`スケジュール`");
+        // 全日付を収集してソート
+        const allDates = new Set();
+        params.items.forEach(item => {
+            const dates = item.selectedDates && item.selectedDates.length > 0
+                ? item.selectedDates
+                : params.dateRanges;
+            dates.forEach(d => allDates.add(d));
+        });
+        const sortedDates = [...allDates].sort();
+        for (const dateStr of sortedDates) {
+            // 「2026/03/14」→「3/14」
+            const parts = dateStr.split("/");
+            const shortDate = parts.length === 3
+                ? `${parseInt(parts[1])}/${parseInt(parts[2])}`
+                : dateStr;
+            lines.push(`📅 ${shortDate}`);
+            // この日に参加するキャストを役→候補順でグループ化
+            const castsForDate = params.items.filter(item => {
+                const dates = item.selectedDates && item.selectedDates.length > 0
+                    ? item.selectedDates
+                    : params.dateRanges;
+                return dates.includes(dateStr);
+            });
+            // 役ごとにグループ
+            const roleGroups = {};
+            castsForDate.forEach(c => {
+                if (!roleGroups[c.roleName])
+                    roleGroups[c.roleName] = [];
+                roleGroups[c.roleName].push(c);
+            });
+            for (const [roleName, casts] of Object.entries(roleGroups)) {
+                casts.sort((a, b) => a.rank - b.rank);
+                casts.forEach(c => {
+                    const mention = c.slackMentionId ? `<@${c.slackMentionId}>` : c.castName;
+                    lines.push(`  ${roleName} → 第${c.rank}候補: ${mention}`);
+                });
+            }
+        }
+    }
     // Notionリンク
     if (params.projectId) {
         lines.push("");

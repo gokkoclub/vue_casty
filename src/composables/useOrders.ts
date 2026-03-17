@@ -466,7 +466,8 @@ export function useOrders() {
                             rank: i.rank,
                             mainSub: i.mainSub,
                             projectName: i.projectName,
-                            slackMentionId: i.slackMentionId
+                            slackMentionId: i.slackMentionId,
+                            selectedDates: i.selectedDates || []
                         })),
                         castingIds
                     })
