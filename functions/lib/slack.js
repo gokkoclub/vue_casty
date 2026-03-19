@@ -206,6 +206,72 @@ function buildSpecialOrderMessage(params) {
     return lines.join("\n");
 }
 /**
+ * 連続した日付をレンジにまとめる
+ * 入力: ["2026/03/19", "2026/03/20", "2026/03/21", "2026/03/24", "2026/03/25"]
+ * 出力: ["3/19〜3/21", "3/24〜3/25"]
+ */
+function compactDateRanges(dates) {
+    if (dates.length === 0)
+        return [];
+    if (dates.length === 1) {
+        return [toShortDate(dates[0])];
+    }
+    // Parse and sort
+    const parsed = dates
+        .map(d => {
+        const parts = d.split("/");
+        if (parts.length === 3) {
+            return { raw: d, y: parseInt(parts[0]), m: parseInt(parts[1]), d: parseInt(parts[2]) };
+        }
+        return null;
+    })
+        .filter(Boolean);
+    if (parsed.length === 0)
+        return dates.map(toShortDate);
+    parsed.sort((a, b) => {
+        if (a.y !== b.y)
+            return a.y - b.y;
+        if (a.m !== b.m)
+            return a.m - b.m;
+        return a.d - b.d;
+    });
+    // Group consecutive dates
+    const ranges = [];
+    let rangeStart = parsed[0];
+    let rangeEnd = parsed[0];
+    for (let i = 1; i < parsed.length; i++) {
+        const prev = rangeEnd;
+        const curr = parsed[i];
+        // Check if consecutive (simple day+1 check, handles month wrap via Date)
+        const prevDate = new Date(prev.y, prev.m - 1, prev.d);
+        const currDate = new Date(curr.y, curr.m - 1, curr.d);
+        const diffDays = (currDate.getTime() - prevDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (diffDays === 1) {
+            rangeEnd = curr;
+        }
+        else {
+            ranges.push({ start: rangeStart, end: rangeEnd });
+            rangeStart = curr;
+            rangeEnd = curr;
+        }
+    }
+    ranges.push({ start: rangeStart, end: rangeEnd });
+    return ranges.map(r => {
+        const s = `${r.start.m}/${r.start.d}`;
+        if (r.start.raw === r.end.raw)
+            return s;
+        const e = `${r.end.m}/${r.end.d}`;
+        return `${s}〜${e}`;
+    });
+}
+function toShortDate(dateStr) {
+    const parts = dateStr.split("/");
+    if (parts.length === 3) {
+        return `${parseInt(parts[1])}/${parseInt(parts[2])}`;
+    }
+    return dateStr;
+}
+/**
  * オーダー通知メッセージを構築
  */
 function buildOrderMessage(params) {
@@ -240,7 +306,8 @@ function buildOrderMessage(params) {
     // 撮影日/日程
     lines.push("");
     lines.push(`\`${dateLabel}\``);
-    params.dateRanges.forEach((d) => lines.push(`・${d}`));
+    const compactedTopDates = compactDateRanges(params.dateRanges);
+    compactedTopDates.forEach((d) => lines.push(`・${d}`));
     // アカウント
     lines.push("");
     lines.push("`アカウント`");
@@ -291,33 +358,33 @@ function buildOrderMessage(params) {
             dates.forEach(d => allDates.add(d));
         });
         const sortedDates = [...allDates].sort();
-        for (const dateStr of sortedDates) {
-            // 「2026/03/14」→「3/14」
-            const parts = dateStr.split("/");
-            const shortDate = parts.length === 3
-                ? `${parseInt(parts[1])}/${parseInt(parts[2])}`
-                : dateStr;
-            lines.push(`📅 ${shortDate}`);
-            // この日に参加するキャストを役→候補順でグループ化
-            const castsForDate = params.items.filter(item => {
-                const dates = item.selectedDates && item.selectedDates.length > 0
-                    ? item.selectedDates
-                    : params.dateRanges;
-                return dates.includes(dateStr);
-            });
-            // 役ごとにグループ
-            const roleGroups = {};
-            castsForDate.forEach(c => {
-                if (!roleGroups[c.roleName])
-                    roleGroups[c.roleName] = [];
-                roleGroups[c.roleName].push(c);
-            });
-            for (const [roleName, casts] of Object.entries(roleGroups)) {
-                casts.sort((a, b) => a.rank - b.rank);
-                casts.forEach(c => {
-                    const mention = c.slackMentionId ? `<@${c.slackMentionId}>` : c.castName;
-                    lines.push(`  ${roleName} → 第${c.rank}候補: ${mention}`);
-                });
+        // キャストごとの参加日をレンジにまとめて表示
+        // まず役ごと → キャストごとの日付をグループ化
+        const castDateMap = {}; // key: roleName_rank_castName
+        const castInfoMap = {};
+        for (const item of params.items) {
+            const dates = item.selectedDates && item.selectedDates.length > 0
+                ? item.selectedDates
+                : params.dateRanges;
+            const key = `${item.roleName}_${item.rank}_${item.castName}`;
+            castDateMap[key] = dates;
+            const mention = item.slackMentionId ? `<@${item.slackMentionId}>` : item.castName;
+            castInfoMap[key] = { roleName: item.roleName, rank: item.rank, mention };
+        }
+        // 役ごとにグループ化して表示
+        const roleOrder = {};
+        for (const [key, info] of Object.entries(castInfoMap)) {
+            if (!roleOrder[info.roleName])
+                roleOrder[info.roleName] = [];
+            roleOrder[info.roleName].push({ key, rank: info.rank });
+        }
+        for (const [roleName, entries] of Object.entries(roleOrder)) {
+            entries.sort((a, b) => a.rank - b.rank);
+            for (const entry of entries) {
+                const info = castInfoMap[entry.key];
+                const dates = castDateMap[entry.key] || [];
+                const compacted = compactDateRanges(dates).join("、");
+                lines.push(`  ${roleName} 第${info.rank}候補: ${info.mention}（${compacted}）`);
             }
         }
     }
