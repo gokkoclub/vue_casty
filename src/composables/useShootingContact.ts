@@ -204,6 +204,7 @@ export function useShootingContact() {
 
     /**
      * 撮影連絡データを更新
+     * inTime/outTime変更時は紐づくキャスティングDocも更新（カレンダー連動）
      */
     async function updateContact(contactId: string, data: Partial<ShootingContact>): Promise<boolean> {
         if (!db) return false
@@ -214,6 +215,20 @@ export function useShootingContact() {
             // ローカル更新
             const contact = contacts.value.find(c => c.id === contactId)
             if (contact) Object.assign(contact, data)
+
+            // 時間が変更された場合、紐づくキャスティングDocも更新（カレンダー連動トリガー）
+            if ((data.inTime !== undefined || data.outTime !== undefined) && contact?.castingId) {
+                try {
+                    const castingRef = doc(db, 'castings', contact.castingId)
+                    const timeUpdate: Record<string, unknown> = { updatedAt: Timestamp.now() }
+                    if (data.inTime !== undefined) timeUpdate.startTime = data.inTime
+                    if (data.outTime !== undefined) timeUpdate.endTime = data.outTime
+                    await updateDoc(castingRef, timeUpdate)
+                    console.log(`Synced time to casting ${contact.castingId}: ${data.inTime}〜${data.outTime}`)
+                } catch (err) {
+                    console.warn('Failed to sync time to casting:', err)
+                }
+            }
 
             toast.add({ severity: 'success', summary: '更新完了', detail: '撮影連絡情報を更新しました', life: 2000 })
             return true

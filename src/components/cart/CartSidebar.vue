@@ -56,7 +56,7 @@ const showConfirmDialog = ref(false)
 
 // Emit events to parent
 const emit = defineEmits<{
-  submit: [pdfFile?: File | null, intimacy?: string]
+  submit: [pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }]
 }>()
 
 const handleSubmitClick = () => {
@@ -82,8 +82,8 @@ const handleSubmitClick = () => {
   showConfirmDialog.value = true
 }
 
-const handleConfirmed = (intimacy: string) => {
-  emit('submit', uploadedPdf.value, intimacy)
+const handleConfirmed = (intimacy: string, competition?: { type: string; period: string }) => {
+  emit('submit', uploadedPdf.value, intimacy, competition)
   // PDF添付ファイルをリセット
   uploadedPdf.value = null
   skipPdf.value = false
@@ -258,6 +258,7 @@ const handleConfirmed = (intimacy: string) => {
     v-model:visible="showConfirmDialog"
     :hasPdf="!!uploadedPdf"
     :hasMinorCast="hasMinorCast"
+    :isShootingMode="store.isShootingMode"
     @confirm="handleConfirmed"
   />
 </template>

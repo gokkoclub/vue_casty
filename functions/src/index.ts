@@ -380,6 +380,7 @@ export const notifyOrderCreated = onCall(
                     roleName?: string;
                     rank?: string;
                     mainSub?: string;
+                    selectedDates?: string[];
                 }>).filter(
                     (item) => item.castType === "内部"
                 );
@@ -401,7 +402,12 @@ export const notifyOrderCreated = onCall(
                         console.warn(`Failed to get email for cast ${item.castId}:`, e);
                     }
 
-                    for (const dateRange of (data.dateRanges || [])) {
+                    // per-item selectedDates があればそれを使用、なければ全日程
+                    const itemDates = item.selectedDates && item.selectedDates.length > 0
+                        ? item.selectedDates
+                        : (data.dateRanges || []);
+
+                    for (const dateRange of itemDates) {
                         const [startDate] = dateRange.includes("~")
                             ? dateRange.split("~").map((s: string) => s.trim())
                             : [dateRange];
@@ -463,6 +469,7 @@ export const notifyOrderCreated = onCall(
             const items = data.items as Array<{
                 castName: string;
                 castType: string;
+                selectedDates?: string[];
             }>;
 
             for (let i = 0; i < castingIds.length; i++) {
@@ -474,7 +481,10 @@ export const notifyOrderCreated = onCall(
                 // カレンダーイベントIDをマッチして書き戻す
                 const item = items[i];
                 if (item && item.castType === "内部") {
-                    for (const dateRange of (data.dateRanges || [])) {
+                    const itemDates = item.selectedDates && item.selectedDates.length > 0
+                        ? item.selectedDates
+                        : (data.dateRanges || []);
+                    for (const dateRange of itemDates) {
                         const startDate = dateRange.includes("~")
                             ? dateRange.split("~")[0]!.trim()
                             : dateRange;
@@ -891,7 +901,6 @@ export const notifyOrderUpdated = onCall(
         if (
             serviceAccountKey &&
             calendarId &&
-            casting.castType === "内部" &&
             casting.calendarEventId
         ) {
             // 日時変更

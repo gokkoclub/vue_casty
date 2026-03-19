@@ -2,7 +2,8 @@
 import { computed } from 'vue'
 import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
-import type { Cast } from '@/types'
+import Tag from 'primevue/tag'
+import type { Cast, Casting } from '@/types'
 import { useOrderStore } from '@/stores/orderStore'
 import { convertDriveUrlToImage, getPlaceholderImage } from '@/utils/imageUrl'
 import { Timestamp } from 'firebase/firestore'
@@ -10,6 +11,7 @@ import { Timestamp } from 'firebase/firestore'
 const props = defineProps<{
   visible: boolean
   cast: Cast | null
+  activeCastings?: Casting[]
 }>()
 
 const emit = defineEmits<{
@@ -52,6 +54,19 @@ const handleAddToCart = () => {
   }
 }
 
+// Competition info from active castings for this cast
+const competitionInfo = computed(() => {
+  if (!props.cast || !props.activeCastings) return null
+  const casting = props.activeCastings.find(
+    c => c.castId === props.cast!.id && c.competitionType
+  )
+  if (!casting?.competitionType) return null
+  return {
+    type: casting.competitionType,
+    period: casting.competitionPeriod || ''
+  }
+})
+
 const openSns = (url: string) => {
   if (url) {
     const fullUrl = url.startsWith('http') ? url : `https://${url}`
@@ -87,7 +102,10 @@ const openSns = (url: string) => {
           />
         </div>
         <div class="basic-info">
-          <h2 class="cast-name">{{ cast.name }}</h2>
+          <h2 class="cast-name">
+            {{ cast.name }}
+            <Tag v-if="competitionInfo" severity="danger" class="comp-badge">競合あり</Tag>
+          </h2>
           <p class="agency">{{ cast.agency || '' }}</p>
 
           <!-- SNSアイコン -->
@@ -120,6 +138,13 @@ const openSns = (url: string) => {
             <tr>
               <th>備考</th>
               <td>{{ cast.notes || '-' }}</td>
+            </tr>
+            <tr v-if="competitionInfo">
+              <th>競合</th>
+              <td class="comp-cell">
+                <span class="comp-type">{{ competitionInfo.type }}</span>
+                <span v-if="competitionInfo.period" class="comp-period">（{{ competitionInfo.period }}）</span>
+              </td>
             </tr>
           </table>
         </div>
@@ -252,6 +277,23 @@ const openSns = (url: string) => {
 
 .info-table td {
   color: var(--p-text-color);
+}
+
+/* Competition */
+.comp-badge {
+  font-size: 0.65rem;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+
+.comp-cell {
+  color: #DC2626 !important;
+  font-weight: 600;
+}
+
+.comp-period {
+  font-weight: 400;
+  font-size: 0.8rem;
 }
 
 /* Add Button */

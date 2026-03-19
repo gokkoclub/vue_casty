@@ -193,6 +193,7 @@ const handleSummaryClick = () => {
           <span class="csl-cast-type" :class="casting.castType === '内部' ? 'internal' : 'external'">
             {{ casting.castType }}
           </span>
+          <span v-if="casting.competitionType" class="csl-comp-badge">競合</span>
         </div>
 
         <!-- Status -->
@@ -644,5 +645,15 @@ const handleSummaryClick = () => {
     width: 100%;
     margin-top: 0.25rem;
   }
+}
+
+.csl-comp-badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #FEE2E2;
+  color: #DC2626;
+  font-weight: 600;
+  white-space: nowrap;
 }
 </style>

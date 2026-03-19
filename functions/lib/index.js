@@ -373,7 +373,11 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                 catch (e) {
                     console.warn(`Failed to get email for cast ${item.castId}:`, e);
                 }
-                for (const dateRange of (data.dateRanges || [])) {
+                // per-item selectedDates があればそれを使用、なければ全日程
+                const itemDates = item.selectedDates && item.selectedDates.length > 0
+                    ? item.selectedDates
+                    : (data.dateRanges || []);
+                for (const dateRange of itemDates) {
                     const [startDate] = dateRange.includes("~")
                         ? dateRange.split("~").map((s) => s.trim())
                         : [dateRange];
@@ -439,7 +443,10 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             // カレンダーイベントIDをマッチして書き戻す
             const item = items[i];
             if (item && item.castType === "内部") {
-                for (const dateRange of (data.dateRanges || [])) {
+                const itemDates = item.selectedDates && item.selectedDates.length > 0
+                    ? item.selectedDates
+                    : (data.dateRanges || []);
+                for (const dateRange of itemDates) {
                     const startDate = dateRange.includes("~")
                         ? dateRange.split("~")[0].trim()
                         : dateRange;
@@ -784,7 +791,6 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
     const calendarId = getEnv("GOOGLE_CALENDAR_ID");
     if (serviceAccountKey &&
         calendarId &&
-        casting.castType === "内部" &&
         casting.calendarEventId) {
         // 日時変更
         if (changes.startDate || changes.startTime || changes.endTime) {

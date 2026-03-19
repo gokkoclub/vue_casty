@@ -41,8 +41,8 @@ export function getCastBookings(
     const relevantCastings = activeCastings.filter(c => {
         if (c.castId !== castId) return false
 
-        // 表示対象のステータス（打診中・オーダー待ちも仮キャスティングとして表示）
-        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '決定', 'NG'].includes(c.status)) return false
+        // 表示対象のステータス（打診中・オーダー待ちも仮キャスティングとして表示、OK/条件つきOKは決定として表示）
+        if (!['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', '条件つきOK', 'OK', '決定', 'NG'].includes(c.status)) return false
 
         const castStart = toLocalDateStr(c.startDate.toDate())
         const castEnd = c.endDate ? toLocalDateStr(c.endDate.toDate()) : castStart
@@ -70,7 +70,10 @@ export function getCastBookings(
         } else if (casting.status === '仮キャスティング' || casting.status === '打診中' || casting.status === 'オーダー待ち') {
             displayLabel = `${teamLabel}: 仮キャスティング`
             severity = 'info'
-        } else if (casting.status === '決定') {
+        } else if (casting.status === '条件つきOK') {
+            displayLabel = `${teamLabel}: 条件つきOK`
+            severity = 'info'
+        } else if (casting.status === 'OK' || casting.status === '決定') {
             displayLabel = `${teamLabel}: 決定`
             severity = 'danger'
         } else if (casting.status === 'NG') {

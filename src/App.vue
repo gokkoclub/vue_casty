@@ -102,7 +102,7 @@ const menuItems = computed(() => [
 <style scoped>
 .app-container {
   min-height: 100vh;
-  background: var(--p-surface-ground);
+  background: #f0f2f5;
 }
 
 .app-header {

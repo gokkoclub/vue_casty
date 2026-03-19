@@ -266,7 +266,7 @@ export function useOrders() {
     /**
      * オーダーをFirestoreに保存
      */
-    const submitOrder = async (pdfFile?: File | null, intimacy?: string): Promise<boolean> => {
+    const submitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }): Promise<boolean> => {
         if (!db) {
             toast.add({
                 severity: 'error',
@@ -390,6 +390,12 @@ export function useOrders() {
                         }
                     }
 
+                    // Add competition data for external/internal if provided
+                    if (competition && (payload.mode === 'external' || payload.mode === 'internal')) {
+                        castingData.competitionType = competition.type
+                        castingData.competitionPeriod = competition.period
+                    }
+
                     batch.set(castingRef, castingData)
                 }
             }
@@ -460,7 +466,8 @@ export function useOrders() {
                             rank: i.rank,
                             mainSub: i.mainSub,
                             projectName: i.projectName,
-                            slackMentionId: i.slackMentionId
+                            slackMentionId: i.slackMentionId,
+                            selectedDates: i.selectedDates || []
                         })),
                         castingIds
                     })
