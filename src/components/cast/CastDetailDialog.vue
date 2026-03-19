@@ -104,7 +104,7 @@ const openSns = (url: string) => {
         <div class="basic-info">
           <h2 class="cast-name">
             {{ cast.name }}
-            <Tag v-if="competitionInfo" severity="danger" class="comp-badge">競業あり</Tag>
+            <Tag v-if="competitionInfo" severity="danger" class="comp-badge">競合あり</Tag>
           </h2>
           <p class="agency">{{ cast.agency || '' }}</p>
 
@@ -140,7 +140,7 @@ const openSns = (url: string) => {
               <td>{{ cast.notes || '-' }}</td>
             </tr>
             <tr v-if="competitionInfo">
-              <th>競業</th>
+              <th>競合</th>
               <td class="comp-cell">
                 <span class="comp-type">{{ competitionInfo.type }}</span>
                 <span v-if="competitionInfo.period" class="comp-period">（{{ competitionInfo.period }}）</span>

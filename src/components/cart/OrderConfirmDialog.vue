@@ -104,7 +104,7 @@ const handleCancel = () => {
 
       <!-- Competition Info (external/internal only) -->
       <div v-if="!isShootingMode" class="competition-section mb-3">
-        <label class="section-label">競業の有無</label>
+        <label class="section-label">競合の有無</label>
         <div class="intimacy-radios">
           <label class="intimacy-radio">
             <RadioButton v-model="hasCompetition" value="なし" />
@@ -117,11 +117,11 @@ const handleCancel = () => {
         </div>
         <div v-if="hasCompetition === 'あり'" class="competition-fields">
           <div class="comp-field">
-            <label>競業の種類 <span class="text-red-500">*</span></label>
+            <label>競合の種類 <span class="text-red-500">*</span></label>
             <InputText v-model="competitionType" placeholder="例: 化粧品、飲料、アパレル" class="w-full" />
           </div>
           <div class="comp-field">
-            <label>競業期間</label>
+            <label>競合期間</label>
             <InputText v-model="competitionPeriod" placeholder="例: 2026/03〜2027/03" class="w-full" />
           </div>
         </div>
