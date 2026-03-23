@@ -8,7 +8,7 @@ import type { CastingStatus } from '@/types'
 // ステータスの遷移可能先を定義
 const STATUS_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
     '仮押さえ': ['打診中', 'オーダー待ち', 'OK', '決定', 'NG', 'キャンセル'],
-    '仮キャスティング': ['OK', '条件つきOK', 'NG'],
+    '仮キャスティング': ['打診中', 'OK', '条件つきOK', 'NG', 'キャンセル'],
     '打診中': ['オーダー待ち', 'OK', '条件つきOK', 'NG'],
     'オーダー待ち': ['OK', '条件つきOK', '決定', 'NG'],
     'オーダー待ち（仮キャスティング）': ['OK', '条件つきOK', '決定', 'NG'],

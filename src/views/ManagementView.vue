@@ -13,6 +13,7 @@ import ProgressSpinner from 'primevue/progressspinner'
 import { useEmailSettings } from '@/composables/useEmailSettings'
 import type { EmailTemplateSetting } from '@/composables/useEmailSettings'
 import { useCastMaster } from '@/composables/useCastMaster'
+import { useAdmins } from '@/composables/useAdmins'
 import type { CastMaster, Casting } from '@/types'
 import { collection, query, where, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore'
 import { db } from '@/services/firebase'
@@ -27,9 +28,43 @@ const editingTemplateId = ref<string | null>(null)
 const editSubject = ref('')
 const editBody = ref('')
 
+// ========= Tab 4: Admin Management =========
+const admins = useAdmins()
+const newAdminEmail = ref('')
+const newAdminName = ref('')
+const addingAdmin = ref(false)
+
+async function handleAddAdmin() {
+    if (!newAdminEmail.value.trim() || !newAdminName.value.trim()) {
+        toast.add({ severity: 'warn', summary: '入力エラー', detail: 'メールアドレスと名前を入力してください', life: 3000 })
+        return
+    }
+    addingAdmin.value = true
+    const success = await admins.addAdmin(newAdminEmail.value, newAdminName.value)
+    if (success) {
+        newAdminEmail.value = ''
+        newAdminName.value = ''
+    }
+    addingAdmin.value = false
+}
+
+async function handleToggleAdmin(admin: { id: string; active: boolean }) {
+    if (admin.active) {
+        await admins.deactivateAdmin(admin.id)
+    } else {
+        await admins.activateAdmin(admin.id)
+    }
+}
+
+async function handleRemoveAdmin(adminId: string) {
+    if (!confirm('この管理者を削除しますか？')) return
+    await admins.removeAdmin(adminId)
+}
+
 onMounted(() => {
     emailSettings.fetchTemplates()
     castMaster.fetchHistory()
+    admins.fetchAdmins()
 })
 
 function startEditTemplate(t: EmailTemplateSetting) {
@@ -576,6 +611,113 @@ function setAllNewDate(date: Date | null) {
                     </template>
                 </div>
             </TabPanel>
+
+            <!-- Tab 4: Admin Management -->
+            <TabPanel value="3">
+                <template #header>
+                    <div class="tab-header">
+                        <i class="pi pi-shield"></i>
+                        <span>管理者設定</span>
+                        <Badge :value="admins.admins.value.length" severity="secondary" />
+                    </div>
+                </template>
+
+                <div class="tab-content">
+                    <!-- Add Admin Form -->
+                    <div class="admin-add-form">
+                        <h3 class="admin-section-title">
+                            <i class="pi pi-user-plus"></i>
+                            管理者を追加
+                        </h3>
+                        <div class="admin-form-row">
+                            <InputText
+                                v-model="newAdminEmail"
+                                placeholder="メールアドレス"
+                                class="admin-input"
+                                type="email"
+                            />
+                            <InputText
+                                v-model="newAdminName"
+                                placeholder="表示名"
+                                class="admin-input-name"
+                            />
+                            <Button
+                                label="追加"
+                                icon="pi pi-plus"
+                                :loading="addingAdmin"
+                                @click="handleAddAdmin"
+                            />
+                        </div>
+                    </div>
+
+                    <!-- Admin List -->
+                    <div class="admin-list-section">
+                        <h3 class="admin-section-title">
+                            <i class="pi pi-users"></i>
+                            管理者一覧
+                        </h3>
+
+                        <div v-if="admins.loading.value" class="loading-container">
+                            <ProgressSpinner />
+                        </div>
+
+                        <div v-else-if="admins.admins.value.length === 0" class="empty-state">
+                            <i class="pi pi-shield"></i>
+                            <p>管理者が登録されていません</p>
+                        </div>
+
+                        <table v-else class="master-table admin-table">
+                            <thead>
+                                <tr>
+                                    <th>名前</th>
+                                    <th>メールアドレス</th>
+                                    <th>ステータス</th>
+                                    <th>登録日</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr v-for="admin in admins.admins.value" :key="admin.id"
+                                    :class="{ 'admin-inactive': !admin.active }">
+                                    <td class="cast-name">{{ admin.name }}</td>
+                                    <td class="admin-email">{{ admin.email }}</td>
+                                    <td>
+                                        <Tag
+                                            :value="admin.active ? '有効' : '無効'"
+                                            :severity="admin.active ? 'success' : 'secondary'"
+                                        />
+                                    </td>
+                                    <td class="date-col">
+                                        {{ admin.createdAt?.toDate
+                                            ? admin.createdAt.toDate().toLocaleDateString('ja-JP')
+                                            : '-' }}
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            <Button
+                                                :icon="admin.active ? 'pi pi-ban' : 'pi pi-check-circle'"
+                                                :severity="admin.active ? 'warning' : 'success'"
+                                                size="small"
+                                                outlined
+                                                v-tooltip.top="admin.active ? '無効化' : '有効化'"
+                                                @click="handleToggleAdmin(admin)"
+                                            />
+                                            <Button
+                                                icon="pi pi-trash"
+                                                severity="danger"
+                                                size="small"
+                                                outlined
+                                                v-tooltip.top="'削除'"
+                                                @click="handleRemoveAdmin(admin.id)"
+                                            />
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </TabPanel>
         </TabView>
     </div>
 </template>
@@ -700,12 +842,12 @@ function setAllNewDate(date: Date | null) {
 
 .variable-hint {
     padding: 0.5rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     border-radius: 4px;
 }
 
 .variable-hint code {
-    background: var(--surface-200);
+    background: var(--p-content-border-color);
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
     font-size: 0.75rem;
@@ -776,7 +918,7 @@ function setAllNewDate(date: Date | null) {
     gap: 0.75rem;
     margin-bottom: 1rem;
     padding: 0.75rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     border-radius: 8px;
 }
 
@@ -787,6 +929,55 @@ function setAllNewDate(date: Date | null) {
 
 .bulk-date-picker { width: 200px; }
 .date-input { width: 160px; }
+
+/* ======== Admin Management ======== */
+.admin-add-form {
+    background: var(--p-content-hover-background);
+    border: 1px solid var(--p-content-border-color);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.admin-list-section {
+    margin-top: 0.5rem;
+}
+
+.admin-section-title {
+    font-size: 1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 1rem 0;
+    color: var(--p-text-color);
+}
+
+.admin-form-row {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.admin-input {
+    flex: 2;
+    min-width: 200px;
+}
+
+.admin-input-name {
+    flex: 1;
+    min-width: 140px;
+}
+
+.admin-email {
+    font-family: monospace;
+    font-size: 0.875rem;
+}
+
+.admin-table .admin-inactive td {
+    opacity: 0.5;
+}
 
 /* ======== Master Group View ======== */
 .view-toggle {
@@ -812,14 +1003,14 @@ function setAllNewDate(date: Date | null) {
     align-items: center;
     gap: 0.75rem;
     padding: 0.75rem 1rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     cursor: pointer;
     user-select: none;
     transition: background 0.15s;
 }
 
 .master-group-header:hover {
-    background: var(--surface-100);
+    background: var(--p-content-hover-background);
 }
 
 .master-group-header i {

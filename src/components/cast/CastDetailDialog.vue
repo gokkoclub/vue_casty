@@ -208,7 +208,7 @@ const openSns = (url: string) => {
   height: 200px;
   object-fit: cover;
   border-radius: 50%;
-  background: var(--p-surface-200);
+  background: var(--p-content-hover-background);
 }
 
 .basic-info {
@@ -263,7 +263,7 @@ const openSns = (url: string) => {
 .info-table th,
 .info-table td {
   padding: 0.5rem 0;
-  border-bottom: 1px solid var(--p-surface-200);
+  border-bottom: 1px solid var(--p-content-border-color);
   font-size: 0.875rem;
   text-align: left;
 }

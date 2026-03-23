@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { collection, query, orderBy, getDocs, doc, updateDoc, Timestamp } from 'firebase/firestore'
+import { collection, query, orderBy, where, getDocs, doc, updateDoc, writeBatch, Timestamp } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
@@ -184,6 +184,20 @@ export function useCastings() {
 
             // 6. Notion sync — notifyStatusUpdate CF内で自動実行されるため不要
 
+            // 7. 決定時: 同一役の競合候補を自動キャンセル
+            if (newStatus === '決定') {
+                autoCancelCompetingCandidates(casting).catch(err => {
+                    console.warn('Auto-cancel competitors failed:', err)
+                })
+            }
+
+            // 8. NG/キャンセル時: 次の rank 候補を自動昇格 (打診中 + DM送信)
+            if (newStatus === 'NG' || newStatus === 'キャンセル') {
+                promoteNextRankCandidate(casting).catch(err => {
+                    console.warn('Promote next candidate failed:', err)
+                })
+            }
+
             toast.add({
                 severity: 'success',
                 summary: 'ステータス更新',
@@ -202,6 +216,123 @@ export function useCastings() {
             })
             return false
         }
+    }
+
+    /**
+     * 決定時: 同一役・同一期間の競合候補（他 rank）を自動キャンセル
+     */
+    async function autoCancelCompetingCandidates(decidedCasting: Casting): Promise<void> {
+        if (!db) return
+
+        const q = query(
+            collection(db, 'castings'),
+            where('projectName', '==', decidedCasting.projectName),
+            where('roleName', '==', decidedCasting.roleName),
+            where('accountName', '==', decidedCasting.accountName)
+        )
+        const snap = await getDocs(q)
+        const terminal: CastingStatus[] = ['NG', 'キャンセル', '決定', '削除済み' as CastingStatus]
+
+        const toCancel = snap.docs.filter(d => {
+            if (d.id === decidedCasting.id) return false
+            const data = d.data()
+            if (terminal.includes(data.status as CastingStatus)) return false
+            // 日程が重複するもののみ対象
+            const startMs = data.startDate?.toMillis?.() ?? 0
+            const endMs = data.endDate?.toMillis?.() ?? 0
+            return startMs <= decidedCasting.endDate.toMillis() &&
+                   endMs >= decidedCasting.startDate.toMillis()
+        })
+
+        if (toCancel.length === 0) return
+
+        const batch = writeBatch(db)
+        for (const d of toCancel) {
+            batch.update(d.ref, {
+                status: 'キャンセル',
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'auto'
+            })
+        }
+        await batch.commit()
+
+        // ローカル状態も更新
+        for (const d of toCancel) {
+            const local = castings.value.find(c => c.id === d.id)
+            if (local) local.status = 'キャンセル'
+        }
+
+        toast.add({
+            severity: 'info',
+            summary: '競合候補をキャンセル',
+            detail: `「${decidedCasting.roleName}」の他候補 ${toCancel.length}件 を自動キャンセルしました`,
+            life: 4000
+        })
+    }
+
+    /**
+     * NG/キャンセル時: 次の rank 候補を打診中に昇格し、内部キャストにはDM送信
+     */
+    async function promoteNextRankCandidate(ngCasting: Casting): Promise<void> {
+        if (!db) return
+
+        const nextRank = ngCasting.rank + 1
+        const q = query(
+            collection(db, 'castings'),
+            where('projectName', '==', ngCasting.projectName),
+            where('roleName', '==', ngCasting.roleName),
+            where('accountName', '==', ngCasting.accountName),
+            where('rank', '==', nextRank)
+        )
+        const snap = await getDocs(q)
+
+        // 対象: 同一役の次 rank かつ仮キャスティング状態かつ日程重複
+        const toPromote = snap.docs.filter(d => {
+            const data = d.data()
+            if (data.status !== '仮キャスティング') return false
+            const startMs = data.startDate?.toMillis?.() ?? 0
+            const endMs = data.endDate?.toMillis?.() ?? 0
+            return startMs <= ngCasting.endDate.toMillis() &&
+                   endMs >= ngCasting.startDate.toMillis()
+        })
+
+        if (toPromote.length === 0) return
+
+        // ステータスを打診中に更新
+        const batch = writeBatch(db)
+        for (const d of toPromote) {
+            batch.update(d.ref, {
+                status: '打診中',
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'auto'
+            })
+        }
+        await batch.commit()
+
+        // ローカル状態も更新
+        for (const d of toPromote) {
+            const local = castings.value.find(c => c.id === d.id)
+            if (local) local.status = '打診中'
+        }
+
+        // 内部キャストにはオーダー DM を送信
+        if (functions) {
+            const internalCasts = toPromote.filter(d => d.data().castType === '内部')
+            for (const d of internalCasts) {
+                const sendDm = httpsCallable(functions, 'sendPromotionDm')
+                sendDm({ castingId: d.id }).catch(err =>
+                    console.warn(`[Promotion DM] Failed for ${d.data().castName}:`, err)
+                )
+            }
+        }
+
+        const firstName = toPromote[0]?.data().castName ?? ''
+        toast.add({
+            severity: 'info',
+            summary: '次候補に繰り上がり',
+            detail: `第${nextRank}候補「${firstName}」を打診中に変更${toPromote.some(d => d.data().castType === '内部') ? '・DM送信' : ''}しました`,
+            life: 4000
+        })
     }
 
     /**

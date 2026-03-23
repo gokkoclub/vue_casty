@@ -715,7 +715,7 @@ const countCastings = (dateGroup: any) => {
   gap: 1rem;
   margin-bottom: 1.5rem;
   padding: 0.5rem 0;
-  border-bottom: 1px solid var(--p-surface-200);
+  border-bottom: 1px solid var(--p-content-border-color);
 }
 
 .sv-tabs {
@@ -759,7 +759,7 @@ const countCastings = (dateGroup: any) => {
 }
 
 .nav-btn:hover {
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
 }
 
 .month-label {
@@ -804,8 +804,8 @@ const countCastings = (dateGroup: any) => {
 .sv-date-group {
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid var(--p-surface-200);
-  background: white;
+  border: 1px solid var(--p-content-border-color);
+  background: var(--p-content-background);
 }
 
 /* Date Header */
@@ -816,28 +816,30 @@ const countCastings = (dateGroup: any) => {
   padding: 0.75rem 1rem;
   cursor: pointer;
   transition: background 0.15s;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   user-select: none;
 }
 
-.sv-date-header:hover {
-  background: var(--p-surface-100);
+@media (prefers-color-scheme: dark) {
+  .sv-date-header { background: var(--p-surface-800); }
 }
 
-.sv-date-header.weekend {
-  background: #FEF2F2;
+.sv-date-header:hover { background: var(--p-content-hover-background); }
+
+@media (prefers-color-scheme: dark) {
+  .sv-date-header:hover { background: var(--p-surface-700); }
 }
 
-.sv-date-header.weekend:hover {
-  background: #FEE2E2;
-}
+.sv-date-header.weekend { background: #FEF2F2; }
+.sv-date-header.weekend:hover { background: #FEE2E2; }
+.sv-date-header.has-order-wait { background: #FFFBEB; }
+.sv-date-header.has-order-wait:hover { background: #FEF3C7; }
 
-.sv-date-header.has-order-wait {
-  background: #FFFBEB;
-}
-
-.sv-date-header.has-order-wait:hover {
-  background: #FEF3C7;
+@media (prefers-color-scheme: dark) {
+  .sv-date-header.weekend { background: #3f1515; }
+  .sv-date-header.weekend:hover { background: #521c1c; }
+  .sv-date-header.has-order-wait { background: #3d2e00; }
+  .sv-date-header.has-order-wait:hover { background: #4f3d00; }
 }
 
 .sv-date-left {
@@ -861,7 +863,7 @@ const countCastings = (dateGroup: any) => {
 .sv-date-count {
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
-  background: var(--p-surface-200);
+  background: var(--p-content-hover-background);
   padding: 0.1rem 0.5rem;
   border-radius: 10px;
 }
@@ -876,6 +878,13 @@ const countCastings = (dateGroup: any) => {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sv-owait-badge {
+    color: #FCD34D;
+    background: #3d2e00;
+  }
 }
 
 /* Date Content */
@@ -933,7 +942,7 @@ const countCastings = (dateGroup: any) => {
 .sv-view-toggle {
   display: flex;
   gap: 0;
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -945,7 +954,7 @@ const countCastings = (dateGroup: any) => {
   padding: 0.3rem 0.7rem;
   font-size: 0.8rem;
   border: none;
-  background: var(--p-surface-0);
+  background: var(--p-content-background);
   color: var(--p-text-muted-color);
   cursor: pointer;
   transition: all 0.15s;
@@ -957,12 +966,12 @@ const countCastings = (dateGroup: any) => {
 }
 
 .sv-toggle-btn:hover:not(.active) {
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
 }
 
 /* ===== Project View ===== */
 .project-view-header {
-  background: linear-gradient(135deg, var(--p-surface-50), var(--p-surface-0)) !important;
+  background: linear-gradient(135deg, var(--p-content-hover-background), var(--p-content-background)) !important;
   border-left: 3px solid var(--p-orange-400, #fb923c);
 }
 
@@ -974,7 +983,7 @@ const countCastings = (dateGroup: any) => {
 .sv-project-dates-label {
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
 }
@@ -988,7 +997,7 @@ const countCastings = (dateGroup: any) => {
   font-weight: 600;
   color: var(--p-text-muted-color);
   padding: 0.35rem 0.75rem;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-left: 2px solid var(--p-surface-300);
   margin-bottom: 0.25rem;
 }
@@ -1018,7 +1027,7 @@ const countCastings = (dateGroup: any) => {
 
 /* ===== Feature Film (中長編) ===== */
 .feature-header {
-  background: linear-gradient(135deg, var(--p-surface-50), var(--p-primary-50, #e8f0fe)) !important;
+  background: linear-gradient(135deg, var(--p-content-hover-background), var(--p-primary-50, #e8f0fe)) !important;
   border-left: 3px solid var(--p-primary-400, #6366f1);
 }
 
@@ -1035,7 +1044,7 @@ const countCastings = (dateGroup: any) => {
 .sv-account-badge {
   font-size: 0.7rem;
   color: var(--p-text-muted-color);
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
@@ -1057,25 +1066,25 @@ const countCastings = (dateGroup: any) => {
   font-size: 0.7rem;
   font-weight: 600;
   color: var(--p-text-muted-color);
-  border-bottom: 2px solid var(--p-surface-200);
+  border-bottom: 2px solid var(--p-content-border-color);
   position: sticky;
   top: 0;
-  background: var(--p-surface-0);
+  background: var(--p-content-background);
   z-index: 1;
 }
 
 .sv-feature-cast-row {
-  border-bottom: 1px solid var(--p-surface-100);
+  border-bottom: 1px solid var(--p-content-hover-background);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .sv-feature-cast-row:hover {
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
 }
 
 .sv-feature-cast-row:nth-child(even) {
-  background: var(--p-surface-0);
+  background: var(--p-content-background);
 }
 
 .sv-feature-cast-cell {
@@ -1150,7 +1159,7 @@ const countCastings = (dateGroup: any) => {
 }
 
 .sv-status-badge.status-キャンセル {
-  background: var(--p-surface-200);
+  background: var(--p-content-hover-background);
   color: var(--p-text-muted-color);
 }
 </style>

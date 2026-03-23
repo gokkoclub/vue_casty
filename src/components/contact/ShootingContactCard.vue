@@ -333,7 +333,7 @@ const buildMailBody = () => {
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
     padding: 1rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     border-radius: 8px;
 }
 
@@ -354,6 +354,6 @@ const buildMailBody = () => {
     gap: 0.5rem;
     flex-wrap: wrap;
     padding-top: 0.5rem;
-    border-top: 1px solid var(--surface-border);
+    border-top: 1px solid var(--p-content-border-color);
 }
 </style>

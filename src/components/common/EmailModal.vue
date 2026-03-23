@@ -145,7 +145,7 @@ const handleMailto = (subject: string, body: string) => {
 
 .subject {
   padding: 0.5rem;
-  background: var(--surface-100);
+  background: var(--p-content-hover-background);
   border-radius: 4px;
   font-weight: 500;
 }

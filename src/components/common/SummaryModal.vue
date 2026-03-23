@@ -71,7 +71,7 @@ const statusSeverity = (status: string): 'success' | 'info' | 'warning' | 'dange
 .summary-footer {
   margin-top: 1.5rem;
   padding-top: 1rem;
-  border-top: 1px solid var(--surface-200);
+  border-top: 1px solid var(--p-content-border-color);
   display: flex;
   justify-content: flex-end;
 }

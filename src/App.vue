@@ -11,39 +11,51 @@ import { useAuth } from '@/composables/useAuth'
 
 const router = useRouter()
 const cart = useCartStore()
-const { isAuthenticated, userName, signIn, signOut, init } = useAuth()
+const { isAuthenticated, isAdmin, userName, signIn, signOut, init } = useAuth()
 
 onMounted(() => {
   init()
 })
 
-const menuItems = computed(() => [
-  {
-    label: 'キャストを探す',
-    icon: 'pi pi-search',
-    command: () => router.push('/casting')
-  },
-  {
-    label: 'キャスティング状況',
-    icon: 'pi pi-chart-bar',
-    command: () => router.push('/casting-status')
-  },
-  {
-    label: '撮影連絡DB',
-    icon: 'pi pi-phone',
-    command: () => router.push('/shooting-contact')
-  },
-  {
-    label: '管理画面',
-    icon: 'pi pi-cog',
-    command: () => router.push('/management')
-  },
-  {
+const menuItems = computed(() => {
+  const items = [
+    {
+      label: 'キャストを探す',
+      icon: 'pi pi-search',
+      command: () => router.push('/casting')
+    },
+    {
+      label: 'キャスティング状況',
+      icon: 'pi pi-chart-bar',
+      command: () => router.push('/casting-status')
+    }
+  ]
+
+  // 管理者のみ表示するメニュー項目
+  if (isAdmin.value) {
+    items.push(
+      {
+        label: '撮影連絡DB',
+        icon: 'pi pi-phone',
+        command: () => router.push('/shooting-contact')
+      },
+      {
+        label: '管理画面',
+        icon: 'pi pi-cog',
+        command: () => router.push('/management')
+      }
+    )
+  }
+
+  // ヘルプは全員が閲覧可能
+  items.push({
     label: 'ヘルプ',
     icon: 'pi pi-question-circle',
     command: () => router.push('/help')
-  }
-])
+  })
+
+  return items
+})
 </script>
 
 <template>
@@ -102,7 +114,7 @@ const menuItems = computed(() => [
 <style scoped>
 .app-container {
   min-height: 100vh;
-  background: #f0f2f5;
+  background: var(--p-surface-ground);
 }
 
 .app-header {

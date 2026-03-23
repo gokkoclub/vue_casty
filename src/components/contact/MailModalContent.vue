@@ -153,7 +153,7 @@ function handleMailto() {
 .template-section select {
     flex: 1;
     padding: 0.4rem 0.5rem;
-    border: 1px solid var(--surface-border);
+    border: 1px solid var(--p-content-border-color);
     border-radius: 6px;
     font-size: 0.85rem;
 }
@@ -231,8 +231,8 @@ function handleMailto() {
 .btn-primary:hover { filter: brightness(0.9); }
 
 .btn-secondary {
-    background: var(--surface-100);
+    background: var(--p-content-hover-background);
     color: var(--text-color);
 }
-.btn-secondary:hover { background: var(--surface-200); }
+.btn-secondary:hover { background: var(--p-content-border-color); }
 </style>

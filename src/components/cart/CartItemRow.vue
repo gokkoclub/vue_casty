@@ -104,8 +104,8 @@ const handleRemove = () => {
   display: flex;
   align-items: flex-start; /* Align top for inputs */
   padding: 0.75rem;
-  border-bottom: 1px solid var(--p-surface-200);
-  background: var(--p-surface-0);
+  border-bottom: 1px solid var(--p-content-border-color);
+  background: var(--p-content-background);
   gap: 0.75rem;
 }
 

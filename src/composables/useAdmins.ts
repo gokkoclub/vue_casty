@@ -32,7 +32,7 @@ export function useAdmins() {
         loading.value = true
 
         try {
-            const q = query(collection(db, 'admins'))
+            const q = query(collection(db, 'admin'))
             const snapshot = await getDocs(q)
 
             admins.value = snapshot.docs.map(doc => ({
@@ -60,7 +60,7 @@ export function useAdmins() {
 
         try {
             const now = Timestamp.now()
-            await addDoc(collection(db, 'admins'), {
+            await addDoc(collection(db, 'admin'), {
                 email: email.toLowerCase().trim(),
                 name,
                 active: true,

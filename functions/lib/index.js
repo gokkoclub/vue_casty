@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -96,7 +96,7 @@ async function lookupSlackIdByName(name) {
                 return data.slackMentionId;
         }
         // adminsコレクションから名前で検索
-        const adminSnap = await firestore.collection("admins")
+        const adminSnap = await firestore.collection("admin")
             .where("name", "==", name)
             .limit(1)
             .get();
@@ -197,7 +197,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             }
             // castsで見つからない場合、adminsから検索
             if (!orderCreatorMention) {
-                const adminSnap = await db.collection("admins")
+                const adminSnap = await db.collection("admin")
                     .where("email", "==", userEmail)
                     .limit(1)
                     .get();
@@ -465,7 +465,10 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     // 撮影オーダー時のみDM送信（外部案件・社内イベントはスキップ）
     const dmPermalink = permalink || (threadTs ? `https://slack.com/app` : "");
     if (threadTs && (orderMode === "shooting" || !orderMode)) {
-        const internalItemsForDm = data.items.filter(item => item.castType === "内部" && item.slackMentionId);
+        const internalItemsForDm = data.items.filter(item => item.castType === "内部" &&
+            item.slackMentionId &&
+            (item.rank ?? 1) === 1 // 第1候補のみDM送信。第2候補以降はNG時に繰り上がりDMを送る
+        );
         for (let i = 0; i < internalItemsForDm.length; i++) {
             const item = internalItemsForDm[i];
             // castingId を取得（items と castingIds は同じ順序）
@@ -823,5 +826,65 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
         }
     }
     return { success: true, changes: changeDetails };
+});
+/**
+ * 次候補昇格時のオーダーDM送信
+ * 第1候補がNG/キャンセルになった際に、次 rank の内部キャストへDMを送る
+ * フロントエンドの promoteNextRankCandidate() から呼ばれる
+ */
+exports.sendPromotionDm = (0, https_1.onCall)({ secrets: ["SLACK_BOT_TOKEN", "GOOGLE_SERVICE_ACCOUNT_KEY"] }, async (request) => {
+    const { castingId } = request.data;
+    if (!castingId)
+        throw new https_1.HttpsError("invalid-argument", "castingId is required");
+    const slackToken = process.env.SLACK_BOT_TOKEN;
+    const slackChannel = process.env.SLACK_CHANNEL || getEnv("SLACK_CHANNEL");
+    if (!slackToken)
+        throw new https_1.HttpsError("internal", "SLACK_BOT_TOKEN not set");
+    const db = admin.firestore();
+    // 1. Casting ドキュメント取得
+    const castingDoc = await db.collection("castings").doc(castingId).get();
+    if (!castingDoc.exists)
+        throw new https_1.HttpsError("not-found", "Casting not found");
+    const casting = castingDoc.data();
+    // 内部キャスト以外はDM不要
+    if (casting.castType !== "内部")
+        return { success: true, skipped: true };
+    // 2. Cast ドキュメントから slackMentionId を取得
+    let slackMentionId = casting.slackMentionId || "";
+    if (!slackMentionId && casting.castId) {
+        const castDoc = await db.collection("casts").doc(casting.castId).get();
+        if (castDoc.exists) {
+            slackMentionId = castDoc.data()?.slackMentionId || "";
+        }
+    }
+    if (!slackMentionId) {
+        console.warn(`[sendPromotionDm] No slackMentionId for ${casting.castName}`);
+        return { success: false, reason: "no_slack_id" };
+    }
+    // 3. 日程文字列を再構築
+    const startDate = casting.startDate?.toDate?.();
+    const endDate = casting.endDate?.toDate?.();
+    const fmt = (d) => `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    const dateRanges = startDate
+        ? [endDate && fmt(startDate) !== fmt(endDate) ? `${fmt(startDate)}~${fmt(endDate)}` : fmt(startDate)]
+        : [];
+    // 4. DM ブロック構築
+    const slackThreadTs = casting.slackThreadTs || "";
+    const permalink = casting.slackPermalink || "";
+    const dmBlocks = (0, slack_1.buildCastOrderDmBlocks)({
+        castName: casting.castName,
+        projectName: casting.projectName,
+        roleName: casting.roleName || "出演",
+        dateRanges,
+        accountName: casting.accountName || "",
+        castingId,
+        slackThreadTs,
+        slackChannel: slackChannel || "",
+        permalink,
+    });
+    const dmText = `📋 ${dateRanges.join(", ")} 撮影オーダーが来ています（繰り上がり）（${casting.projectName}）`;
+    await (0, slack_1.sendDmToUser)(slackToken, slackMentionId, dmText, dmBlocks);
+    console.log(`[sendPromotionDm] DM sent to ${casting.castName} (rank ${casting.rank})`);
+    return { success: true };
 });
 //# sourceMappingURL=index.js.map

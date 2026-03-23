@@ -309,14 +309,14 @@ function cancelConfirm() {
     text-align: left;
     font-weight: 600;
     color: var(--text-color-secondary);
-    border-bottom: 2px solid var(--surface-border);
+    border-bottom: 2px solid var(--p-content-border-color);
     white-space: nowrap;
     font-size: 0.8rem;
 }
 
 .sc-table td {
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid var(--surface-border);
+    border-bottom: 1px solid var(--p-content-border-color);
     vertical-align: middle;
 }
 

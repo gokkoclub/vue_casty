@@ -308,11 +308,11 @@ const handleConfirmed = (intimacy: string, competition?: { type: string; period:
 .cart-footer {
   flex-shrink: 0;
   padding: 1rem;
-  border-top: 1px solid var(--surface-border);
+  border-top: 1px solid var(--p-content-border-color);
 }
 
 .metadata-inputs {
-  background: var(--surface-50);
+  background: var(--p-content-hover-background);
   padding: 0.75rem;
   border-radius: 6px;
 }
@@ -330,7 +330,7 @@ const handleConfirmed = (intimacy: string, competition?: { type: string; period:
 
 /* PDF Upload Section */
 .pdf-section {
-  background: var(--surface-50);
+  background: var(--p-content-hover-background);
   padding: 0.75rem;
   border-radius: 6px;
 }

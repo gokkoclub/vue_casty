@@ -1,0 +1,15 @@
+[debug] [2026-03-23T06:43:07.573Z] ----------------------------------------------------------------------
+[debug] [2026-03-23T06:43:07.574Z] Command:       /usr/bin/node /sessions/sweet-gifted-fermi/mnt/vue_casty/node_modules/.bin/firebase login --no-localhost
+[debug] [2026-03-23T06:43:07.575Z] CLI Version:   15.11.0
+[debug] [2026-03-23T06:43:07.575Z] Platform:      linux
+[debug] [2026-03-23T06:43:07.575Z] Node Version:  v22.22.0
+[debug] [2026-03-23T06:43:07.575Z] Time:          Mon Mar 23 2026 15:43:07 GMT+0900 (Japan Standard Time)
+[debug] [2026-03-23T06:43:07.575Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-03-23T06:43:07.576Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[error] 
+[error] Error: Cannot run login in non-interactive mode. See login:ci to generate a token for use in non-interactive environments.
+[debug] [2026-03-23T06:43:07.836Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 403
+[debug] [2026-03-23T06:43:07.836Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json "Connection blocked by network allowlist"
+[warn] ⚠  Unable to fetch the CLI MOTD and remote config. This is not a fatal error, but may indicate an issue with your network connection. 
+[debug] [2026-03-23T06:43:07.836Z] Failed to fetch MOTD FirebaseError: Unable to parse JSON: SyntaxError: Unexpected token 'C', "Connection"... is not valid JSON

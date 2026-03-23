@@ -193,7 +193,7 @@ const handleClose = () => {
 }
 
 .casting-info {
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     padding: 1rem;
     border-radius: 8px;
     display: flex;
@@ -251,7 +251,7 @@ const handleClose = () => {
     align-items: center;
     padding: 2rem;
     text-align: center;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     border-radius: 8px;
 }
 
@@ -276,7 +276,7 @@ const handleClose = () => {
     justify-content: center;
     gap: 1rem;
     padding: 1rem;
-    background: var(--surface-100);
+    background: var(--p-content-hover-background);
     border-radius: 8px;
 }
 

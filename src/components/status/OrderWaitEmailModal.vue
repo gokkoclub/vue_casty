@@ -155,7 +155,7 @@ const handleClose = () => {
 }
 
 .owem-info {
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   padding: 0.75rem 1rem;
   border-radius: 8px;
   display: flex;
@@ -208,7 +208,7 @@ const handleClose = () => {
 
 .owem-subject {
   padding: 0.5rem 0.75rem;
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   border-radius: 6px;
   font-weight: 500;
   font-size: 0.9rem;

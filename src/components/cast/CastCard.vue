@@ -102,18 +102,22 @@ const handleImageError = (event: Event) => {
 <style scoped>
 .cast-card {
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s, outline-color 0.2s;
   height: 380px;
   width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   position: relative;
+  outline: 1.5px solid var(--p-content-border-color);
+  outline-offset: 0px;
 }
 
 .cast-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  outline: 2px solid var(--p-primary-color);
+  outline-offset: 0px;
 }
 
 .booking-badges {
@@ -134,11 +138,34 @@ const handleImageError = (event: Event) => {
 
 .booking-tag {
   font-size: 0.75rem;
-  font-weight: 600;
+  font-weight: 700;
   padding: 0.3rem 0.6rem;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   border-radius: 6px;
+}
+
+/* info (仮キャスティング) — 薄水色をソリッドな青に */
+:deep(.booking-tag.p-tag-info) {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+/* warning (仮押さえ) — 視認性の良いアンバー */
+:deep(.booking-tag.p-tag-warn) {
+  background: #d97706;
+  color: #ffffff;
+}
+
+/* danger (決定) — 赤 */
+:deep(.booking-tag.p-tag-danger) {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+/* secondary (NG) — ダークグレー */
+:deep(.booking-tag.p-tag-secondary) {
+  background: #4b5563;
+  color: #ffffff;
 }
 
 .cast-image {

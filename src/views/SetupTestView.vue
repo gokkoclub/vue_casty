@@ -206,7 +206,7 @@ h1 {
     gap: 0.5rem;
     padding: 1rem;
     font-weight: 600;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
 }
 
 .card-header i {
@@ -251,7 +251,7 @@ ul {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    color: var(--surface-200);
+    color: var(--p-content-border-color);
 }
 
 .empty-log {

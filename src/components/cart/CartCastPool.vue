@@ -84,8 +84,8 @@ const handleRemove = (id: string) => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem;
-  background: white;
-  border: 1px solid var(--p-surface-200);
+  background: var(--p-content-background);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 6px;
   cursor: grab;
   transition: box-shadow 0.2s;

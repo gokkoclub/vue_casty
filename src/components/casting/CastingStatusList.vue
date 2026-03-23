@@ -91,21 +91,48 @@ const saveRoleEdit = (castingId: string) => {
 
 const { isAdmin } = useAuth()
 
-// Status styling per spec
+// ダークモード検知
+const isDark = ref(
+  typeof window !== 'undefined'
+    ? window.matchMedia('(prefers-color-scheme: dark)').matches
+    : false
+)
+if (typeof window !== 'undefined') {
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    isDark.value = e.matches
+  })
+}
+
+// Status styling per spec（ライト・ダーク両対応）
 const getStatusStyle = (status: CastingStatus) => {
-  const styles: Record<string, { bg: string; color: string }> = {
-    '仮キャスティング':           { bg: '#F3F4F6', color: '#374151' },
-    '仮押さえ':                   { bg: '#FEF3C7', color: '#92400E' },
-    '打診中':                     { bg: '#DBEAFE', color: '#1E40AF' },
-    'オーダー待ち':               { bg: '#EDE9FE', color: '#6B21A8' },
-    'オーダー待ち（仮キャスティング）': { bg: '#EDE9FE', color: '#6B21A8' },
-    'OK':                         { bg: '#D1FAE5', color: '#065F46' },
-    '決定':                       { bg: '#22C55E', color: '#FFFFFF' },
-    '条件つきOK':                 { bg: '#FED7AA', color: '#C2410C' },
-    'NG':                         { bg: '#EF4444', color: '#FFFFFF' },
-    'キャンセル':                 { bg: '#9CA3AF', color: '#FFFFFF' },
+  if (isDark.value) {
+    const dark: Record<string, { bg: string; color: string }> = {
+      '仮キャスティング':               { bg: '#374151', color: '#E5E7EB' },
+      '仮押さえ':                       { bg: '#78350F', color: '#FDE68A' },
+      '打診中':                         { bg: '#1E3A5F', color: '#93C5FD' },
+      'オーダー待ち':                   { bg: '#3B0764', color: '#D8B4FE' },
+      'オーダー待ち（仮キャスティング）': { bg: '#3B0764', color: '#D8B4FE' },
+      'OK':                             { bg: '#064E3B', color: '#6EE7B7' },
+      '決定':                           { bg: '#15803D', color: '#FFFFFF' },
+      '条件つきOK':                     { bg: '#7C2D12', color: '#FDBA74' },
+      'NG':                             { bg: '#991B1B', color: '#FCA5A5' },
+      'キャンセル':                     { bg: '#4B5563', color: '#D1D5DB' },
+    }
+    return dark[status] || { bg: '#374151', color: '#E5E7EB' }
   }
-  return styles[status] || { bg: '#F3F4F6', color: '#374151' }
+  const light: Record<string, { bg: string; color: string }> = {
+    '仮キャスティング':               { bg: '#F3F4F6', color: '#374151' },
+    '仮押さえ':                       { bg: '#FEF3C7', color: '#92400E' },
+    '打診中':                         { bg: '#DBEAFE', color: '#1E40AF' },
+    'オーダー待ち':                   { bg: '#EDE9FE', color: '#6B21A8' },
+    'オーダー待ち（仮キャスティング）': { bg: '#EDE9FE', color: '#6B21A8' },
+    'OK':                             { bg: '#D1FAE5', color: '#065F46' },
+    '決定':                           { bg: '#22C55E', color: '#FFFFFF' },
+    '条件つきOK':                     { bg: '#FED7AA', color: '#C2410C' },
+    'NG':                             { bg: '#EF4444', color: '#FFFFFF' },
+    'キャンセル':                     { bg: '#9CA3AF', color: '#FFFFFF' },
+  }
+  return light[status] || { bg: '#F3F4F6', color: '#374151' }
 }
 
 const isRowDimmed = (status: string) => ['NG', 'キャンセル'].includes(status)
@@ -315,7 +342,7 @@ const handleSummaryClick = () => {
   justify-content: space-between;
   align-items: center;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-100);
+  border-bottom: 1px solid var(--p-content-hover-background);
 }
 
 .csl-project-left {
@@ -352,7 +379,7 @@ const handleSummaryClick = () => {
 .csl-cast-count {
   font-size: 0.7rem;
   color: var(--p-text-muted-color);
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   padding: 0.1rem 0.4rem;
   border-radius: 8px;
 }
@@ -378,14 +405,14 @@ const handleSummaryClick = () => {
   display: flex;
   align-items: center;
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-50);
+  border-bottom: 1px solid var(--p-content-border-color);
   cursor: pointer;
   transition: background 0.1s;
   gap: 0.75rem;
 }
 
 .csl-row:hover {
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
 }
 
 .csl-row:last-child {
@@ -435,13 +462,13 @@ const handleSummaryClick = () => {
 }
 
 .csl-cast-type.internal {
-  background: #DBEAFE;
-  color: #1D4ED8;
+  background: var(--p-blue-100);
+  color: var(--p-blue-700);
 }
 
 .csl-cast-type.external {
-  background: #F3F4F6;
-  color: #6B7280;
+  background: var(--p-content-border-color);
+  color: var(--p-text-muted-color);
 }
 
 /* Status */
@@ -478,8 +505,8 @@ const handleSummaryClick = () => {
 
 .csl-main-badge {
   font-size: 0.6rem;
-  background: #D1FAE5;
-  color: #065F46;
+  background: var(--p-green-100);
+  color: var(--p-green-800);
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
   font-weight: 600;
@@ -536,7 +563,7 @@ const handleSummaryClick = () => {
   width: 80px;
   padding: 0.15rem 0.3rem;
   font-size: 0.75rem;
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 4px;
   outline: none;
 }
@@ -595,18 +622,18 @@ const handleSummaryClick = () => {
 }
 
 .csl-save-btn {
-  background: #D1FAE5;
+  background: var(--p-green-100);
   border: none;
   border-radius: 4px;
   cursor: pointer;
   padding: 0.2rem 0.4rem;
-  color: #065F46;
+  color: var(--p-green-800);
   font-size: 0.75rem;
   flex-shrink: 0;
 }
 
 .csl-save-btn:hover {
-  background: #A7F3D0;
+  background: var(--p-green-200);
 }
 
 /* Actions */
@@ -626,13 +653,13 @@ const handleSummaryClick = () => {
 }
 
 .csl-act-btn:hover {
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   color: var(--p-text-color);
 }
 
 .csl-act-btn.danger:hover {
-  background: #FEE2E2;
-  color: #DC2626;
+  background: var(--p-red-100);
+  color: var(--p-red-600);
 }
 
 /* Responsive */
@@ -651,8 +678,8 @@ const handleSummaryClick = () => {
   font-size: 0.65rem;
   padding: 1px 6px;
   border-radius: 4px;
-  background: #FEE2E2;
-  color: #DC2626;
+  background: var(--p-red-100);
+  color: var(--p-red-600);
   font-weight: 600;
   white-space: nowrap;
 }

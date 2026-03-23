@@ -92,16 +92,16 @@ const formatShootDate = (date: any) => {
   justify-content: space-between;
   align-items: flex-start;
   padding: 0.75rem 1rem;
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s;
-  background: white;
+  background: var(--p-content-background);
 }
 
 .shooting-item:hover {
   border-color: var(--p-primary-300);
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
 }
 
 .shooting-item.selected {

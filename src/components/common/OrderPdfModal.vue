@@ -161,14 +161,14 @@ async function handleGenerate() {
 
 .uuid-display {
     padding: 0.5rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     border-radius: 4px;
     text-align: center;
 }
 
 .uuid-display code {
     font-size: 0.75rem;
-    background: var(--surface-200);
+    background: var(--p-content-border-color);
     padding: 0.1rem 0.4rem;
     border-radius: 3px;
 }

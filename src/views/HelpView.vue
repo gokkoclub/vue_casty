@@ -420,7 +420,7 @@ import AccordionContent from 'primevue/accordioncontent'
   gap: 0.5rem;
   padding: 0.75rem 1rem;
   border-radius: 8px;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   text-decoration: none;
   color: var(--p-text-color);
   font-weight: 500;
@@ -462,7 +462,7 @@ import AccordionContent from 'primevue/accordioncontent'
   gap: 0.5rem;
   flex-wrap: wrap;
   padding: 0.75rem;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-radius: 8px;
 }
 
@@ -471,7 +471,7 @@ import AccordionContent from 'primevue/accordioncontent'
   border-radius: 12px;
   font-size: 0.8rem;
   font-weight: 600;
-  background: var(--p-surface-200);
+  background: var(--p-content-hover-background);
   color: var(--p-text-color);
 }
 
@@ -511,7 +511,7 @@ ul li {
 }
 
 code {
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
   font-size: 0.85em;

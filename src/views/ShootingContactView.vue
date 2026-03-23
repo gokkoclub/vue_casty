@@ -385,7 +385,7 @@ function openPdf(contact: ShootingContact) {
 /* Date/Project grouping */
 .date-group {
     margin-bottom: 0.5rem;
-    border: 1px solid var(--surface-border);
+    border: 1px solid var(--p-content-border-color);
     border-radius: 8px;
     overflow: hidden;
 }
@@ -395,12 +395,12 @@ function openPdf(contact: ShootingContact) {
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    background: var(--surface-50);
+    background: var(--p-content-hover-background);
     cursor: pointer;
     user-select: none;
     transition: background 0.2s;
 }
-.date-header:hover { background: var(--surface-100); }
+.date-header:hover { background: var(--p-content-hover-background); }
 
 .date-label {
     font-weight: 600;
@@ -444,7 +444,7 @@ function openPdf(contact: ShootingContact) {
 }
 
 .project-groups .project-section {
-    border: 1px solid var(--surface-border);
+    border: 1px solid var(--p-content-border-color);
     border-radius: 8px;
     padding: 0.75rem;
     margin-bottom: 0.75rem;

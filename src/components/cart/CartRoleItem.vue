@@ -133,10 +133,10 @@ const toggleDate = (castId: string, date: string) => {
 
 <style scoped>
 .role-item {
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 8px;
   padding: 0.75rem;
-  background: white;
+  background: var(--p-content-background);
   margin-bottom: 0.75rem;
   user-select: none;
 }
@@ -169,7 +169,7 @@ const toggleDate = (castId: string, date: string) => {
 }
 
 .drop-zone {
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-radius: 6px;
   border: 1px dashed var(--p-surface-300);
   min-height: 50px;
@@ -192,8 +192,8 @@ const toggleDate = (castId: string, date: string) => {
 .cast-chip {
   display: flex;
   align-items: center;
-  background: white;
-  border: 1px solid var(--p-surface-200);
+  background: var(--p-content-background);
+  border: 1px solid var(--p-content-border-color);
   border-radius: 4px;
   padding: 0.25rem 0.5rem;
   gap: 0.5rem;
@@ -242,7 +242,7 @@ const toggleDate = (castId: string, date: string) => {
 }
 
 .date-toggle {
-  background: var(--p-surface-200);
+  background: var(--p-content-hover-background);
   color: var(--p-text-muted-color);
   border: none;
   border-radius: 4px;

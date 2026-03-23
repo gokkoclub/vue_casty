@@ -182,7 +182,7 @@ const handleCancel = () => {
 /* Intimacy */
 .intimacy-section {
   padding: 0.75rem;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-radius: 8px;
 }
 
@@ -238,7 +238,7 @@ const handleCancel = () => {
 /* Competition Section */
 .competition-section {
   padding: 0.75rem;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-radius: 8px;
 }
 
@@ -248,9 +248,9 @@ const handleCancel = () => {
   gap: 0.5rem;
   margin-top: 0.5rem;
   padding: 0.5rem;
-  background: white;
+  background: var(--p-content-background);
   border-radius: 6px;
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
 }
 
 .comp-field {

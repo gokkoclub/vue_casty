@@ -691,7 +691,7 @@ onUnmounted(() => {
 .disabled-card {
   opacity: 0.6;
   pointer-events: none;
-  background: var(--p-surface-100);
+  background: var(--p-content-hover-background);
 }
 
 .placeholder-text {
@@ -709,7 +709,7 @@ onUnmounted(() => {
 }
 
 .current-context {
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border: 1px solid var(--p-green-200);
   border-radius: 6px;
   padding: 0.75rem;
@@ -729,9 +729,9 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 0.75rem;
   padding: 1rem;
-  background: var(--p-surface-50);
+  background: var(--p-content-hover-background);
   border-radius: 8px;
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-content-border-color);
 }
 
 .filter-row {
@@ -820,9 +820,9 @@ onUnmounted(() => {
   justify-content: center;
   gap: 0.5rem;
   padding: 1.5rem 1rem;
-  border: 2px dashed var(--blue-300, #93c5fd);
+  border: 2px dashed var(--p-primary-300, #93c5fd);
   border-radius: 12px;
-  background: var(--blue-50, #eff6ff);
+  background: var(--p-primary-50, #eff6ff);
   cursor: pointer;
   transition: all 0.2s ease;
   min-height: 140px;
@@ -830,15 +830,15 @@ onUnmounted(() => {
 }
 
 .new-cast-card:hover {
-  border-color: var(--blue-500, #3b82f6);
-  background: var(--blue-100, #dbeafe);
+  border-color: var(--p-primary-500, #3b82f6);
+  background: var(--p-primary-100, #dbeafe);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
 }
 
 .new-cast-card-icon {
   font-size: 2rem;
-  color: var(--blue-500, #3b82f6);
+  color: var(--p-primary-500, #6366f1);
   font-weight: 300;
   line-height: 1;
 }
@@ -851,11 +851,11 @@ onUnmounted(() => {
 
 .new-cast-card-text strong {
   font-size: 0.85rem;
-  color: var(--blue-700, #1d4ed8);
+  color: var(--p-primary-700, #4338ca);
 }
 
 .new-cast-card-text small {
   font-size: 0.75rem;
-  color: var(--blue-500, #3b82f6);
+  color: var(--p-primary-500, #6366f1);
 }
 </style>
