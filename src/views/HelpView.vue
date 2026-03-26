@@ -137,6 +137,31 @@ import AccordionContent from 'primevue/accordioncontent'
               </ul>
             </AccordionContent>
           </AccordionPanel>
+
+          <AccordionPanel value="feature-cart">
+            <AccordionHeader>🎬 中長編オーダー</AccordionHeader>
+            <AccordionContent>
+              <ul>
+                <li>カレンダーで<strong>撮影開始日と終了日</strong>（複数日の範囲）を選択すると、自動的に<strong>中長編カート</strong>に切り替わります</li>
+                <li>中長編カートでは、キャストごとに<strong>参加する日付を個別に設定</strong>できます（全日参加でなくてもOK）</li>
+                <li>Slackへのオーダー通知には、キャストごとの参加日がコンパクトなレンジ表示（例: 3/19〜3/22、3/24〜3/25）で送信されます</li>
+                <li>キャスティング状況画面では「🏞️ 中長編」タブで、日付×キャストのスケジュール表として確認できます</li>
+              </ul>
+            </AccordionContent>
+          </AccordionPanel>
+
+          <AccordionPanel value="external-order">
+            <AccordionHeader>🏢 外部案件・社内イベントオーダー</AccordionHeader>
+            <AccordionContent>
+              <ul>
+                <li>日付を選択した後、<strong>撮影案件を選択せずに</strong>カートを開くと、「外部案件」または「社内イベント」としてオーダーを送信できます</li>
+                <li>案件タイトル・時間帯（開始〜終了）を手入力します</li>
+                <li>競合の有無を選択でき、「あり」の場合は競合の種類と期間を入力します</li>
+                <li>脚本PDFの添付確認は表示されません（撮影オーダーのみ）</li>
+                <li>キャスティング状況画面では「🏢 社内イベント・外部案件」タブで管理できます</li>
+              </ul>
+            </AccordionContent>
+          </AccordionPanel>
           
           <AccordionPanel value="cart">
             <AccordionHeader>🛒 カート画面</AccordionHeader>
