@@ -9,7 +9,8 @@ import { useToast } from 'primevue/usetoast'
  */
 export interface OrderDocumentData {
     date: string        // 発行日
-    castName: string    // 宛名
+    agencyName: string  // 事務所名（空ならキャスト名宛）
+    castName: string    // キャスト名
     project: string     // 案件名
     role: string        // 役名
     shootDate: string   // 撮影日
@@ -74,9 +75,9 @@ export function usePdfGenerator() {
                         No. ${data.uuid}
                     </div>
 
-                    <!-- 宛名 -->
+                    <!-- 宛名: 事務所名があれば「事務所名宛」、なければ「キャスト名宛」 -->
                     <div style="margin-bottom: 20px; font-size: 15px; font-weight: 600; border-bottom: 2px solid #333; padding-bottom: 6px;">
-                        ${data.castName} 様
+                        ${data.agencyName ? data.agencyName + ' 宛' : data.castName + ' 様'}
                     </div>
 
                     <!-- 挨拶文 -->
@@ -118,6 +119,12 @@ export function usePdfGenerator() {
                             <td style="padding: 8px 12px; border: 1px solid #999; background: #f0f0f0; font-weight: 600; text-align: center;">役名</td>
                             <td style="padding: 8px 12px; border: 1px solid #999;">${data.role || '－'}</td>
                         </tr>
+                        ${data.agencyName ? `
+                        <tr>
+                            <td style="padding: 8px 12px; border: 1px solid #999; background: #f0f0f0; font-weight: 600; text-align: center;">キャスト名</td>
+                            <td style="padding: 8px 12px; border: 1px solid #999;">${data.castName}</td>
+                        </tr>
+                        ` : ''}
                         <tr>
                             <td style="padding: 8px 12px; border: 1px solid #999; background: #f0f0f0; font-weight: 600; text-align: center;">撮影日</td>
                             <td style="padding: 8px 12px; border: 1px solid #999;">${data.shootDate || '未定'}</td>

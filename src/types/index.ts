@@ -65,6 +65,7 @@ export interface ShootingContact {
     projectName: string
     accountName: string
     roleName: string
+    agencyName?: string
     notionId?: string
     shootDate: Timestamp
     inTime?: string

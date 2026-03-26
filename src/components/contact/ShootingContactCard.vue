@@ -244,16 +244,26 @@ const buildMailBody = () => {
                         severity="secondary"
                         outlined
                         :loading="pdfLoading"
-                        @click="generateOrderDocument({
-                            date: new Date().toLocaleDateString('ja-JP'),
-                            castName: contact.castName,
-                            project: contact.projectName,
-                            role: contact.roleName || '',
-                            shootDate: formattedDate,
-                            cost: String(contact.fee || ''),
-                            note: '',
-                            uuid: contact.id
-                        })"
+                        @click="(() => {
+                            const shootDay = contact.shootDate?.toDate?.()
+                            let issueDate = new Date().toLocaleDateString('ja-JP')
+                            if (shootDay) {
+                                const prev = new Date(shootDay)
+                                prev.setDate(prev.getDate() - 1)
+                                issueDate = prev.toLocaleDateString('ja-JP')
+                            }
+                            generateOrderDocument({
+                                date: issueDate,
+                                agencyName: '',
+                                castName: contact.castName,
+                                project: contact.projectName,
+                                role: contact.roleName || '',
+                                shootDate: formattedDate,
+                                cost: String(contact.fee || ''),
+                                note: '',
+                                uuid: contact.id
+                            })
+                        })()"
                     />
                 </div>
             </div>

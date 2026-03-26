@@ -21,8 +21,9 @@ const emit = defineEmits<{
 const { loading, generateOrderDocument } = usePdfGenerator()
 const { updateContact } = useShootingContact()
 
-// 編集用フォームデータ（7フィールド）
+// 編集用フォームデータ（8フィールド）
 const formDate = ref('')
+const formAgencyName = ref('')
 const formCastName = ref('')
 const formProject = ref('')
 const formRole = ref('')
@@ -34,8 +35,15 @@ const uuid = ref('')
 // contact が変わったらフォーム初期化
 watch(() => props.contact, (c) => {
     if (!c) return
-    const today = new Date()
-    formDate.value = today.toLocaleDateString('ja-JP')
+    // デフォルト発行日: 撮影日の前日
+    if (c.shootDate?.toDate) {
+        const shootDay = new Date(c.shootDate.toDate())
+        shootDay.setDate(shootDay.getDate() - 1)
+        formDate.value = shootDay.toLocaleDateString('ja-JP')
+    } else {
+        formDate.value = new Date().toLocaleDateString('ja-JP')
+    }
+    formAgencyName.value = c.agencyName || ''
     formCastName.value = c.castName || ''
     formProject.value = c.projectName || ''
     formRole.value = c.roleName || ''
@@ -59,6 +67,7 @@ async function handleGenerate() {
     // 2. 編集データをPDF生成関数に渡す
     const data: OrderDocumentData = {
         date: formDate.value,
+        agencyName: formAgencyName.value,
         castName: formCastName.value,
         project: formProject.value,
         role: formRole.value,
@@ -88,7 +97,14 @@ async function handleGenerate() {
             </div>
 
             <div class="field">
-                <label>宛名（キャスト名）</label>
+                <label>事務所名（任意）</label>
+                <InputText v-model="formAgencyName" class="w-full" placeholder="事務所名があれば入力" />
+                <small v-if="formAgencyName" style="color: var(--p-primary-color);">宛名: {{ formAgencyName }}宛 / キャスト名は明細に表示</small>
+                <small v-else style="color: var(--text-color-secondary);">未入力の場合、キャスト名宛で発行されます</small>
+            </div>
+
+            <div class="field">
+                <label>キャスト名</label>
                 <InputText v-model="formCastName" class="w-full" />
             </div>
 
