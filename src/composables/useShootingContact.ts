@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import {
     collection, query, where, orderBy, getDocs,
-    addDoc, updateDoc, doc, Timestamp
+    addDoc, updateDoc, deleteDoc, doc, Timestamp
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
@@ -114,8 +114,8 @@ export function useShootingContact() {
             projMap.get(key)!.push(c)
         }
 
-        // Sort by date descending
-        const sortedDates = [...dateMap.keys()].sort((a, b) => b.localeCompare(a))
+        // Sort by date ascending (chronological)
+        const sortedDates = [...dateMap.keys()].sort((a, b) => a.localeCompare(b))
 
         return sortedDates.map(dateStr => ({
             dateStr,
@@ -397,6 +397,35 @@ export function useShootingContact() {
         }
     }
 
+    /**
+     * 一括削除
+     */
+    async function deleteContacts(ids: string[]): Promise<boolean> {
+        try {
+            for (const id of ids) {
+                await deleteDoc(doc(db!, 'shootingContacts', id))
+            }
+            // ローカルデータからも削除
+            contacts.value = contacts.value.filter(c => !ids.includes(c.id))
+            toast.add({
+                severity: 'success',
+                summary: '削除完了',
+                detail: `${ids.length}件のデータを削除しました`,
+                life: 3000
+            })
+            return true
+        } catch (error) {
+            console.error('Error deleting contacts:', error)
+            toast.add({
+                severity: 'error',
+                summary: '削除エラー',
+                detail: 'データの削除に失敗しました',
+                life: 3000
+            })
+            return false
+        }
+    }
+
     return {
         contacts,
         loading,
@@ -410,6 +439,7 @@ export function useShootingContact() {
         updateContact,
         advanceStatus,
         revertStatus,
+        deleteContacts,
         syncSchedule,
         syncMaking
     }

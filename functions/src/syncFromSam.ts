@@ -116,7 +116,7 @@ function mapEntriesToShootingFields(entries: NotionScheduleEntry[]): {
 // ─────────────────────────────────────────────
 // 同期メインロジック
 // ─────────────────────────────────────────────
-async function performSync(): Promise<{ synced: number; errors: number }> {
+async function performSync(): Promise<{ synced: number; errors: number; dateChanges: number }> {
     const samDb = getSamFirestore();
     const castyDb = admin.firestore(); // デフォルト (gokko-casty)
 
@@ -125,13 +125,14 @@ async function performSync(): Promise<{ synced: number; errors: number }> {
 
     if (snapshot.empty) {
         console.log("[syncFromSam] notionSchedule is empty");
-        return { synced: 0, errors: 0 };
+        return { synced: 0, errors: 0, dateChanges: 0 };
     }
 
     console.log(`[syncFromSam] Found ${snapshot.size} notionSchedule docs`);
 
     let synced = 0;
     let errors = 0;
+    let dateChanges = 0;
 
     // バッチ書き込み（500件制限対応）
     const batchDocs: Array<{
@@ -149,25 +150,63 @@ async function performSync(): Promise<{ synced: number; errors: number }> {
             }
 
             // ドキュメントID: notionPageId をサニタイズ
-            const docId = raw.notionPageId
+            const baseDocId = raw.notionPageId
                 .replace(/[/.]/g, "_")
                 .replace(/^__/, "xx")
                 .trim();
 
-            if (!docId) continue;
+            if (!baseDocId) continue;
 
             // entries からロール別マッピング
             const staffFields = mapEntriesToShootingFields(raw.entries || []);
 
+            const incomingDate = raw.date || ""; // "2026-03-10" 形式
+
+            // 既存ドキュメントをチェックして日付変更を検知
+            const existingDoc = await castyDb
+                .collection("shootings")
+                .doc(baseDocId)
+                .get();
+
+            let docId = baseDocId;
+
+            if (existingDoc.exists) {
+                const existingData = existingDoc.data();
+                const existingDate = existingData?.shootDate || "";
+
+                if (existingDate && incomingDate && existingDate !== incomingDate) {
+                    // 日付が変更された → 旧ドキュメントにマーク + 新しいIDで作成
+                    console.log(
+                        `[syncFromSam] Date changed for ${raw.notionPageId}: ${existingDate} → ${incomingDate}`
+                    );
+
+                    // 旧ドキュメントに日付変更フラグを記録
+                    await castyDb
+                        .collection("shootings")
+                        .doc(baseDocId)
+                        .update({
+                            dateChanged: true,
+                            dateChangedFrom: existingDate,
+                            dateChangedTo: incomingDate,
+                            dateChangedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+
+                    // 新しいドキュメントID: notionPageId_YYYYMMDD
+                    const dateSuffix = incomingDate.replace(/-/g, "");
+                    docId = `${baseDocId}_${dateSuffix}`;
+                    dateChanges++;
+                }
+            }
+
             // shootings ドキュメント形式に変換
             const shootingData: Record<string, unknown> = {
                 title: raw.title || "",
-                shootDate: raw.date || "", // "2026-03-10" 形式（文字列）
+                shootDate: incomingDate,
                 team: raw.team || "",
                 notionPageId: raw.notionPageId,
                 notionUrl: "https://www.notion.so/" + raw.notionPageId.replace(/-/g, ""),
                 ...staffFields,
-                syncSource: "gokko-sam", // 同期元の識別子
+                syncSource: "gokko-sam",
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             };
 
@@ -193,8 +232,10 @@ async function performSync(): Promise<{ synced: number; errors: number }> {
         console.log(`[syncFromSam] Batch committed: ${chunk.length} docs (total: ${synced})`);
     }
 
-    console.log(`[syncFromSam] Sync complete: ${synced} synced, ${errors} errors`);
-    return { synced, errors };
+    console.log(
+        `[syncFromSam] Sync complete: ${synced} synced, ${dateChanges} date changes, ${errors} errors`
+    );
+    return { synced, errors, dateChanges };
 }
 
 // ─────────────────────────────────────────────

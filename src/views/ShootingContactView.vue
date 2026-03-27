@@ -4,6 +4,7 @@ import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'
 import Button from 'primevue/button'
 import Badge from 'primevue/badge'
+import Dialog from 'primevue/dialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import { useShootingContact } from '@/composables/useShootingContact'
 import ShootingContactTable from '@/components/contact/ShootingContactTable.vue'
@@ -16,6 +17,7 @@ const {
     contactsByStatus, statusCounts,
     fetchAll, getDateGrouped, getProjectGrouped,
     updateContact, advanceStatus, revertStatus,
+    deleteContacts,
     syncSchedule, syncMaking
 } = useShootingContact()
 
@@ -128,6 +130,21 @@ function openPdf(contact: ShootingContact) {
     selectedPdfContact.value = contact
     showPdfModal.value = true
 }
+
+// -- Selection / Bulk Delete
+const selectedIds = ref<string[]>([])
+const showDeleteConfirm = ref(false)
+
+function handleSelectionChange(ids: string[]) {
+    selectedIds.value = ids
+}
+
+async function handleBulkDelete() {
+    if (selectedIds.value.length === 0) return
+    await deleteContacts(selectedIds.value)
+    selectedIds.value = []
+    showDeleteConfirm.value = false
+}
 </script>
 
 <template>
@@ -168,8 +185,28 @@ function openPdf(contact: ShootingContact) {
             <p>データを読み込み中...</p>
         </div>
 
+        <!-- Selection Action Bar -->
+        <div v-if="selectedIds.length > 0" class="selection-bar">
+            <span>✅ {{ selectedIds.length }}件選択中</span>
+            <Button
+                label="削除"
+                icon="pi pi-trash"
+                size="small"
+                severity="danger"
+                @click="showDeleteConfirm = true"
+            />
+            <Button
+                label="選択解除"
+                icon="pi pi-times"
+                size="small"
+                severity="secondary"
+                outlined
+                @click="selectedIds = []"
+            />
+        </div>
+
         <!-- Tabs -->
-        <TabView v-else v-model:activeIndex="activeTab">
+        <TabView v-else-if="!loading" v-model:activeIndex="activeTab">
             <TabPanel
                 v-for="(tab, index) in tabs"
                 :key="tab.status"
@@ -247,6 +284,7 @@ function openPdf(contact: ShootingContact) {
                                             @revert-status="handleRevert"
                                             @open-mail="openMail"
                                             @open-pdf="openPdf"
+                                            @selection-change="handleSelectionChange"
                                         />
                                     </div>
                                 </div>
@@ -276,6 +314,7 @@ function openPdf(contact: ShootingContact) {
                                     @revert-status="handleRevert"
                                     @open-mail="openMail"
                                     @open-pdf="openPdf"
+                                    @selection-change="handleSelectionChange"
                                 />
                             </div>
                         </div>
@@ -302,6 +341,24 @@ function openPdf(contact: ShootingContact) {
             :contact="selectedPdfContact"
             @update:visible="showPdfModal = $event"
         />
+
+        <!-- Delete Confirmation Dialog -->
+        <Dialog
+            :visible="showDeleteConfirm"
+            @update:visible="showDeleteConfirm = $event"
+            modal
+            header="削除の確認"
+            :style="{ width: '400px' }"
+        >
+            <p style="margin: 0; text-align: center; font-size: 1rem;">
+                <strong>{{ selectedIds.length }}件</strong>のデータを削除します。<br>
+                この操作は元に戻せません。
+            </p>
+            <template #footer>
+                <Button label="キャンセル" severity="secondary" outlined @click="showDeleteConfirm = false" />
+                <Button label="削除する" severity="danger" icon="pi pi-trash" @click="handleBulkDelete" />
+            </template>
+        </Dialog>
     </div>
 </template>
 
@@ -448,6 +505,22 @@ function openPdf(contact: ShootingContact) {
     border-radius: 8px;
     padding: 0.75rem;
     margin-bottom: 0.75rem;
+}
+
+.selection-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1.25rem;
+    background: rgba(59, 130, 246, 0.08);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
 }
 </style>
 
