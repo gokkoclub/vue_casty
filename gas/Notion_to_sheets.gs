@@ -1,3 +1,399 @@
+const NOTION_CONF = {
+  VERSION: "2022-06-28",
+  PROP: {
+    TOKEN: "NOTION_TOKEN",   // スクリプトプロパティ名
+    DB_ID: "NOTION_DB_ID"    // スクリプトプロパティ名
+  },
+  SHEET_NAME: "Notion_FromDB", // 出力先シート名
+
+  // Notionのプロパティ名と完全に一致させてください
+  // 配列の最後に追加したため、シート上では「L列」に出力されます
+  HEADERS: [
+    "page_id", 
+    "名前", 
+    "性別", 
+    "事務所", 
+    "出演回数", 
+    "アイコン_Gドライブリンク", 
+    "連絡先",       // リレーション
+    "X(Twitter)",  // URL
+    "Instagram",   // URL
+    "TikTok",      // URL
+    "ふりがな",    // K列
+    "生年月日",    // L列
+    "CastID"       // M列: Vue/Notion由来のCastID
+  ]
+};
+
+
+ 
+function mainDailySync() {
+  try {
+    console.log("【開始】Notion同期処理");
+    syncNotionToSheet();
+    
+    // シートへの書き込みを確定させる
+    SpreadsheetApp.flush();
+    
+    console.log("【開始】キャストリスト更新処理（新規追加）");
+    syncNewCastMembersWithIdAndFormulas();
+    
+    console.log("【開始】削除済みメンバーID更新処理");
+    markDeletedCastsInColumnA();
+
+    console.log("【完了】全処理が正常に終了しました");
+    
+  } catch (e) {
+    console.error("エラーが発生しました: " + e.stack);
+  }
+}
+
+// =======================================================
+// 1. Notion API連携用関数 (データ取得・整形)
+// =======================================================
+
+function syncNotionToSheet() {
+  const token = _prop(NOTION_CONF.PROP.TOKEN);
+  const dbId  = _prop(NOTION_CONF.PROP.DB_ID);
+  if (!token || !dbId) {
+    throw new Error("NOTION_TOKEN / NOTION_DB_ID をスクリプトプロパティに設定してください。");
+  }
+
+  const rows = fetchAllNotionRows_(token, dbId);
+  if (rows.length === 0) {
+    Logger.log("Notionから取得できるレコードがありません。");
+    return;
+  }
+
+  const ss = SpreadsheetApp.getActive();
+  const sh = ss.getSheetByName(NOTION_CONF.SHEET_NAME) || ss.insertSheet(NOTION_CONF.SHEET_NAME);
+  sh.clearContents();
+
+  const headers = NOTION_CONF.HEADERS;
+  const values = [
+    headers,
+    ...rows.map(r => headers.map(h => r[h] ?? ""))
+  ];
+
+  sh.getRange(1, 1, values.length, headers.length).setValues(values);
+  Logger.log(`Notion → シート へ ${rows.length}件 同期しました。`);
+}
+
+function fetchAllNotionRows_(token, dbId) {
+  const url = `https://api.notion.com/v1/databases/${dbId}/query`;
+  const all = [];
+  let cursor = null;
+
+  do {
+    const payload = cursor ? { start_cursor: cursor } : {};
+    const res = UrlFetchApp.fetch(url, {
+      method: "post",
+      contentType: "application/json; charset=utf-8",
+      payload: JSON.stringify(payload),
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Notion-Version": NOTION_CONF.VERSION
+      },
+      muteHttpExceptions: true
+    });
+
+    if (res.getResponseCode() !== 200) {
+      throw new Error("Notion API エラー: " + res.getResponseCode() + " / " + res.getContentText());
+    }
+
+    const json = JSON.parse(res.getContentText());
+    (json.results || []).forEach(p => all.push(convertPage_(p)));
+    cursor = json.has_more ? json.next_cursor : null;
+  } while (cursor);
+
+  return all;
+}
+
+function convertPage_(page) {
+  const obj = {};
+  obj["page_id"] = page.id;
+  const props = page.properties || {};
+  Object.keys(props).forEach(name => {
+    obj[name] = parseProp_(props[name]);
+  });
+  return obj;
+}
+
+function parseProp_(prop) {
+  if (!prop || !prop.type) return "";
+  const t = prop.type;
+  const v = prop[t];
+
+  switch (t) {
+    case "title":
+    case "rich_text": return (v || []).map(r => r.plain_text || "").join("");
+    case "select": return v ? v.name || "" : "";
+    case "multi_select": return (v || []).map(s => s.name || "").join(", ");
+    case "number": return v != null ? v : "";
+    case "checkbox": return v ? "TRUE" : "FALSE";
+    case "date": return v && v.start ? v.start : "";
+    case "people": return (v || []).map(p => p.name || p.id || "").join(", ");
+    case "relation": return (v || []).map(r => r.id || "").join(", ");
+    case "files":
+      if (!v || v.length === 0) return "";
+      const f = v[0];
+      return (f.file && f.file.url) || (f.external && f.external.url) || "";
+    case "url": return v || "";
+    case "email": return v || "";
+    case "phone_number": return v || "";
+    case "status": return v ? v.name || "" : "";
+    case "rollup": return parseRollup_(v);
+    default: return "";
+  }
+}
+
+function parseRollup_(rollupVal) {
+  if (!rollupVal || !rollupVal.type) return "";
+  const t = rollupVal.type;
+
+  if (t === "number") return rollupVal.number != null ? rollupVal.number : "";
+  if (t === "date") return rollupVal.date && rollupVal.date.start ? rollupVal.date.start : "";
+  
+  if (t === "array") {
+    const arr = rollupVal.array || [];
+    const collected = [];
+
+    function collectValues(node) {
+      if (!node) return;
+      if (Array.isArray(node)) { 
+        node.forEach(collectValues); 
+        return; 
+      }
+      if (typeof node === "object") {
+        if (typeof node.plain_text === "string") collected.push(node.plain_text);
+        if (typeof node.name === "string") collected.push(node.name);
+        if (typeof node.email === "string") collected.push(node.email);
+        if (typeof node.url === "string") collected.push(node.url);
+        
+        Object.keys(node).forEach(k => {
+          if (k !== "type" && typeof node[k] === "object") {
+             collectValues(node[k]);
+          }
+        });
+      }
+    }
+    collectValues(arr);
+    const uniq = Array.from(new Set(collected)).filter(s => s && s.trim() !== "");
+    return uniq.join(", ");
+  }
+  return "";
+}
+
+function _prop(key) {
+  return PropertiesService.getScriptProperties().getProperty(key) || "";
+}
+
+// =======================================================
+// 2. キャストリスト同期用関数 (ID自動採番＆追加)
+// =======================================================
+
+function syncNewCastMembersWithIdAndFormulas() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const srcSheet = ss.getSheetByName('Notion_FromDB');
+  const destSheet = ss.getSheetByName('キャストリスト');
+
+  if (!srcSheet || !destSheet) {
+    console.error('シートが見つかりません。');
+    return;
+  }
+
+  const srcLastRow = srcSheet.getLastRow();
+  if (srcLastRow < 2) {
+    Logger.log('元データがありません。');
+    return;
+  }
+  
+  // Notionのデータ取得（CastIDはM列=13列目=index 12）
+  const srcValues = srcSheet.getRange(2, 1, srcLastRow - 1, 25).getValues();
+
+  const destLastRow = destSheet.getLastRow();
+  let existingNames = new Set();
+  let existingCastIds = new Set();
+  let maxIdNum = 0; 
+
+  if (destLastRow > 1) { 
+    // 既存の名前リストを取得(B列=2列目)
+    const currentNames = destSheet.getRange(2, 2, destLastRow - 1, 1).getValues();
+    currentNames.forEach(row => existingNames.add(row[0]));
+
+    // A列全体をチェックして、最大のID番号を探す + 既存CastIDセットを構築
+    const currentIds = destSheet.getRange(2, 1, destLastRow - 1, 1).getValues();
+    currentIds.forEach(row => {
+      const idText = row[0];
+      if (typeof idText === 'string' && idText.startsWith('cast_')) {
+        existingCastIds.add(idText);
+        const num = parseInt(idText.replace('cast_', ''), 10);
+        if (!isNaN(num) && num > maxIdNum) {
+          maxIdNum = num;
+        }
+      }
+    });
+  }
+
+  let newBasicData = [];    // A列(ID), B列(名前) 用
+  let newFuriganaData = []; // O列(ふりがな) 用
+
+  for (let i = 0; i < srcValues.length; i++) {
+    const name = srcValues[i][1]; // 名前はB列 (Index 1)
+    const furigana = srcValues[i][10]; // ふりがな (Index 10, K列相当)
+    const notionCastId = String(srcValues[i][12] || '').trim(); // CastID (Index 12, M列)
+
+    if (!name || existingNames.has(name)) continue;
+
+    // Notion由来のCastIDがあればそのまま使用、なければ連番生成
+    let castId;
+    if (notionCastId && notionCastId.startsWith('cast_') && !existingCastIds.has(notionCastId)) {
+      castId = notionCastId;
+      // maxIdNum も更新（次の連番生成に影響しないよう）
+      const num = parseInt(notionCastId.replace('cast_', ''), 10);
+      if (!isNaN(num) && num > maxIdNum) maxIdNum = num;
+    } else {
+      maxIdNum++;
+      castId = 'cast_' + ('00000' + maxIdNum).slice(-5);
+    }
+    
+    newBasicData.push([castId, name]);
+    newFuriganaData.push([furigana]);
+    
+    existingNames.add(name);
+    existingCastIds.add(castId);
+  }
+
+  if (newBasicData.length > 0) {
+    const startRow = destLastRow + 1;
+    const numRows = newBasicData.length;
+
+    // 1. A列(ID)・B列(名前) 書き込み
+    destSheet.getRange(startRow, 1, numRows, 2).setValues(newBasicData);
+    
+    // 2. O列(15列目) にふりがな書き込み
+    destSheet.getRange(startRow, 15, numRows, 1).setValues(newFuriganaData);
+
+    // 3. 数式コピー (R1C1形式)
+    const formulaCols = [3, 5, 6, 7, 8, 10, 11];
+    
+    formulaCols.forEach(col => {
+      const sourceCell = destSheet.getRange(2, col);
+      const r1c1Formula = sourceCell.getFormulaR1C1();
+      const val = sourceCell.getValue();
+      const targetRange = destSheet.getRange(startRow, col, numRows, 1);
+
+      if (r1c1Formula) {
+        targetRange.setFormulaR1C1(r1c1Formula);
+      } else {
+        targetRange.setValue(val);
+      }
+    });
+
+    const msg = `${numRows} 件追加しました。（最終ID: ${newBasicData[numRows-1][0]}）`;
+    Logger.log(msg);
+  } else {
+    Logger.log('新しいデータはありませんでした。');
+  }
+}
+
+// =======================================================
+// 3. Notion削除済みメンバーのID書き換え処理
+// =======================================================
+
+function markDeletedCastsInColumnA() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const srcSheet = ss.getSheetByName(NOTION_CONF.SHEET_NAME); // Notion_FromDB
+  const destSheet = ss.getSheetByName('キャストリスト');
+  const MARK_TEXT = "削除ずみ"; // A列に書き込む文言
+
+  if (!srcSheet || !destSheet) return;
+
+  // 1. Notionに「今」存在する人の名前リストを作成
+  const srcLastRow = srcSheet.getLastRow();
+  const activeNames = new Set();
+  if (srcLastRow >= 2) {
+    // B列(2列目)が名前
+    const data = srcSheet.getRange(2, 2, srcLastRow - 1, 1).getValues();
+    data.forEach(r => {
+      if(r[0]) activeNames.add(r[0]);
+    });
+  }
+
+  // 2. キャストリストの名前を確認
+  const destLastRow = destSheet.getLastRow();
+  if (destLastRow < 2) return;
+
+  // A列(ID)とB列(名前)を取得
+  const rangeId   = destSheet.getRange(2, 1, destLastRow - 1, 1);
+  const rangeName = destSheet.getRange(2, 2, destLastRow - 1, 1);
+  
+  const currentIds = rangeId.getValues();
+  const currentNames = rangeName.getValues();
+  
+  let updateCount = 0;
+
+  // 3. Notionにいない人のIDを書き換え
+  const newIds = currentIds.map((row, i) => {
+    const currentId = row[0];
+    const name = currentNames[i][0];
+
+    // IDが文字列で、かつ 'ext' から始まる場合はスキップ
+    if (typeof currentId === 'string' && currentId.startsWith('ext')) {
+      return [currentId];
+    }
+
+    // 名前があって、Notionにはいなくて、IDがまだ「削除ずみ」になっていない場合
+    if (name && !activeNames.has(name) && currentId !== MARK_TEXT) {
+      updateCount++;
+      return [MARK_TEXT]; // IDを上書き
+    }
+    return [currentId]; // そのまま
+  });
+
+  // 変更があった場合のみ書き込み
+  if (updateCount > 0) {
+    rangeId.setValues(newIds);
+    console.log(`${updateCount} 件のIDを『${MARK_TEXT}』に変更しました。`);
+  } else {
+    console.log("削除処理対象のメンバーはいませんでした。");
+  }
+}
+
+// =======================================================
+// 4. デバッグ・調査用
+// =======================================================
+
+function debugNotionContact() {
+  const token = _prop(NOTION_CONF.PROP.TOKEN);
+  const dbId  = _prop(NOTION_CONF.PROP.DB_ID);
+  
+  const url = `https://api.notion.com/v1/databases/${dbId}/query`;
+  const res = UrlFetchApp.fetch(url, {
+    method: "post",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Notion-Version": NOTION_CONF.VERSION,
+      "Content-Type": "application/json"
+    },
+    payload: JSON.stringify({ page_size: 1 }), // 1件だけ
+    muteHttpExceptions: true
+  });
+
+  const json = JSON.parse(res.getContentText());
+  if (!json.results || json.results.length === 0) {
+    console.log("データが1件もありませんでした。");
+    return;
+  }
+
+  const page = json.results[0];
+  const contactProp = page.properties["連絡先"]; // Notion側のプロパティ名
+
+  console.log("=== 【調査用データ】ここからコピーしてください ===");
+  console.log(JSON.stringify(contactProp, null, 2)); 
+  console.log("=== ここまでコピーしてください ===");
+}
+
 /**
  * スプレッドシート → Firestore 同期スクリプト
  * 
@@ -179,43 +575,22 @@ function syncCastsToFirestore_() {
   console.log('=== casts 同期開始 ===');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  // --- Notion_FromDB 読み取り ---
+  // --- Notion_FromDB 読み取り（CastID含む: M列=13列目） ---
   var notionSheet = ss.getSheetByName('Notion_FromDB');
   if (!notionSheet || notionSheet.getLastRow() < 2) {
     console.warn('Notion_FromDB が見つからないかデータなし');
     return 0;
   }
-  var notionData = notionSheet.getRange(2, 1, notionSheet.getLastRow() - 1, 12).getValues();
+  var notionData = notionSheet.getRange(2, 1, notionSheet.getLastRow() - 1, 13).getValues();
   // Notion_FromDB列: A=page_id, B=名前, C=性別, D=事務所, E=出演回数,
-  //   F=アイコンURL, G=連絡先, H=X, I=Instagram, J=TikTok, K=ふりがな, L=生年月日
-  
-  var notionMap = {};
-  notionData.forEach(function(row) {
-    var name = String(row[1] || '').trim();
-    if (name) {
-      notionMap[name] = {
-        notionPageId: String(row[0] || ''),
-        gender: String(row[2] || ''),
-        agency: String(row[3] || ''),
-        appearanceCount: Number(row[4]) || 0,
-        imageUrl: String(row[5] || ''),
-        email: String(row[6] || ''),
-        snsX: String(row[7] || ''),
-        snsInstagram: String(row[8] || ''),
-        snsTikTok: String(row[9] || ''),
-        furigana: String(row[10] || ''),
-        dateOfBirth: String(row[11] || '')
-      };
-    }
-  });
+  //   F=アイコンURL, G=連絡先, H=X, I=Instagram, J=TikTok, K=ふりがな, L=生年月日, M=CastID
   
   // --- 内部キャストDB 読み取り ---
   var internalSheet = ss.getSheetByName('内部キャストDB');
-  var internalMap = {}; // displayname or 本名 → {email, userid}
+  var internalMap = {};
   
   if (internalSheet && internalSheet.getLastRow() >= 2) {
     var internalData = internalSheet.getRange(2, 1, internalSheet.getLastRow() - 1, 5).getValues();
-    // A=本名, B=fullname, C=displayname, D=email, E=userid
     internalData.forEach(function(row) {
       var realName = String(row[0] || '').trim();
       var displayname = String(row[2] || '').trim();
@@ -226,62 +601,48 @@ function syncCastsToFirestore_() {
         email: String(row[3] || '').trim(),
         slackMentionId: String(row[4] || '').trim()
       };
-      // displaynameとrealNameの両方で引けるようにする
       if (displayname) internalMap[displayname] = info;
       if (realName && realName !== displayname) internalMap[realName] = info;
     });
   }
   
-  // --- キャストリスト 読み取り ---
-  var castListSheet = ss.getSheetByName('キャストリスト');
-  if (!castListSheet || castListSheet.getLastRow() < 2) {
-    console.warn('キャストリスト が見つからないかデータなし');
-    return 0;
-  }
-  var castListData = castListSheet.getRange(2, 1, castListSheet.getLastRow() - 1, 15).getValues();
-  // A(1)=cast_ID, B(2)=名前, ... O(15)=ふりがな
-  
+  // --- Notion_FromDB から直接 Firestore ドキュメントを構築 ---
   var documents = [];
   
-  castListData.forEach(function(row) {
-    var castId = String(row[0] || '').trim();
+  notionData.forEach(function(row) {
     var name = String(row[1] || '').trim();
+    if (!name) return;
     
-    // cast_XXXXX フォーマットのみ同期（削除済み・ext_ はスキップ）
-    if (!castId || !name || !castId.startsWith('cast_')) return;
+    var castId = String(row[12] || '').trim(); // M列: CastID
+    if (!castId || !castId.startsWith('cast_')) return; // CastIDがないものはスキップ
     
     var docId = sanitizeDocId_(castId);
     if (!docId) return;
     
-    // Notion情報をマージ
-    var notion = notionMap[name] || {};
-    
-    // 内部キャスト情報をマージ
     var internal = internalMap[name] || null;
     var isInternal = !!internal;
     
     var castData = {
       name: name,
-      furigana: notion.furigana || String(row[14] || '').trim(),
-      gender: notion.gender || '',
+      furigana: String(row[10] || '').trim(),
+      gender: String(row[2] || ''),
       castType: isInternal ? '内部' : '外部',
-      agency: notion.agency || '',
-      imageUrl: notion.imageUrl || '',
-      email: internal ? internal.email : (notion.email || ''),
+      agency: String(row[3] || ''),
+      imageUrl: String(row[5] || ''),
+      email: internal ? internal.email : (String(row[6] || '')),
       slackMentionId: internal ? internal.slackMentionId : '',
-      // appearanceCount は上書きしない（Vue側で castings から作品単位で計算）
-      snsX: notion.snsX || '',
-      snsInstagram: notion.snsInstagram || '',
-      snsTikTok: notion.snsTikTok || '',
-      dateOfBirth: notion.dateOfBirth || '',
-      notionPageId: notion.notionPageId || '',
+      snsX: String(row[7] || ''),
+      snsInstagram: String(row[8] || ''),
+      snsTikTok: String(row[9] || ''),
+      dateOfBirth: String(row[11] || ''),
+      notionPageId: String(row[0] || ''),
       updatedAt: new Date()
     };
     
     documents.push({ id: docId, data: castData });
   });
   
-  // 重複排除（同じdocIdが複数ある場合は最後のものを採用）
+  // 重複排除
   var uniqueMap = {};
   documents.forEach(function(doc) {
     uniqueMap[doc.id] = doc;
@@ -292,7 +653,7 @@ function syncCastsToFirestore_() {
     firestoreBatchWrite_(uniqueDocs, 'casts');
   }
   
-  console.log('casts 同期完了: ' + uniqueDocs.length + '件' + (documents.length !== uniqueDocs.length ? ' (重複' + (documents.length - uniqueDocs.length) + '件を除外)' : ''));
+  console.log('casts 同期完了: ' + uniqueDocs.length + '件 (Notion_FromDB直接)');
   return uniqueDocs.length;
 }
 

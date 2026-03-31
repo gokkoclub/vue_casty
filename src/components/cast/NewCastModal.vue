@@ -74,7 +74,7 @@ async function handleSave() {
         // 保存されたキャストデータを親に返す
         const savedCast: Cast = {
             ...castData,
-            id: docId || `ext_${Date.now()}`,
+            id: docId || '',
         } as Cast
 
         toast.add({

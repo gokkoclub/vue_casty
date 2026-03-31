@@ -1,9 +1,10 @@
 import { ref } from 'vue'
 import {
     collection, query, where, orderBy,
-    onSnapshot, addDoc, updateDoc, doc,
+    onSnapshot, updateDoc, doc, setDoc,
     Timestamp, getDocs
 } from 'firebase/firestore'
+import { getFunctions, httpsCallable } from 'firebase/functions'
 import { db, isFirebaseConfigured } from '@/services/firebase'
 import type { Cast } from '@/types'
 
@@ -108,12 +109,45 @@ export function useCasts() {
     const addCast = async (data: Omit<Cast, 'id' | 'createdAt' | 'updatedAt'>): Promise<string | undefined> => {
         if (!db) return undefined
         const now = Timestamp.now()
-        const docRef = await addDoc(collection(db, 'casts'), {
+
+        // Firestore の既存 cast_ IDから最大番号を取得
+        const castsSnap = await getDocs(collection(db, 'casts'))
+        let maxNum = 0
+        castsSnap.forEach(d => {
+            const id = d.id
+            if (id.startsWith('cast_')) {
+                const num = parseInt(id.replace('cast_', ''), 10)
+                if (!isNaN(num) && num > maxNum) maxNum = num
+            }
+        })
+
+        // 次の連番ID (5桁パディング)
+        const nextNum = maxNum + 1
+        const castId = `cast_${String(nextNum).padStart(5, '0')}`
+
+        // Firestore に保存
+        await setDoc(doc(db, 'casts', castId), {
             ...data,
             createdAt: now,
             updatedAt: now
         })
-        return docRef.id
+
+        // Notion にも非同期で追加（失敗してもFirestore保存は維持）
+        try {
+            const functions = getFunctions(undefined, 'asia-northeast1')
+            const createNotionCastFn = httpsCallable(functions, 'createNotionCast')
+            await createNotionCastFn({
+                castId,
+                name: data.name,
+                gender: data.gender || '',
+                agency: data.agency || '',
+                email: data.email || '',
+            })
+        } catch (e) {
+            console.warn('Notion sync failed (cast still saved to Firestore):', e)
+        }
+
+        return castId
     }
 
     const updateCast = async (id: string, data: Partial<Cast>) => {

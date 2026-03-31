@@ -19,13 +19,51 @@ setGlobalOptions({ region: "asia-northeast1" });
 import * as admin from "firebase-admin";
 import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage, sendDmToUser, buildCastOrderDmBlocks } from "./slack";
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
-import { syncCastToNotion } from "./notion";
+import { syncCastToNotion, createNotionCastPage } from "./notion";
 
 // Re-export new Cloud Functions
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
 export { handleSlackInteraction } from "./slackInteraction";
+
+// ─────────────────────────────────────────────
+// createNotionCast: Vue から新規キャストを Notion に登録
+// ─────────────────────────────────────────────
+export const createNotionCast = onCall(
+    {
+        secrets: ["NOTION_TOKEN", "NOTION_CAST_DB_ID"],
+    },
+    async (request) => {
+        const { castId, name, gender, agency, email } = request.data;
+
+        if (!castId || !name) {
+            throw new HttpsError("invalid-argument", "castId and name are required");
+        }
+
+        const notionToken = getEnv("NOTION_TOKEN");
+        const databaseId = getEnv("NOTION_CAST_DB_ID");
+
+        if (!notionToken || !databaseId) {
+            throw new HttpsError("failed-precondition", "NOTION_TOKEN or NOTION_CAST_DB_ID not configured");
+        }
+
+        const pageId = await createNotionCastPage({
+            notionToken,
+            databaseId,
+            castId,
+            name,
+            gender: gender || undefined,
+            agency: agency || undefined,
+            email: email || undefined,
+        });
+
+        if (!pageId) {
+            throw new HttpsError("internal", "Failed to create Notion page");
+        }
+
+        return { success: true, notionPageId: pageId };
+    });
 
 admin.initializeApp();
 

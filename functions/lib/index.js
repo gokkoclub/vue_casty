@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -64,6 +64,35 @@ Object.defineProperty(exports, "syncScheduleFromSam", { enumerable: true, get: f
 Object.defineProperty(exports, "scheduledSyncFromSam", { enumerable: true, get: function () { return syncFromSam_1.scheduledSyncFromSam; } });
 var slackInteraction_1 = require("./slackInteraction");
 Object.defineProperty(exports, "handleSlackInteraction", { enumerable: true, get: function () { return slackInteraction_1.handleSlackInteraction; } });
+// ─────────────────────────────────────────────
+// createNotionCast: Vue から新規キャストを Notion に登録
+// ─────────────────────────────────────────────
+exports.createNotionCast = (0, https_1.onCall)({
+    secrets: ["NOTION_TOKEN", "NOTION_CAST_DB_ID"],
+}, async (request) => {
+    const { castId, name, gender, agency, email } = request.data;
+    if (!castId || !name) {
+        throw new https_1.HttpsError("invalid-argument", "castId and name are required");
+    }
+    const notionToken = getEnv("NOTION_TOKEN");
+    const databaseId = getEnv("NOTION_CAST_DB_ID");
+    if (!notionToken || !databaseId) {
+        throw new https_1.HttpsError("failed-precondition", "NOTION_TOKEN or NOTION_CAST_DB_ID not configured");
+    }
+    const pageId = await (0, notion_1.createNotionCastPage)({
+        notionToken,
+        databaseId,
+        castId,
+        name,
+        gender: gender || undefined,
+        agency: agency || undefined,
+        email: email || undefined,
+    });
+    if (!pageId) {
+        throw new https_1.HttpsError("internal", "Failed to create Notion page");
+    }
+    return { success: true, notionPageId: pageId };
+});
 admin.initializeApp();
 // ──────────────────────────────────────
 // 環境変数の取得ヘルパー
