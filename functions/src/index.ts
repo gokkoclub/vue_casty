@@ -121,6 +121,7 @@ export const notifyOrderCreated = onCall(
         secrets: [
             "SLACK_BOT_TOKEN",
             "SLACK_CHANNEL_INTERNAL",
+            "SLACK_CHANNEL_EXTERNAL",
             "SLACK_MENTION_GROUP_ID",
             "GOOGLE_SERVICE_ACCOUNT_KEY",
             "GOOGLE_CALENDAR_ID",
@@ -128,7 +129,7 @@ export const notifyOrderCreated = onCall(
     },
     async (request) => {
         const data = request.data;
-        console.log("=== notifyOrderCreated v2.1 ===");
+        console.log("=== notifyOrderCreated v2.2 ===");
         console.log("data keys:", Object.keys(data || {}));
 
         if (!data || !data.items || data.items.length === 0) {
@@ -136,8 +137,14 @@ export const notifyOrderCreated = onCall(
         }
 
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannelInternal = getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannelExternal = getEnv("SLACK_CHANNEL_EXTERNAL");
         const mentionGroupId = getEnv("SLACK_MENTION_GROUP_ID");
+
+        // チャンネルルーティング: 外部案件 → EXTERNAL, それ以外 → INTERNAL
+        const orderMode = data.mode || "shooting";
+        const slackChannel = orderMode === "external" ? slackChannelExternal : slackChannelInternal;
+        console.log("Channel routing:", orderMode, "→", slackChannel);
 
         if (!slackToken || !slackChannel) {
             throw new HttpsError("failed-precondition", "Slack configuration missing");
@@ -165,7 +172,6 @@ export const notifyOrderCreated = onCall(
         const isAdditional = !!existingThreadTs;
 
         // ── メッセージ構築 ──
-        const orderMode = data.mode || "shooting";
         console.log("Order mode:", orderMode, "isAdditional:", isAdditional);
 
         // ── CC欄構築（Slack IDメンション解決付き） ──
@@ -514,6 +520,7 @@ export const notifyOrderCreated = onCall(
                 const updateData: Record<string, string> = {
                     slackThreadTs: threadTs,
                     slackPermalink: permalink,
+                    slackChannel: slackChannel,
                 };
 
                 // カレンダーイベントIDをマッチして書き戻す
@@ -637,9 +644,9 @@ export const notifyStatusUpdate = onCall(
         const oldStatus = data.previousStatus || casting.status || "";
         const slackThreadTs = casting.slackThreadTs || "";
 
-        // Slack通知（スレッド返信）
+        // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
 
         if (slackToken && slackChannel && slackThreadTs) {
             const message = buildStatusMessage({
@@ -776,9 +783,9 @@ export const deleteCastingCleanup = onCall(
             });
         }
 
-        // Slack通知（スレッドに削除通知）
+        // Slack通知（スレッドに削除通知）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
         const slackThreadTs = casting.slackThreadTs;
 
         if (slackToken && slackChannel && slackThreadTs) {
@@ -922,9 +929,9 @@ export const notifyOrderUpdated = onCall(
             }
         }
 
-        // Slack通知（スレッド返信）
+        // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
         const slackThreadTs = casting.slackThreadTs || "";
 
         if (slackToken && slackChannel && slackThreadTs) {
@@ -993,7 +1000,6 @@ export const sendPromotionDm = onCall(
         if (!castingId) throw new HttpsError("invalid-argument", "castingId is required");
 
         const slackToken = process.env.SLACK_BOT_TOKEN;
-        const slackChannel = process.env.SLACK_CHANNEL || getEnv("SLACK_CHANNEL");
         if (!slackToken) throw new HttpsError("internal", "SLACK_BOT_TOKEN not set");
 
         const db = admin.firestore();
@@ -1040,7 +1046,7 @@ export const sendPromotionDm = onCall(
             accountName: casting.accountName || "",
             castingId,
             slackThreadTs,
-            slackChannel: slackChannel || "",
+            slackChannel: casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL") || "",
             permalink,
         });
 
