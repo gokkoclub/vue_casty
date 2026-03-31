@@ -250,8 +250,12 @@ async function updateShootDate(item: typeof dateSearchResults.value[0]) {
     try {
         const newTs = Timestamp.fromDate(item.newDate)
         const colName = item.collection
-        const fieldName = colName === 'castings' ? 'startDate' : 'shootDate'
-        await updateDoc(doc(db, colName, item.id), { [fieldName]: newTs })
+        if (colName === 'castings') {
+            // startDate と endDate の両方を更新（片方だけ変えると isMultiDay 判定がズレる）
+            await updateDoc(doc(db, colName, item.id), { startDate: newTs, endDate: newTs })
+        } else {
+            await updateDoc(doc(db, colName, item.id), { shootDate: newTs })
+        }
         item.shootDate = newTs
         item.newDate = undefined
         toast.add({ severity: 'success', summary: '更新完了', detail: `${item.castName} の撮影日を変更しました`, life: 2000 })
