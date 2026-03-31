@@ -106,6 +106,21 @@ function getEnv(key) {
     return value.trim();
 }
 /**
+ * casting ドキュメントから Slack チャンネルIDを解決
+ * 優先順位: slackChannel > slackPermalink から抽出 > SLACK_CHANNEL_INTERNAL
+ */
+function resolveSlackChannel(casting) {
+    if (casting.slackChannel)
+        return casting.slackChannel;
+    // slackPermalink: https://...slack.com/archives/C07DTG63WQ1/p1767599451662959
+    if (casting.slackPermalink) {
+        const match = casting.slackPermalink.match(/\/archives\/(C[A-Z0-9]+)\//);
+        if (match && match[1])
+            return match[1];
+    }
+    return getEnv("SLACK_CHANNEL_INTERNAL");
+}
+/**
  * 名前からSlack IDを検索するヘルパー
  * casts → admins の順に検索
  */
@@ -572,7 +587,7 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
     const slackThreadTs = casting.slackThreadTs || "";
     // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
     const slackToken = getEnv("SLACK_BOT_TOKEN");
-    const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+    const slackChannel = resolveSlackChannel(casting);
     if (slackToken && slackChannel && slackThreadTs) {
         const message = (0, slack_1.buildStatusMessage)({
             castName: casting.castName,
@@ -687,9 +702,9 @@ exports.deleteCastingCleanup = (0, https_1.onCall)({
             newStatus: "キャンセル", // 削除 = キャンセル扱い
         });
     }
-    // Slack通知（スレッドに削除通知）— castings に保存されたチャンネルを優先
+    // Slack通知（スレッドに削除通知）— castings に保存されたチャンネル or permalink から解決
     const slackToken = getEnv("SLACK_BOT_TOKEN");
-    const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+    const slackChannel = resolveSlackChannel(casting);
     const slackThreadTs = casting.slackThreadTs;
     if (slackToken && slackChannel && slackThreadTs) {
         const text = `🗑️ *${casting.castName}* のキャスティングが削除されました（${casting.projectName}）`;
@@ -814,7 +829,7 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
     }
     // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
     const slackToken = getEnv("SLACK_BOT_TOKEN");
-    const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+    const slackChannel = resolveSlackChannel(casting);
     const slackThreadTs = casting.slackThreadTs || "";
     if (slackToken && slackChannel && slackThreadTs) {
         const message = (0, slack_1.buildOrderUpdateMessage)({
@@ -913,7 +928,7 @@ exports.sendPromotionDm = (0, https_1.onCall)({ secrets: ["SLACK_BOT_TOKEN", "GO
         accountName: casting.accountName || "",
         castingId,
         slackThreadTs,
-        slackChannel: casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL") || "",
+        slackChannel: resolveSlackChannel(casting),
         permalink,
     });
     const dmText = `📋 ${dateRanges.join(", ")} 撮影オーダーが来ています（繰り上がり）（${casting.projectName}）`;

@@ -80,6 +80,20 @@ function getEnv(key: string): string {
 }
 
 /**
+ * casting ドキュメントから Slack チャンネルIDを解決
+ * 優先順位: slackChannel > slackPermalink から抽出 > SLACK_CHANNEL_INTERNAL
+ */
+function resolveSlackChannel(casting: { slackChannel?: string; slackPermalink?: string }): string {
+    if (casting.slackChannel) return casting.slackChannel;
+    // slackPermalink: https://...slack.com/archives/C07DTG63WQ1/p1767599451662959
+    if (casting.slackPermalink) {
+        const match = casting.slackPermalink.match(/\/archives\/(C[A-Z0-9]+)\//)
+        if (match && match[1]) return match[1];
+    }
+    return getEnv("SLACK_CHANNEL_INTERNAL");
+}
+
+/**
  * 名前からSlack IDを検索するヘルパー
  * casts → admins の順に検索
  */
@@ -646,7 +660,7 @@ export const notifyStatusUpdate = onCall(
 
         // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = resolveSlackChannel(casting);
 
         if (slackToken && slackChannel && slackThreadTs) {
             const message = buildStatusMessage({
@@ -783,9 +797,9 @@ export const deleteCastingCleanup = onCall(
             });
         }
 
-        // Slack通知（スレッドに削除通知）— castings に保存されたチャンネルを優先
+        // Slack通知（スレッドに削除通知）— castings に保存されたチャンネル or permalink から解決
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = resolveSlackChannel(casting);
         const slackThreadTs = casting.slackThreadTs;
 
         if (slackToken && slackChannel && slackThreadTs) {
@@ -931,7 +945,7 @@ export const notifyOrderUpdated = onCall(
 
         // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL");
+        const slackChannel = resolveSlackChannel(casting);
         const slackThreadTs = casting.slackThreadTs || "";
 
         if (slackToken && slackChannel && slackThreadTs) {
@@ -1046,7 +1060,7 @@ export const sendPromotionDm = onCall(
             accountName: casting.accountName || "",
             castingId,
             slackThreadTs,
-            slackChannel: casting.slackChannel || getEnv("SLACK_CHANNEL_INTERNAL") || "",
+            slackChannel: resolveSlackChannel(casting),
             permalink,
         });
 
