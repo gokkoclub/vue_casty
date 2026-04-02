@@ -292,22 +292,42 @@ export function useOrders() {
 
             // スレッドTSごとにグループ化し、日付を収集
             const threadMap = new Map<string, Set<string>>()
+            // slackThreadTs が空のドキュメントの日付も収集（ts 保存失敗のケース）
+            const orphanDates = new Set<string>()
+            let hasOrphans = false
+
             snap.docs.forEach(doc => {
                 const data = doc.data()
                 const ts = data.slackThreadTs as string
-                if (!ts) return  // slackThreadTs が空のものはスキップ
-                if (!threadMap.has(ts)) threadMap.set(ts, new Set())
-                const dates = threadMap.get(ts)!
-                if (data.startDate) {
-                    const d = data.startDate.toDate()
-                    dates.add(`${d.getMonth() + 1}/${d.getDate()}`)
+                const dateStr = data.startDate
+                    ? (() => { const d = data.startDate.toDate(); return `${d.getMonth() + 1}/${d.getDate()}` })()
+                    : ''
+
+                if (ts) {
+                    if (!threadMap.has(ts)) threadMap.set(ts, new Set())
+                    if (dateStr) threadMap.get(ts)!.add(dateStr)
+                } else {
+                    // slackThreadTs が空 = 過去にオーダー済みだが ts 保存失敗
+                    hasOrphans = true
+                    if (dateStr) orphanDates.add(dateStr)
                 }
             })
 
-            return Array.from(threadMap.entries()).map(([threadTs, dateSet]) => ({
+            const results = Array.from(threadMap.entries()).map(([threadTs, dateSet]) => ({
                 threadTs,
                 dates: Array.from(dateSet).sort()
             }))
+
+            // slackThreadTs 空のドキュメントのみ存在する場合
+            // → 空の threadTs で返す（CF 側のリカバリに委ねる）
+            if (results.length === 0 && hasOrphans) {
+                results.push({
+                    threadTs: '',
+                    dates: Array.from(orphanDates).sort()
+                })
+            }
+
+            return results
         } catch (e) {
             console.warn('checkExistingProject failed:', e)
             return []
