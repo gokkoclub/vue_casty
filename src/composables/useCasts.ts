@@ -107,7 +107,10 @@ export function useCasts() {
     }
 
     const addCast = async (data: Omit<Cast, 'id' | 'createdAt' | 'updatedAt'>): Promise<string | undefined> => {
-        if (!db) return undefined
+        if (!db) {
+            console.error('[addCast] Firestore DB not initialized')
+            return undefined
+        }
         const now = Timestamp.now()
 
         // Firestore の既存 cast_ IDから最大番号を取得
@@ -124,6 +127,7 @@ export function useCasts() {
         // 次の連番ID (5桁パディング)
         const nextNum = maxNum + 1
         const castId = `cast_${String(nextNum).padStart(5, '0')}`
+        console.log(`[addCast] Generated ID: ${castId}, writing to Firestore...`)
 
         // Firestore に保存
         await setDoc(doc(db, 'casts', castId), {
@@ -131,6 +135,20 @@ export function useCasts() {
             createdAt: now,
             updatedAt: now
         })
+        console.log(`[addCast] Firestore write completed for ${castId}`)
+
+        // 書き込み確認
+        try {
+            const { getDoc } = await import('firebase/firestore')
+            const verifyDoc = await getDoc(doc(db, 'casts', castId))
+            if (verifyDoc.exists()) {
+                console.log(`[addCast] ✅ Verified: ${castId} exists in Firestore`)
+            } else {
+                console.error(`[addCast] ❌ Verification FAILED: ${castId} NOT found after write!`)
+            }
+        } catch (verifyErr) {
+            console.warn('[addCast] Verification read failed:', verifyErr)
+        }
 
         // Notion にも非同期で追加（失敗してもFirestore保存は維持）
         try {
@@ -143,6 +161,7 @@ export function useCasts() {
                 agency: data.agency || '',
                 email: data.email || '',
             })
+            console.log(`[addCast] Notion sync completed for ${castId}`)
         } catch (e) {
             console.warn('Notion sync failed (cast still saved to Firestore):', e)
         }

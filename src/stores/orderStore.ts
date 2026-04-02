@@ -23,6 +23,13 @@ export const useOrderStore = defineStore('order', () => {
 
     const cartVisible = ref(false)
 
+    // Existing project names from prior castings (set by CartProjectList)
+    const existingProjectNames = ref<string[]>([])
+
+    function setExistingProjectNames(names: string[]) {
+        existingProjectNames.value = names
+    }
+
     // Getters
     const count = computed(() => Object.keys(pool.value).length)
 
@@ -54,11 +61,12 @@ export const useOrderStore = defineStore('order', () => {
         }
     }
 
-    function initializeForShooting(_title: string) {
+    function initializeForShooting(title: string) {
         // Reset projects if empty — 2作品分の枠を用意
+        // 1作品目は撮影タイトルを自動設定、2作品目は空欄
         if (projects.value.length === 0) {
             projects.value = [
-                { id: crypto.randomUUID(), title: '', roles: [] },
+                { id: crypto.randomUUID(), title: title || '', roles: [] },
                 { id: crypto.randomUUID(), title: '', roles: [] }
             ]
         }
@@ -233,7 +241,7 @@ export const useOrderStore = defineStore('order', () => {
     // Helper for submission: Flatten structure
     function getFlattenedOrders() {
         const orders: any[] = []
-        projects.value.forEach(p => {
+        projects.value.forEach((p, pIdx) => {
             p.roles.forEach(r => {
                 r.castIds.forEach((castId, index) => {
                     if (pool.value[castId]) {
@@ -242,7 +250,7 @@ export const useOrderStore = defineStore('order', () => {
                             cast: pool.value[castId].cast,
                             rank: index + 1,
                             roleName: r.name,
-                            projectName: p.title || manualMeta.value.projectName,
+                            projectName: p.title || existingProjectNames.value[pIdx] || manualMeta.value.projectName,
                             mainSub: r.type,
                             note: r.note
                         })
@@ -284,6 +292,8 @@ export const useOrderStore = defineStore('order', () => {
         addItem,
         removeItem,
         cleanupEmpty,
-        getFlattenedOrders
+        getFlattenedOrders,
+        existingProjectNames,
+        setExistingProjectNames
     }
 })

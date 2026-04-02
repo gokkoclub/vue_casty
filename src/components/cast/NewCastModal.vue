@@ -87,13 +87,16 @@ async function handleSave() {
         emit('saved', savedCast)
         emit('update:visible', false)
         resetForm()
-    } catch (error) {
+    } catch (error: any) {
         console.error('Failed to save cast:', error)
+        const errorMsg = error?.code === 'permission-denied'
+            ? 'セッションが切れています。再サインインしてください。'
+            : `キャストの登録に失敗しました: ${error?.message || '不明なエラー'}`
         toast.add({
             severity: 'error',
             summary: 'エラー',
-            detail: 'キャストの登録に失敗しました',
-            life: 3000
+            detail: errorMsg,
+            life: 5000
         })
     } finally {
         saving.value = false

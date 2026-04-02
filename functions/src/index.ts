@@ -166,19 +166,26 @@ export const notifyOrderCreated = onCall(
 
         const db = admin.firestore();
 
-        // ── 追加オーダー自動判定 ──
-        // 同じ projectId を持つ既存 casting の slackThreadTs を検索
+        // ── 追加オーダー判定 ──
+        // クライアントから replyToThreadTs が指定された場合はそのスレッドに返信
+        // forceNewThread=true の場合は新規スレッドを作成
+        // それ以外は従来通り自動判定
         let existingThreadTs = "";
         let existingPermalink = "";
-        if (data.projectId) {
+        if (data.replyToThreadTs) {
+            // クライアントが指定したスレッドに返信
+            existingThreadTs = data.replyToThreadTs;
+            // permalink は後で取得不要（追加オーダーの場合は不要）
+        } else if (data.projectId && !data.forceNewThread) {
+            // NOTE: where('slackThreadTs', '!=', '') は複合インデックスが必要なため
+            // projectId のみでクエリし、slackThreadTs はクライアント側でフィルタ
             const existingSnap = await db.collection("castings")
                 .where("projectId", "==", data.projectId)
-                .where("slackThreadTs", "!=", "")
-                .limit(1)
                 .get();
 
-            if (!existingSnap.empty) {
-                const existingData = existingSnap.docs[0]!.data();
+            const docWithThread = existingSnap.docs.find(d => d.data().slackThreadTs);
+            if (docWithThread) {
+                const existingData = docWithThread.data();
                 existingThreadTs = existingData.slackThreadTs || "";
                 existingPermalink = existingData.slackPermalink || "";
             }
@@ -202,10 +209,17 @@ export const notifyOrderCreated = onCall(
                 const mention = slackId ? `<@${slackId}>` : data.shootingData.floorDirector;
                 ccParts.push(`FD: ${mention}`);
             }
-            if (data.shootingData.team) {
-                const slackId = await lookupSlackIdByName(data.shootingData.team);
-                const mention = slackId ? `<@${slackId}>` : data.shootingData.team;
-                ccParts.push(`P: ${mention}`);
+            if (data.shootingData.producer) {
+                // producer can contain multiple names separated by comma/、
+                const producers = data.shootingData.producer.split(/[,、]/).map((p: string) => p.trim()).filter((p: string) => p);
+                const producerMentions: string[] = [];
+                for (const name of producers) {
+                    const slackId = await lookupSlackIdByName(name);
+                    producerMentions.push(slackId ? `<@${slackId}>` : name);
+                }
+                if (producerMentions.length > 0) {
+                    ccParts.push(`P: ${producerMentions.join(" ")}`);
+                }
             }
             ccString = ccParts.join(" / ");
         }

@@ -140,7 +140,7 @@ const handleMailto = (subject: string, body: string) => {
 .field label {
   font-weight: 600;
   font-size: 0.875rem;
-  color: var(--text-color-secondary);
+  color: var(--p-text-muted-color);
 }
 
 .subject {
@@ -155,5 +155,10 @@ const handleMailto = (subject: string, body: string) => {
   gap: 0.5rem;
   justify-content: flex-end;
   margin-top: 1rem;
+}
+
+:deep(.p-textarea) {
+  background: var(--p-content-background) !important;
+  color: var(--p-text-color) !important;
 }
 </style>

@@ -224,7 +224,7 @@ const handleSummaryClick = () => {
         </div>
 
         <!-- Status -->
-        <div class="csl-cell csl-status" @click.stop="emit('open-modal', casting.id)">
+        <div class="csl-cell csl-status" @click.stop="isAdmin && emit('open-modal', casting.id)">
           <span 
             class="csl-status-badge"
             :style="{ background: getStatusStyle(casting.status).bg, color: getStatusStyle(casting.status).color }"
@@ -259,7 +259,7 @@ const handleSummaryClick = () => {
         </div>
 
         <!-- Time (for external/internal events) -->
-        <div v-if="casting.mode === 'external' || casting.mode === 'internal'" class="csl-cell csl-time" @click.stop>
+        <div v-if="isExternalTab || casting.mode === 'external' || casting.mode === 'internal'" class="csl-cell csl-time" @click.stop>
           <template v-if="editingTimeId === casting.id">
             <input
               v-model="editingTime.startTime"
@@ -285,7 +285,7 @@ const handleSummaryClick = () => {
               {{ casting.startTime || '??' }}〜{{ casting.endTime || '??' }}
             </span>
             <span v-else class="csl-time-empty">時間未設定</span>
-            <button class="csl-act-btn csl-time-edit" @click="startTimeEdit(casting)" title="時間を編集">
+            <button v-if="isAdmin" class="csl-act-btn csl-time-edit" @click="startTimeEdit(casting)" title="時間を編集">
               <i class="pi pi-pencil"></i>
             </button>
           </template>

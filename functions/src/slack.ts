@@ -423,9 +423,10 @@ export function buildOrderMessage(params: {
         }
     }
 
-    // 📅 日付ごとのスケジュール（中長編: selectedDatesを持つアイテムがある場合のみ）
+    // 📅 日付ごとのスケジュール（撮影日が複数ある場合のみ表示）
     const hasPerCastDates = params.items.some(i => i.selectedDates && i.selectedDates.length > 0);
-    if (hasPerCastDates) {
+    const hasMultipleDates = params.dateRanges.length > 1;
+    if (hasPerCastDates && hasMultipleDates) {
         lines.push("");
         lines.push("`スケジュール`");
 

@@ -6,6 +6,7 @@ import Tag from 'primevue/tag'
 
 const props = defineProps<{
   dates: Date[]
+  allowPastDates?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -73,7 +74,7 @@ const clearDates = () => {
       inline
       :numberOfMonths="1"
       showButtonBar
-      :minDate="new Date()"
+      :minDate="props.allowPastDates ? undefined : new Date()"
       @clear-click="clearDates"
     />
     

@@ -472,7 +472,8 @@ const countCastings = (dateGroup: any) => {
             :key="accountGroup.accountName"
             class="sv-account"
           >
-            <div class="sv-account-header">
+            <div class="sv-account-header" :style="{ borderLeftColor: ['外部案件', '社内イベント'].includes(accountGroup.accountName) ? '#E74C3C' : '#3B82F6' }">
+              <i class="pi" :class="['外部案件', '社内イベント'].includes(accountGroup.accountName) ? 'pi-building' : 'pi-video'" :style="{ color: ['外部案件', '社内イベント'].includes(accountGroup.accountName) ? '#E74C3C' : '#3B82F6', marginRight: '6px' }"></i>
               <span class="sv-account-name">{{ accountGroup.accountName }}</span>
             </div>
 
@@ -524,7 +525,9 @@ const countCastings = (dateGroup: any) => {
               class="pi" 
               :class="isDateExpanded(pGroup.projectName) ? 'pi-chevron-down' : 'pi-chevron-right'"
             ></i>
-            <span class="sv-project-icon">📁</span>
+            <i v-if="['外部案件', '社内イベント'].includes(pGroup.accountName)" 
+              class="pi pi-building sv-project-icon" style="color: #E74C3C; font-size: 1.1rem;"></i>
+            <i v-else class="pi pi-video sv-project-icon" style="color: #3B82F6; font-size: 1.1rem;"></i>
             <span class="sv-date-text">{{ pGroup.projectName }}</span>
             <span class="sv-account-badge">{{ pGroup.accountName }}</span>
             <span class="sv-date-count">{{ pGroup.totalCastings }}件</span>
@@ -588,7 +591,8 @@ const countCastings = (dateGroup: any) => {
               class="pi" 
               :class="isDateExpanded(featureGroup.projectName) ? 'pi-chevron-down' : 'pi-chevron-right'"
             ></i>
-            <span class="sv-date-text">🏞️ {{ featureGroup.projectName }}</span>
+            <i class="pi pi-flag" style="color: #22C55E; font-size: 1.1rem; margin-right: 4px;"></i>
+            <span class="sv-date-text">{{ featureGroup.projectName }}</span>
             <span class="sv-feature-dates">{{ featureGroup.dateRange }}</span>
             <span class="sv-date-count">{{ featureGroup.castings.length }}件</span>
           </div>
@@ -899,6 +903,9 @@ const countCastings = (dateGroup: any) => {
 .sv-account-header {
   padding: 0.5rem 0.5rem;
   margin-bottom: 0.25rem;
+  border-left: 3px solid;
+  display: flex;
+  align-items: center;
 }
 
 .sv-account-name {

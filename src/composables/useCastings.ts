@@ -17,6 +17,14 @@ export interface CastingFilters {
     teamName?: string
 }
 
+// タイムゾーン安全なローカル日付キー (YYYY-MM-DD)
+function toLocalDateKey(d: Date): string {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
+
 export function useCastings() {
     const castings = ref<Casting[]>([])
     const loading = ref(false)
@@ -241,7 +249,7 @@ export function useCastings() {
             const startMs = data.startDate?.toMillis?.() ?? 0
             const endMs = data.endDate?.toMillis?.() ?? 0
             return startMs <= decidedCasting.endDate.toMillis() &&
-                   endMs >= decidedCasting.startDate.toMillis()
+                endMs >= decidedCasting.startDate.toMillis()
         })
 
         if (toCancel.length === 0) return
@@ -293,7 +301,7 @@ export function useCastings() {
             const startMs = data.startDate?.toMillis?.() ?? 0
             const endMs = data.endDate?.toMillis?.() ?? 0
             return startMs <= ngCasting.endDate.toMillis() &&
-                   endMs >= ngCasting.startDate.toMillis()
+                endMs >= ngCasting.startDate.toMillis()
         })
 
         if (toPromote.length === 0) return
@@ -575,7 +583,7 @@ export function useCastings() {
             if (!casting.startDate) return
 
             const date = casting.startDate.toDate()
-            const dateKey = date.toISOString().split('T')[0]
+            const dateKey = toLocalDateKey(date)
             if (!dateKey) return
 
             if (!grouped[dateKey]) {
@@ -696,7 +704,7 @@ export function useCastings() {
 
         // Calculate month range
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
-        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
@@ -717,7 +725,7 @@ export function useCastings() {
             const lastDate = new Date(Math.min(endDate.getTime(), monthEnd.getTime()))
 
             while (currentDate <= lastDate) {
-                const dateKey = currentDate.toISOString().split('T')[0]!
+                const dateKey = toLocalDateKey(currentDate)
 
                 // Skip past dates if showPast is false
                 if (!showPast && currentDate < today) {
@@ -822,7 +830,7 @@ export function useCastings() {
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
 
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
-        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
@@ -879,7 +887,7 @@ export function useCastings() {
             const allDates: string[] = []
             const d = new Date(group.minStart)
             while (d <= group.maxEnd) {
-                allDates.push(d.toISOString().split('T')[0]!)
+                allDates.push(toLocalDateKey(d))
                 d.setDate(d.getDate() + 1)
             }
 
@@ -896,8 +904,8 @@ export function useCastings() {
                 projectName,
                 accountName: group.accountName,
                 dateRange,
-                startDate: group.minStart.toISOString().split('T')[0]!,
-                endDate: group.maxEnd.toISOString().split('T')[0]!,
+                startDate: toLocalDateKey(group.minStart),
+                endDate: toLocalDateKey(group.maxEnd),
                 allDates,
                 castings: filteredCastings
             })
@@ -922,7 +930,7 @@ export function useCastings() {
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
 
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
-        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+        const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
@@ -945,7 +953,7 @@ export function useCastings() {
             // Past filter
             if (!showPast && startDate < today) return
 
-            const dateKey = startDate.toISOString().split('T')[0]!
+            const dateKey = toLocalDateKey(startDate)
             const projectKey = `${casting.accountName}__${casting.projectName}`
 
             if (!projectMap.has(projectKey)) {

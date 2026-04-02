@@ -139,7 +139,7 @@ const openSlack = (url: string) => {
             :value="data.status" 
             :severity="getStatusSeverity(data.status)"
             class="status-tag"
-            @click.stop="emit('open-modal', data.id)"
+            @click.stop="isAdmin && emit('open-modal', data.id)"
           />
         </template>
       </Column>

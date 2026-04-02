@@ -86,7 +86,7 @@ function handleMailto() {
 
 <style scoped>
 .mail-modal {
-    background: var(--surface-card, white);
+    background: var(--p-content-background);
     border-radius: 12px;
     width: 600px;
     max-width: 95vw;
@@ -102,8 +102,8 @@ function handleMailto() {
     justify-content: space-between;
     align-items: center;
     padding: 1rem 1.25rem;
-    border-bottom: 2px solid var(--primary-color, #3B82F6);
-    background: var(--surface-50, #f8fafc);
+    border-bottom: 2px solid var(--p-primary-color);
+    background: var(--p-content-hover-background);
 }
 
 .mail-modal-header h3 { margin: 0; font-size: 1.1rem; }
@@ -115,9 +115,9 @@ function handleMailto() {
     cursor: pointer;
     padding: 0.25rem 0.5rem;
     border-radius: 4px;
-    color: var(--text-color-secondary);
+    color: var(--p-text-muted-color);
 }
-.close-btn:hover { background: var(--surface-hover); }
+.close-btn:hover { background: var(--p-content-hover-background); }
 
 .mail-modal-body {
     padding: 0;
@@ -128,7 +128,7 @@ function handleMailto() {
 /* セクション共通 */
 .mail-section {
     padding: 0.75rem 1.25rem;
-    border-bottom: 1px solid var(--surface-200, #e2e8f0);
+    border-bottom: 1px solid var(--p-content-border-color);
 }
 
 .mail-section:last-child {
@@ -140,14 +140,14 @@ function handleMailto() {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    background: var(--surface-50, #f8fafc);
+    background: var(--p-content-hover-background);
 }
 
 .template-section label {
     font-weight: 600;
     font-size: 0.85rem;
     white-space: nowrap;
-    color: var(--text-color-secondary);
+    color: var(--p-text-muted-color);
 }
 
 .template-section select {
@@ -164,9 +164,9 @@ function handleMailto() {
     gap: 0.5rem;
     align-items: center;
     font-size: 0.85rem;
-    background: var(--surface-50, #f8fafc);
+    background: var(--p-content-hover-background);
 }
-.to-section label { font-weight: 600; color: var(--text-color-secondary); }
+.to-section label { font-weight: 600; color: var(--p-text-muted-color); }
 
 /* セクションラベル */
 .section-label {
@@ -174,15 +174,15 @@ function handleMailto() {
     font-weight: 700;
     font-size: 0.8rem;
     margin-bottom: 0.4rem;
-    color: var(--primary-color, #3B82F6);
+    color: var(--p-primary-color);
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
 
 .subject-text {
     padding: 0.5rem 0.75rem;
-    background: var(--surface-50, #f8fafc);
-    border: 1px solid var(--surface-200, #e2e8f0);
+    background: var(--p-content-hover-background);
+    border: 1px solid var(--p-content-border-color);
     border-radius: 6px;
     font-size: 0.9rem;
 }
@@ -195,12 +195,12 @@ function handleMailto() {
 .body-section textarea {
     width: 100%;
     padding: 0.75rem;
-    border: 1px solid var(--surface-200, #e2e8f0);
+    border: 1px solid var(--p-content-border-color);
     border-radius: 6px;
     font-size: 0.85rem;
     font-family: inherit;
     resize: vertical;
-    background: var(--surface-50, #f8fafc);
+    background: var(--p-content-hover-background);
     line-height: 1.6;
 }
 
@@ -210,8 +210,8 @@ function handleMailto() {
     gap: 0.5rem;
     flex-wrap: wrap;
     padding: 0.75rem 1.25rem;
-    border-top: 2px solid var(--surface-200, #e2e8f0);
-    background: var(--surface-50, #f8fafc);
+    border-top: 2px solid var(--p-content-border-color);
+    background: var(--p-content-hover-background);
 }
 
 .btn {
@@ -225,14 +225,14 @@ function handleMailto() {
 }
 
 .btn-primary {
-    background: var(--primary-color, #3B82F6);
+    background: var(--p-primary-color);
     color: white;
 }
 .btn-primary:hover { filter: brightness(0.9); }
 
 .btn-secondary {
     background: var(--p-content-hover-background);
-    color: var(--text-color);
+    color: var(--p-text-color);
 }
 .btn-secondary:hover { background: var(--p-content-border-color); }
 </style>

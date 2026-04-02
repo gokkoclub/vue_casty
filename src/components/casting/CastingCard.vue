@@ -105,8 +105,8 @@ const openSlackThread = () => {
           </div>
         </div>
 
-        <!-- Middle: Status -->
-        <div class="status-section">
+        <!-- Middle: Status (admin only for editing) -->
+        <div class="status-section" v-if="isAdmin">
           <label>ステータス</label>
           <Dropdown
             :modelValue="casting.status"
@@ -124,6 +124,13 @@ const openSlackThread = () => {
             class="mt-2"
           />
         </div>
+        <div v-else class="status-section">
+          <label>ステータス</label>
+          <Tag
+            :value="casting.status"
+            :severity="getStatusSeverity(casting.status)"
+          />
+        </div>
 
         <!-- Right: Actions -->
         <div class="actions-section">
@@ -133,6 +140,7 @@ const openSlackThread = () => {
           
           <div class="action-buttons">
             <Button
+              v-if="isAdmin"
               icon="pi pi-pencil"
               text
               size="small"

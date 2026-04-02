@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import {
-    collection, doc, writeBatch,
+    collection, doc, writeBatch, getDocs, query, where,
     Timestamp
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
@@ -37,6 +37,7 @@ export interface OrderPayload {
         team: string
         director?: string
         floorDirector?: string
+        producer?: string
     }
 }
 
@@ -256,7 +257,8 @@ export function useOrders() {
                 title: context.shootingData.title,
                 team: context.shootingData.team,
                 director: context.shootingData.director,
-                floorDirector: context.shootingData.floorDirector
+                floorDirector: context.shootingData.floorDirector,
+                producer: context.shootingData.producer
             }
         }
 
@@ -264,9 +266,58 @@ export function useOrders() {
     }
 
     /**
+     * 既存プロジェクトのオーダースレッド一覧を取得
+     */
+    interface ExistingThread {
+        threadTs: string
+        dates: string[]
+    }
+    const checkExistingProject = async (): Promise<ExistingThread[]> => {
+        if (!db) return []
+        const { context } = orderStore
+        const projectId = context.mode === 'shooting' && context.shootingData?.notionPageId
+            ? context.shootingData.notionPageId : null
+        if (!projectId) return []
+
+        try {
+            // NOTE: where('slackThreadTs', '!=', '') は複合インデックスが必要なため
+            // projectId のみでクエリし、slackThreadTs はクライアント側でフィルタ
+            const snap = await getDocs(
+                query(
+                    collection(db, 'castings'),
+                    where('projectId', '==', projectId)
+                )
+            )
+            if (snap.empty) return []
+
+            // スレッドTSごとにグループ化し、日付を収集
+            const threadMap = new Map<string, Set<string>>()
+            snap.docs.forEach(doc => {
+                const data = doc.data()
+                const ts = data.slackThreadTs as string
+                if (!ts) return  // slackThreadTs が空のものはスキップ
+                if (!threadMap.has(ts)) threadMap.set(ts, new Set())
+                const dates = threadMap.get(ts)!
+                if (data.startDate) {
+                    const d = data.startDate.toDate()
+                    dates.add(`${d.getMonth() + 1}/${d.getDate()}`)
+                }
+            })
+
+            return Array.from(threadMap.entries()).map(([threadTs, dateSet]) => ({
+                threadTs,
+                dates: Array.from(dateSet).sort()
+            }))
+        } catch (e) {
+            console.warn('checkExistingProject failed:', e)
+            return []
+        }
+    }
+
+    /**
      * オーダーをFirestoreに保存
      */
-    const submitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }): Promise<boolean> => {
+    const submitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }, forceNewThread?: boolean, replyToThreadTs?: string): Promise<boolean> => {
         if (!db) {
             toast.add({
                 severity: 'error',
@@ -469,7 +520,9 @@ export function useOrders() {
                             slackMentionId: i.slackMentionId,
                             selectedDates: i.selectedDates || []
                         })),
-                        castingIds
+                        castingIds,
+                        forceNewThread: forceNewThread || false,
+                        replyToThreadTs: replyToThreadTs || undefined
                     })
 
                     if (result.data && typeof result.data === 'object' && 'ts' in result.data) {
@@ -579,6 +632,7 @@ export function useOrders() {
 
     return {
         loading,
-        submitOrder
+        submitOrder,
+        checkExistingProject
     }
 }

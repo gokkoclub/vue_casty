@@ -4,8 +4,36 @@ import InputText from 'primevue/inputtext'
 import Card from 'primevue/card'
 import CartRoleItem from '@/components/cart/CartRoleItem.vue'
 import { useOrderStore } from '@/stores/orderStore'
+import { useAvailability } from '@/composables/useAvailability'
+import { computed, watchEffect } from 'vue'
 
 const store = useOrderStore()
+const { activeCastings } = useAvailability()
+
+// Extract unique project names from existing castings for the selected dates
+const existingProjectNames = computed(() => {
+  const names = new Set<string>()
+  activeCastings.value.forEach(c => {
+    if (c.projectName && c.projectName.trim()) {
+      names.add(c.projectName.trim())
+    }
+  })
+  return Array.from(names)
+})
+
+// Sync to store for use in getFlattenedOrders fallback
+watchEffect(() => {
+  store.setExistingProjectNames(existingProjectNames.value)
+})
+
+// Get a suggested project name for a given index
+const getProjectPlaceholder = (index: number): string => {
+  if (existingProjectNames.value.length > 0 && index < existingProjectNames.value.length) {
+    return existingProjectNames.value[index]!
+  }
+  return `${index + 1}作品目のタイトルのみを入力してください`
+}
+
 
 const handleAddRole = (projectId: string) => {
   store.addRole(projectId)
@@ -34,11 +62,20 @@ const handleAddProject = () => {
       <template #title>
         <div class="project-header">
           <span class="label">作品:</span>
-          <InputText 
-            v-model="project.title" 
-            :placeholder="`${index + 1}作品目のタイトルのみを入力してください`" 
-            class="project-title-input"
-          />
+          <div class="project-title-wrapper">
+            <InputText 
+              v-model="project.title" 
+              :placeholder="getProjectPlaceholder(index)" 
+              class="project-title-input"
+              :class="{ 'has-suggestion': !project.title && existingProjectNames.length > index }"
+            />
+            <span 
+              v-if="!project.title && existingProjectNames.length > index" 
+              class="project-suggestion-hint"
+            >
+              ※ 既存オーダーから自動入力されます
+            </span>
+          </div>
           <Button 
             icon="pi pi-trash" 
             text 
@@ -108,8 +145,27 @@ const handleAddProject = () => {
   white-space: nowrap;
 }
 
-.project-title-input {
+.project-title-wrapper {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.project-title-input {
+  width: 100%;
+}
+
+.project-title-input.has-suggestion :deep(input)::placeholder {
+  color: var(--p-primary-color);
+  opacity: 0.6;
+  font-weight: 500;
+}
+
+.project-suggestion-hint {
+  font-size: 0.7rem;
+  color: var(--p-primary-color);
+  opacity: 0.7;
 }
 
 .roles-container {

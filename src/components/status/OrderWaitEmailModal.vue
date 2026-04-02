@@ -184,8 +184,8 @@ const handleClose = () => {
   border-radius: 6px;
   font-size: 0.8rem;
   font-weight: 600;
-  background: #EDE9FE;
-  color: #6B21A8;
+  background: var(--p-highlight-background);
+  color: var(--p-highlight-color);
 }
 
 .owem-mail {
@@ -219,8 +219,8 @@ const handleClose = () => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.6rem 0.75rem;
-  background: #DBEAFE;
-  color: #1E40AF;
+  background: var(--p-message-info-background);
+  color: var(--p-message-info-color);
   border-radius: 6px;
   font-size: 0.8rem;
 }
@@ -234,5 +234,10 @@ const handleClose = () => {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+:deep(.p-textarea) {
+  background: var(--p-content-background) !important;
+  color: var(--p-text-color) !important;
 }
 </style>

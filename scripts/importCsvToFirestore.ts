@@ -23,8 +23,11 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const require = createRequire(import.meta.url)
 
+// プロジェクトルート（process.cwd() で確実に取得）
+const PROJECT_ROOT = process.cwd()
+
 // Firebase Admin 初期化
-const serviceAccountPath = path.resolve(__dirname, '../serviceAccountKey.json')
+const serviceAccountPath = path.resolve(PROJECT_ROOT, 'serviceAccountKey.json')
 if (!fs.existsSync(serviceAccountPath)) {
     console.error('❌ serviceAccountKey.json が見つかりません。Firebase Console からダウンロードして vue_casty/ 直下に配置してください。')
     process.exit(1)
@@ -88,7 +91,7 @@ function readCsv(filePath: string): Record<string, string>[] {
 // ==================== castings ====================
 
 async function importCastings() {
-    const csvPath = path.resolve(__dirname, '../キャストDB - キャスティングリスト (1).csv')
+    const csvPath = path.resolve(PROJECT_ROOT, 'キャストDB - キャスティングリスト (4).csv')
     if (!fs.existsSync(csvPath)) {
         console.log('⚠ キャスティングリスト CSV が見つかりません。スキップ。')
         return
@@ -106,6 +109,20 @@ async function importCastings() {
             const id = row['CastingID']
             if (!id || id.startsWith('過去') || !id.startsWith('casting_') && !id.startsWith('sp_')) continue
 
+            // sp_ => external/internal, casting_ => shooting
+            const isSp = id.startsWith('sp_')
+            const mode = isSp ? 'internal' : 'shooting'
+
+            // 備考から時間をパース (例: "14:00 ~ 18:00", "08:00 ~ 23:00")
+            let startTime = ''
+            let endTime = ''
+            const noteText = row['備考'] || ''
+            const timeMatch = noteText.match(/(\d{1,2}:\d{2})\s*[~～〜-]\s*(\d{1,2}:\d{2})/)
+            if (timeMatch) {
+                startTime = timeMatch[1]
+                endTime = timeMatch[2]
+            }
+
             const docRef = db.collection('castings').doc(id)
             batch.set(docRef, {
                 accountName: row['アカウント'] || '',
@@ -115,9 +132,11 @@ async function importCastings() {
                 castName: row['キャスト名'] || '',
                 startDate: parseDate(row['開始日']),
                 endDate: parseDate(row['終了日']),
+                startTime: startTime,
+                endTime: endTime,
                 rank: parseNumber(row['候補順位']) || 1,
                 status: row['ステータス'] || '仮キャスティング',
-                notes: row['備考'] || '',
+                note: noteText,
                 slackThreadTs: row['SlackThreadTS'] || '',
                 slackPermalink: row['SlackPermalink'] || '',
                 mainSub: row['メイン/サブ'] || 'その他',
@@ -129,6 +148,7 @@ async function importCastings() {
                 castType: row['内部/外部'] === '内部' ? '内部' : '外部',
                 email: row['メール'] || '',
                 cost: parseNumber(row['金額']) || 0,
+                mode: mode,
                 createdAt: admin.firestore.Timestamp.now(),
                 createdBy: row['更新者'] || 'csv_import'
             })
@@ -143,7 +163,7 @@ async function importCastings() {
 // ==================== castMaster ====================
 
 async function importCastMaster() {
-    const csvPath = path.resolve(__dirname, '../キャストDB - マスターデータ (1).csv')
+    const csvPath = path.resolve(PROJECT_ROOT, 'キャストDB - マスターデータ (3).csv')
     if (!fs.existsSync(csvPath)) {
         console.log('⚠ マスターデータ CSV が見つかりません。スキップ。')
         return
@@ -195,7 +215,7 @@ async function importCastMaster() {
 // ==================== shootingContacts ====================
 
 async function importShootingContacts() {
-    const csvPath = path.resolve(__dirname, '../キャストDB - 撮影連絡DB (1).csv')
+    const csvPath = path.resolve(PROJECT_ROOT, 'キャストDB - 撮影連絡DB (3).csv')
     if (!fs.existsSync(csvPath)) {
         console.log('⚠ 撮影連絡DB CSV が見つかりません。スキップ。')
         return
@@ -250,17 +270,76 @@ async function importShootingContacts() {
 
 // ==================== メイン ====================
 
+// ==================== casts (キャストリスト) ====================
+
+async function importCasts() {
+    const csvPath = path.resolve(PROJECT_ROOT, 'キャストDB - キャストリストのコピー.csv')
+    if (!fs.existsSync(csvPath)) {
+        console.log('⚠ キャストリスト CSV が見つかりません。スキップ。')
+        return
+    }
+
+    const rows = readCsv(csvPath)
+    console.log(`\n👤 casts: ${rows.length}件をインポート中...`)
+
+    let imported = 0
+    const batchSize = 500
+    for (let i = 0; i < rows.length; i += batchSize) {
+        const batch = db.batch()
+        const chunk = rows.slice(i, i + batchSize)
+
+        for (const row of chunk) {
+            const id = row['CastID']
+            if (!id || !id.startsWith('cast_')) continue
+
+            // 生年月日パース
+            let dateOfBirth = null
+            if (row['生年月日']) {
+                const parsed = parseDate(row['生年月日'])
+                if (parsed) dateOfBirth = parsed
+            }
+
+            const docRef = db.collection('casts').doc(id)
+            batch.set(docRef, {
+                name: row['氏名'] || '',
+                furigana: row['ふりがな'] || '',
+                gender: row['性別'] || '',
+                dateOfBirth: dateOfBirth,
+                agency: row['所属事務所'] || '',
+                imageUrl: row['アイコンURL'] || '',
+                appearanceCount: parseNumber(row['主演回数']) || 0,
+                email: row['メール'] || '',
+                notes: row['メモ'] || '',
+                castType: row['内部外部'] === '内部' ? '内部' : '外部',
+                slackMentionId: row['SlackID'] || '',
+                snsX: row['X(Twitter)'] || '',
+                snsInstagram: row['Instagram'] || '',
+                snsTikTok: row['TikTok'] || '',
+                createdAt: admin.firestore.Timestamp.now(),
+                updatedAt: admin.firestore.Timestamp.now()
+            })
+            imported++
+        }
+
+        await batch.commit()
+        console.log(`  ... ${Math.min(i + batchSize, rows.length)}/${rows.length}`)
+    }
+    console.log(`✅ casts: ${imported}件インポート完了`)
+}
+
 async function main() {
     console.log('🚀 Firestore CSV インポート開始')
     console.log('='.repeat(50))
 
     // 1. 既存データ削除
     console.log('\n🗑️  既存データを削除中...')
+    await deleteCollection('casts')
     await deleteCollection('castings')
     await deleteCollection('castMaster')
     await deleteCollection('shootingContacts')
 
     // 2. CSV インポート
+    await importCasts()
     await importCastings()
     await importCastMaster()
     await importShootingContacts()

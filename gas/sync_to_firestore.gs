@@ -1,3 +1,4 @@
+
 /**
  * スプレッドシート → Firestore 同期スクリプト
  * 
@@ -173,115 +174,57 @@ function sanitizeDocId_(id) {
 
 // =============================================
 // 1. casts コレクション同期
-//    ソース: Notion_FromDB + キャストリスト + 内部キャストDB
+//    ソース: キャストリスト（Notion_FromDB + 内部キャストDB の情報を関数で集約済み）
 // =============================================
 function syncCastsToFirestore_() {
   console.log('=== casts 同期開始 ===');
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   
-  // --- Notion_FromDB 読み取り ---
-  var notionSheet = ss.getSheetByName('Notion_FromDB');
-  if (!notionSheet || notionSheet.getLastRow() < 2) {
-    console.warn('Notion_FromDB が見つからないかデータなし');
-    return 0;
-  }
-  var notionData = notionSheet.getRange(2, 1, notionSheet.getLastRow() - 1, 12).getValues();
-  // Notion_FromDB列: A=page_id, B=名前, C=性別, D=事務所, E=出演回数,
-  //   F=アイコンURL, G=連絡先, H=X, I=Instagram, J=TikTok, K=ふりがな, L=生年月日
-  
-  var notionMap = {};
-  notionData.forEach(function(row) {
-    var name = String(row[1] || '').trim();
-    if (name) {
-      notionMap[name] = {
-        notionPageId: String(row[0] || ''),
-        gender: String(row[2] || ''),
-        agency: String(row[3] || ''),
-        appearanceCount: Number(row[4]) || 0,
-        imageUrl: String(row[5] || ''),
-        email: String(row[6] || ''),
-        snsX: String(row[7] || ''),
-        snsInstagram: String(row[8] || ''),
-        snsTikTok: String(row[9] || ''),
-        furigana: String(row[10] || ''),
-        dateOfBirth: String(row[11] || '')
-      };
-    }
-  });
-  
-  // --- 内部キャストDB 読み取り ---
-  var internalSheet = ss.getSheetByName('内部キャストDB');
-  var internalMap = {}; // displayname or 本名 → {email, userid}
-  
-  if (internalSheet && internalSheet.getLastRow() >= 2) {
-    var internalData = internalSheet.getRange(2, 1, internalSheet.getLastRow() - 1, 5).getValues();
-    // A=本名, B=fullname, C=displayname, D=email, E=userid
-    internalData.forEach(function(row) {
-      var realName = String(row[0] || '').trim();
-      var displayname = String(row[2] || '').trim();
-      var info = {
-        realName: realName,
-        fullname: String(row[1] || '').trim(),
-        displayname: displayname,
-        email: String(row[3] || '').trim(),
-        slackMentionId: String(row[4] || '').trim()
-      };
-      // displaynameとrealNameの両方で引けるようにする
-      if (displayname) internalMap[displayname] = info;
-      if (realName && realName !== displayname) internalMap[realName] = info;
-    });
-  }
-  
   // --- キャストリスト 読み取り ---
+  // A=CastID, B=氏名, C=性別, D=生年月日, E=所属事務所,
+  // F=アイコンURL, G=主演回数, H=メール, I=メモ, J=内部外部,
+  // K=SlackID, L=X(Twitter), M=Instagram, N=TikTok, O=ふりがな
   var castListSheet = ss.getSheetByName('キャストリスト');
   if (!castListSheet || castListSheet.getLastRow() < 2) {
     console.warn('キャストリスト が見つからないかデータなし');
     return 0;
   }
   var castListData = castListSheet.getRange(2, 1, castListSheet.getLastRow() - 1, 15).getValues();
-  // A(1)=cast_ID, B(2)=名前, ... O(15)=ふりがな
   
   var documents = [];
   
   castListData.forEach(function(row) {
-    var castId = String(row[0] || '').trim();
-    var name = String(row[1] || '').trim();
+    var castId = String(row[0] || '').trim();   // A: CastID
+    var name = String(row[1] || '').trim();      // B: 氏名
     
-    // cast_XXXXX フォーマットのみ同期（削除済み・ext_ はスキップ）
+    // cast_XXXXX フォーマットのみ同期（削除済み等はスキップ）
     if (!castId || !name || !castId.startsWith('cast_')) return;
     
     var docId = sanitizeDocId_(castId);
     if (!docId) return;
     
-    // Notion情報をマージ
-    var notion = notionMap[name] || {};
-    
-    // 内部キャスト情報をマージ
-    var internal = internalMap[name] || null;
-    var isInternal = !!internal;
+    var castType = String(row[9] || '').trim();  // J: 内部外部
     
     var castData = {
       name: name,
-      furigana: notion.furigana || String(row[14] || '').trim(),
-      gender: notion.gender || '',
-      castType: isInternal ? '内部' : '外部',
-      agency: notion.agency || '',
-      imageUrl: notion.imageUrl || '',
-      email: internal ? internal.email : (notion.email || ''),
-      slackMentionId: internal ? internal.slackMentionId : '',
-      // appearanceCount は上書きしない（Vue側で castings から作品単位で計算）
-      snsX: notion.snsX || '',
-      snsInstagram: notion.snsInstagram || '',
-      snsTikTok: notion.snsTikTok || '',
-      dateOfBirth: notion.dateOfBirth || '',
-      notionPageId: notion.notionPageId || '',
+      furigana: String(row[14] || '').trim(),      // O: ふりがな
+      gender: String(row[2] || ''),                 // C: 性別
+      castType: castType || '外部',                 // J: 内部外部（空なら外部）
+      agency: String(row[4] || ''),                 // E: 所属事務所
+      imageUrl: String(row[5] || ''),               // F: アイコンURL
+      email: String(row[7] || ''),                  // H: メール
+      slackMentionId: String(row[10] || ''),         // K: SlackID
+      snsX: String(row[11] || ''),                  // L: X(Twitter)
+      snsInstagram: String(row[12] || ''),           // M: Instagram
+      snsTikTok: String(row[13] || ''),              // N: TikTok
+      dateOfBirth: String(row[3] || ''),             // D: 生年月日
       updatedAt: new Date()
     };
     
     documents.push({ id: docId, data: castData });
   });
   
-  // 重複排除（同じdocIdが複数ある場合は最後のものを採用）
+  // 重複排除
   var uniqueMap = {};
   documents.forEach(function(doc) {
     uniqueMap[doc.id] = doc;
@@ -292,7 +235,7 @@ function syncCastsToFirestore_() {
     firestoreBatchWrite_(uniqueDocs, 'casts');
   }
   
-  console.log('casts 同期完了: ' + uniqueDocs.length + '件' + (documents.length !== uniqueDocs.length ? ' (重複' + (documents.length - uniqueDocs.length) + '件を除外)' : ''));
+  console.log('casts 同期完了: ' + uniqueDocs.length + '件 (キャストリストから)');
   return uniqueDocs.length;
 }
 

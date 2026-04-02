@@ -5,6 +5,7 @@ import InputText from 'primevue/inputtext'
 import SelectButton from 'primevue/selectbutton'
 import ProgressSpinner from 'primevue/progressspinner'
 import Button from 'primevue/button'
+import Popover from 'primevue/popover'
 import Tag from 'primevue/tag'
 import Checkbox from 'primevue/checkbox'
 import MultiSelect from 'primevue/multiselect'
@@ -24,8 +25,10 @@ import { useOrders } from '@/composables/useOrders'
 import { getCastBookings, isBookingBlocked } from '@/utils/castStatusUtils'
 import type { Cast, Shooting } from '@/types'
 import { useToast } from 'primevue/usetoast'
+import { useAuth } from '@/composables/useAuth'
 
 const toast = useToast()
+const { isAdmin } = useAuth()
 const { casts, loading, fetchAll, isFirebaseConfigured } = useCasts()
 const { shootings, loading: shootingsLoading, fetchShootingsByDates } = useShootings()
 const { activeCastings, fetchAvailability } = useAvailability()
@@ -281,10 +284,50 @@ const handleNewCastSaved = (cast: Cast) => {
 }
 
 // Order submission with progress
-const { submitOrder } = useOrders()
+const { submitOrder, checkExistingProject } = useOrders()
+
+// 保留中の送信パラメータ
+const pendingOrderParams = ref<{ pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string } } | null>(null)
+const additionalOrderPopover = ref()
+const existingThreads = ref<Array<{ threadTs: string; dates: string[] }>>([])
+const selectedThreadTs = ref('')
+const popoverAnchor = ref()
 
 const handleSubmitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }) => {
-  const success = await submitOrder(pdfFile ?? undefined, intimacy, competition)
+  // 既存オーダーがあるかチェック
+  const threads = await checkExistingProject()
+
+  if (threads.length > 0) {
+    // 既存オーダーあり → ユーザーに選択させるポップアップ表示
+    existingThreads.value = threads
+    selectedThreadTs.value = threads[0]?.threadTs || ''
+    pendingOrderParams.value = { pdfFile, intimacy, competition }
+    // Popover をアンカー要素から表示
+    nextTick(() => {
+      additionalOrderPopover.value?.show({ currentTarget: popoverAnchor.value })
+    })
+    return
+  }
+
+  // 既存なし → 通常送信
+  await executeSubmit(pdfFile, intimacy, competition, false)
+}
+
+const handleAdditionalOrderChoice = async (forceNew: boolean) => {
+  additionalOrderPopover.value?.hide()
+  if (!pendingOrderParams.value) return
+  const { pdfFile, intimacy, competition } = pendingOrderParams.value
+  pendingOrderParams.value = null
+  if (forceNew) {
+    await executeSubmit(pdfFile, intimacy, competition, true)
+  } else {
+    // 選択されたスレッドに追加オーダー
+    await executeSubmit(pdfFile, intimacy, competition, false, selectedThreadTs.value)
+  }
+}
+
+const executeSubmit = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }, forceNewThread?: boolean, replyToThreadTs?: string) => {
+  const success = await submitOrder(pdfFile ?? undefined, intimacy, competition, forceNewThread, replyToThreadTs)
   
   if (success) {
     // Use nextTick to avoid recursive updates
@@ -404,6 +447,7 @@ onUnmounted(() => {
             <template #content>
               <DateSelector 
                 :dates="selectedDates"
+                :allowPastDates="isAdmin"
                 @update:dates="handleDatesUpdate" 
               />
             </template>
@@ -596,6 +640,57 @@ onUnmounted(() => {
       :progress="progressValue"
       :message="progressMessage"
     />
+
+    <!-- 追加オーダー確認ポップオーバー (アンカー) -->
+    <span ref="popoverAnchor" style="position: fixed; top: 50%; left: 50%; pointer-events: none;"></span>
+
+    <Popover ref="additionalOrderPopover">
+      <div style="display: flex; flex-direction: column; gap: 1rem; max-width: 420px; padding: 0.25rem;">
+        <h4 style="margin: 0; font-size: 1rem; font-weight: 700;">オーダー送信方法</h4>
+
+        <p style="margin: 0; font-size: 0.9rem; line-height: 1.6; color: var(--p-text-color);">
+          この作品には既にオーダーが送信されています。<br>
+          追加オーダーとして既存スレッドに返信しますか？<br>
+          それとも新規スレッドを作成しますか？
+        </p>
+
+        <div style="padding: 0.6rem 0.75rem; background: var(--p-message-warn-background); color: var(--p-message-warn-color); border-radius: 6px; font-size: 0.8rem; display: flex; align-items: center; gap: 0.5rem;">
+          <i class="pi pi-info-circle" style="flex-shrink: 0;"></i>
+          <span>リスケなどで以前とは別日の撮影オーダーの場合は「新規スレッド」を選択してください</span>
+        </div>
+
+        <!-- スレッド選択（複数ある場合） -->
+        <div v-if="existingThreads.length > 1" style="display: flex; flex-direction: column; gap: 0.5rem;">
+          <label style="font-weight: 600; font-size: 0.85rem; color: var(--p-text-muted-color);">追加先のスレッドを選択:</label>
+          <div v-for="thread in existingThreads" :key="thread.threadTs"
+            style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 6px; cursor: pointer; transition: background 0.15s;"
+            :style="{
+              background: selectedThreadTs === thread.threadTs ? 'var(--p-highlight-background)' : 'var(--p-content-hover-background)',
+              border: selectedThreadTs === thread.threadTs ? '2px solid var(--p-primary-color)' : '2px solid transparent'
+            }"
+            @click="selectedThreadTs = thread.threadTs"
+          >
+            <i class="pi pi-comments" style="color: var(--p-primary-color);"></i>
+            <span style="font-size: 0.9rem;">撮影日: {{ thread.dates.join(', ') }}</span>
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 0.75rem; justify-content: flex-end; margin-top: 0.5rem;">
+          <Button
+            label="新規スレッド"
+            icon="pi pi-plus"
+            severity="secondary"
+            outlined
+            @click="handleAdditionalOrderChoice(true)"
+          />
+          <Button
+            label="追加オーダー"
+            icon="pi pi-reply"
+            @click="handleAdditionalOrderChoice(false)"
+          />
+        </div>
+      </div>
+    </Popover>
 
     <!-- 新規外部キャストモーダル -->
     <NewCastModal

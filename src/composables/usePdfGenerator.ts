@@ -122,7 +122,7 @@ export function usePdfGenerator() {
                         ${data.agencyName ? `
                         <tr>
                             <td style="padding: 8px 12px; border: 1px solid #999; background: #f0f0f0; font-weight: 600; text-align: center;">キャスト名</td>
-                            <td style="padding: 8px 12px; border: 1px solid #999;">${data.castName}</td>
+                            <td style="padding: 8px 12px; border: 1px solid #999;">${data.castName} 様</td>
                         </tr>
                         ` : ''}
                         <tr>

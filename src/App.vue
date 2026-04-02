@@ -67,7 +67,7 @@ const menuItems = computed(() => {
       <Menubar :model="menuItems">
         <template #start>
           <RouterLink to="/" class="logo">
-            <span class="logo-text">キャスト管理システム ✨</span>
+            <img src="@/assets/casty-logo.png" alt="Casty Ⅱ" class="logo-img" />
           </RouterLink>
         </template>
         
@@ -126,12 +126,14 @@ const menuItems = computed(() => {
 .logo {
   text-decoration: none;
   margin-right: 1rem;
+  display: flex;
+  align-items: center;
 }
 
-.logo-text {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--p-primary-color);
+.logo-img {
+  height: 60px;
+  width: auto;
+  object-fit: contain;
 }
 
 .header-actions {
