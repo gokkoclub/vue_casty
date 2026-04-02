@@ -193,10 +193,25 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     // それ以外は従来通り自動判定
     let existingThreadTs = "";
     let existingPermalink = "";
+    let resolvedThreadChannel = ""; // スレッドが存在するチャンネル
     if (data.replyToThreadTs) {
         // クライアントが指定したスレッドに返信
         existingThreadTs = data.replyToThreadTs;
-        // permalink は後で取得不要（追加オーダーの場合は不要）
+        // Firestoreからスレッドの正しいチャンネルを取得
+        // (モードベースのチャンネルと異なる場合があるため)
+        if (data.projectId) {
+            const threadSnap = await db.collection("castings")
+                .where("projectId", "==", data.projectId)
+                .where("slackThreadTs", "==", data.replyToThreadTs)
+                .limit(1)
+                .get();
+            if (!threadSnap.empty) {
+                const threadData = threadSnap.docs[0].data();
+                resolvedThreadChannel = resolveSlackChannel(threadData);
+                existingPermalink = threadData.slackPermalink || "";
+                console.log("Resolved thread channel from Firestore:", resolvedThreadChannel);
+            }
+        }
     }
     else if (data.projectId && !data.forceNewThread) {
         // NOTE: where('slackThreadTs', '!=', '') は複合インデックスが必要なため
@@ -209,9 +224,14 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             const existingData = docWithThread.data();
             existingThreadTs = existingData.slackThreadTs || "";
             existingPermalink = existingData.slackPermalink || "";
+            resolvedThreadChannel = resolveSlackChannel(existingData);
         }
     }
     const isAdditional = !!existingThreadTs;
+    // 追加オーダー時: スレッドのチャンネルを優先使用
+    if (isAdditional && resolvedThreadChannel) {
+        console.log("Override channel for thread reply:", slackChannel, "→", resolvedThreadChannel);
+    }
     // ── メッセージ構築 ──
     console.log("Order mode:", orderMode, "isAdditional:", isAdditional);
     // ── CC欄構築（Slack IDメンション解決付き） ──
@@ -375,9 +395,13 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     }
     // ── Slack送信 ──
     // PDF添付がある場合: Slack SDK でアップロード（V1と同じ方式）
-    // 追加オーダー時は既存スレッドに返信
+    // 追加オーダー時は既存スレッドに返信（スレッドの実チャンネルを使用）
     const threadTsForReply = isAdditional ? existingThreadTs : undefined;
-    console.log("PDF check:", {
+    const postChannel = (isAdditional && resolvedThreadChannel) ? resolvedThreadChannel : slackChannel;
+    console.log("Slack send:", {
+        postChannel,
+        threadTsForReply: threadTsForReply || "(none)",
+        isAdditional,
         hasPdfBase64: !!data.pdfBase64,
         pdfBase64Length: data.pdfBase64?.length || 0,
         pdfFileName: data.pdfFileName || "(none)",
@@ -385,8 +409,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     let slackResult = { ok: false };
     try {
         slackResult = data.pdfBase64 && data.pdfFileName
-            ? await (0, slack_1.uploadFileToSlack)(slackToken, slackChannel, message, data.pdfBase64, data.pdfFileName, threadTsForReply)
-            : await (0, slack_1.postToSlack)(slackToken, slackChannel, message, undefined, threadTsForReply);
+            ? await (0, slack_1.uploadFileToSlack)(slackToken, postChannel, message, data.pdfBase64, data.pdfFileName, threadTsForReply)
+            : await (0, slack_1.postToSlack)(slackToken, postChannel, message, undefined, threadTsForReply);
         console.log("Slack post completed, ts:", slackResult.ts, "permalink:", slackResult.permalink);
     }
     catch (slackError) {
@@ -503,7 +527,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             const updateData = {
                 slackThreadTs: threadTs,
                 slackPermalink: permalink,
-                slackChannel: slackChannel,
+                slackChannel: postChannel,
             };
             // カレンダーイベントIDをマッチして書き戻す
             const item = items[i];
@@ -551,7 +575,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     accountName: data.accountName || "",
                     castingId,
                     slackThreadTs: threadTs,
-                    slackChannel: slackChannel,
+                    slackChannel: postChannel,
                     permalink: dmPermalink,
                 });
                 const dmText = `📋 ${(data.dateRanges || []).join(", ")} 撮影オーダーが来ています（${item.projectName}）`;
