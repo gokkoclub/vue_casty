@@ -99,32 +99,123 @@ export async function uploadFileToSlack(
         const fileBuffer = Buffer.from(fileBase64, "base64");
         console.log("[SLACK SDK] Uploading file:", fileName, "size:", fileBuffer.length);
 
-        // ── Step 1: テキストメッセージを先に投稿（信頼できる ts を取得） ──
-        // filesUploadV2 のレスポンスから取れる ts は不正確な場合があるため、
-        // chat.postMessage で確実な ts を取得し、ファイルはそのスレッドに添付する
-        const messageResult = await postToSlack(token, channel, text, undefined, threadTs);
-        const messageTs = messageResult.ts || "";
-        const permalink = messageResult.permalink || "";
-        console.log("[SLACK SDK] Text message posted, ts:", messageTs);
+        const client = new WebClient(token);
 
-        // ── Step 2: ファイルをスレッドにアップロード ──
-        if (messageTs) {
-            const client = new WebClient(token);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const uploadOptions: any = {
-                channel_id: channel,
-                file: fileBuffer,
-                filename: fileName,
-                title: fileName,
-                thread_ts: threadTs || messageTs,  // 追加オーダー時は元スレッド、新規時はメッセージ自体のスレッド
-            };
-            const uploadResult = await client.filesUploadV2(uploadOptions);
-            console.log("[SLACK SDK] File uploaded to thread, ok:", uploadResult.ok);
-        } else {
-            console.warn("[SLACK SDK] No message ts, skipping file upload");
+        // filesUploadV2 でファイル + メッセージを同時投稿
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const uploadOptions: any = {
+            channel_id: channel,
+            initial_comment: text,
+            file: fileBuffer,
+            filename: fileName,
+            title: fileName,
+        };
+        if (threadTs) {
+            uploadOptions.thread_ts = threadTs;
+        }
+        const uploadResult = await client.filesUploadV2(uploadOptions);
+
+        console.log("[SLACK SDK] Upload result ok:", uploadResult.ok);
+
+        // ts を取得（filesUploadV2 のレスポンスから）
+        let ts = "";
+        let permalink = "";
+
+        // files[0].shares からts取得を試みる
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const resultAny = uploadResult as any;
+        const files = resultAny.files as Array<{
+            id: string;
+            shares?: Record<string, Record<string, Array<{ ts: string }>>>;
+        }> | undefined;
+
+        if (files?.[0]?.shares) {
+            for (const shareType of Object.values(files[0].shares)) {
+                for (const channelShares of Object.values(shareType)) {
+                    if (channelShares?.[0]?.ts) {
+                        ts = channelShares[0].ts;
+                        break;
+                    }
+                }
+                if (ts) break;
+            }
         }
 
-        return { ok: true, ts: messageTs, permalink };
+        // ts が取れない場合は files.info で再取得
+        if (!ts && files?.[0]?.id) {
+            console.log("[SLACK SDK] No ts from shares, trying files.info...");
+            try {
+                const infoResult = await client.files.info({ file: files[0].id });
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const infoShares = (infoResult.file as any)?.shares as Record<string, Record<string, Array<{ ts: string }>>> | undefined;
+                if (infoShares) {
+                    for (const shareType of Object.values(infoShares)) {
+                        for (const channelShares of Object.values(shareType)) {
+                            if (channelShares?.[0]?.ts) {
+                                ts = channelShares[0].ts;
+                                break;
+                            }
+                        }
+                        if (ts) break;
+                    }
+                }
+            } catch (infoErr) {
+                console.warn("[SLACK SDK] files.info failed:", infoErr);
+            }
+        }
+
+        // ── ts 検証 & フォールバック ──
+        // ts が取れている場合: getPermalink で存在確認
+        // ts が空 or getPermalink 失敗: conversations.history から正しい ts を取得
+        let tsVerified = false;
+        if (ts) {
+            try {
+                const plResult = await client.chat.getPermalink({
+                    channel,
+                    message_ts: ts,
+                });
+                permalink = plResult.permalink || "";
+                tsVerified = true;
+            } catch (plErr) {
+                console.warn("[SLACK SDK] getPermalink failed for ts:", ts, "— ts may be invalid");
+                ts = "";  // リセットしてフォールバックへ
+            }
+        }
+
+        // ts が空（shares/files.info から取得失敗、またはgetPermalink検証失敗）
+        // → conversations.history で直近のファイル付きメッセージから ts を取得
+        if (!ts) {
+            console.log("[SLACK SDK] ts empty, falling back to conversations.history...");
+            try {
+                const history = await client.conversations.history({
+                    channel,
+                    limit: 5,
+                });
+                // ファイル名が一致するメッセージ、またはBot投稿の直近メッセージを探す
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const botMsg = (history.messages || []).find((m: any) =>
+                    (m.files && m.files.length > 0 && m.files.some((f: any) => f.name === fileName)) ||
+                    (m.bot_id && m.text && m.text.includes(text.substring(0, 50)))
+                );
+                if (botMsg?.ts) {
+                    console.log("[SLACK SDK] Found ts from history:", botMsg.ts);
+                    ts = botMsg.ts;
+                    // permalink 取得
+                    try {
+                        const plResult2 = await client.chat.getPermalink({ channel, message_ts: ts });
+                        permalink = plResult2.permalink || "";
+                    } catch { /* ignore */ }
+                    tsVerified = true;
+                } else {
+                    console.warn("[SLACK SDK] Could not find message in history");
+                }
+            } catch (histErr) {
+                console.warn("[SLACK SDK] conversations.history fallback failed:", histErr);
+            }
+        }
+
+        console.log("[SLACK SDK] File uploaded, ts:", ts, "permalink:", permalink, "verified:", tsVerified);
+        return { ok: true, ts, permalink };
 
     } catch (error) {
         console.error("[SLACK SDK] File upload error:", error);

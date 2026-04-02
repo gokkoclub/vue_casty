@@ -167,17 +167,18 @@ export const notifyOrderCreated = onCall(
         const db = admin.firestore();
 
         // ── 追加オーダー判定 ──
-        // クライアントから replyToThreadTs が指定された場合はそのスレッドに返信
-        // forceNewThread=true の場合は新規スレッドを作成
-        // それ以外は従来通り自動判定
+        // 優先順位:
+        // 1. クライアントから replyToThreadTs が指定 → そのスレッドに返信
+        // 2. forceNewThread=true → 新規スレッド
+        // 3. Firestore の slackThreadTs で自動判定
+        // 4. slackThreadTs が空でも projectId のキャスティングが存在 → Slack チャンネル検索でリカバリ
         let existingThreadTs = "";
         let existingPermalink = "";
-        let resolvedThreadChannel = "";  // スレッドが存在するチャンネル
+        let resolvedThreadChannel = "";
+
         if (data.replyToThreadTs) {
-            // クライアントが指定したスレッドに返信
             existingThreadTs = data.replyToThreadTs;
-            // Firestoreからスレッドの正しいチャンネルを取得
-            // (モードベースのチャンネルと異なる場合があるため)
+            // Firestoreからスレッドのチャンネルを取得
             if (data.projectId) {
                 const threadSnap = await db.collection("castings")
                     .where("projectId", "==", data.projectId)
@@ -188,12 +189,10 @@ export const notifyOrderCreated = onCall(
                     const threadData = threadSnap.docs[0].data();
                     resolvedThreadChannel = resolveSlackChannel(threadData);
                     existingPermalink = threadData.slackPermalink || "";
-                    console.log("Resolved thread channel from Firestore:", resolvedThreadChannel);
                 }
             }
         } else if (data.projectId && !data.forceNewThread) {
-            // NOTE: where('slackThreadTs', '!=', '') は複合インデックスが必要なため
-            // projectId のみでクエリし、slackThreadTs はクライアント側でフィルタ
+            // Firestore から slackThreadTs を探す
             const existingSnap = await db.collection("castings")
                 .where("projectId", "==", data.projectId)
                 .get();
@@ -204,10 +203,87 @@ export const notifyOrderCreated = onCall(
                 existingThreadTs = existingData.slackThreadTs || "";
                 existingPermalink = existingData.slackPermalink || "";
                 resolvedThreadChannel = resolveSlackChannel(existingData);
+            } else if (existingSnap.docs.length > 0) {
+                // slackThreadTs が空のキャスティングは存在する（= 過去にオーダー済みだが ts 保存失敗）
+                // → Slack チャンネル履歴から Notion URL で元スレッドを検索してリカバリ
+                console.log("[Recovery] slackThreadTs empty for projectId:", data.projectId, "— searching Slack channel...");
+                const notionUrl = `notion.so/${data.projectId.replace(/-/g, "")}`;
+                try {
+                    let cursor: string | undefined;
+                    let found = false;
+                    // 最大200件（2ページ）まで遡って検索
+                    for (let page = 0; page < 2 && !found; page++) {
+                        const historyResult = await fetch("https://slack.com/api/conversations.history", {
+                            method: "POST",
+                            headers: {
+                                "Authorization": `Bearer ${slackToken}`,
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                channel: slackChannel,
+                                limit: 100,
+                                ...(cursor ? { cursor } : {}),
+                            }),
+                        });
+                        const historyData = await historyResult.json() as {
+                            ok: boolean;
+                            messages?: Array<{ ts: string; text?: string; permalink?: string }>;
+                            response_metadata?: { next_cursor?: string };
+                        };
+                        if (!historyData.ok || !historyData.messages) break;
+
+                        for (const msg of historyData.messages) {
+                            if (msg.text && msg.text.includes(notionUrl)) {
+                                // 親メッセージ（スレッドの最初のメッセージ）のみ対象
+                                existingThreadTs = msg.ts;
+                                console.log("[Recovery] Found thread ts from Slack:", existingThreadTs);
+                                found = true;
+
+                                // permalink 取得
+                                try {
+                                    const plResp = await fetch("https://slack.com/api/chat.getPermalink", {
+                                        method: "POST",
+                                        headers: {
+                                            "Authorization": `Bearer ${slackToken}`,
+                                            "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({ channel: slackChannel, message_ts: existingThreadTs }),
+                                    });
+                                    const plData = await plResp.json() as { ok: boolean; permalink?: string };
+                                    if (plData.ok && plData.permalink) {
+                                        existingPermalink = plData.permalink;
+                                    }
+                                } catch { /* ignore */ }
+
+                                // Firestore の該当キャスティングにも書き戻して次回以降はリカバリ不要に
+                                const batch = db.batch();
+                                for (const d of existingSnap.docs) {
+                                    if (!d.data().slackThreadTs) {
+                                        batch.update(d.ref, {
+                                            slackThreadTs: existingThreadTs,
+                                            slackPermalink: existingPermalink,
+                                            slackChannel: slackChannel,
+                                        });
+                                    }
+                                }
+                                await batch.commit();
+                                console.log("[Recovery] Updated", existingSnap.docs.length, "casting docs with recovered ts");
+                                break;
+                            }
+                        }
+                        cursor = historyData.response_metadata?.next_cursor || undefined;
+                        if (!cursor) break;
+                    }
+                    if (!found) {
+                        console.warn("[Recovery] Could not find thread in Slack for projectId:", data.projectId);
+                    }
+                } catch (recoverErr) {
+                    console.error("[Recovery] Slack channel search failed:", recoverErr);
+                }
             }
         }
+
         const isAdditional = !!existingThreadTs;
-        // 追加オーダー時: スレッドのチャンネルを優先使用
         if (isAdditional && resolvedThreadChannel) {
             console.log("Override channel for thread reply:", slackChannel, "→", resolvedThreadChannel);
         }
