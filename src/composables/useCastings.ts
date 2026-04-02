@@ -147,7 +147,9 @@ export function useCastings() {
             casting.updatedAt = Timestamp.now()
 
             // 3. Send Slack notification (background, don't block)
-            if (casting.slackThreadTs) {
+            // オーダー待ち → 打診中 は通知不要（オーダー送信時にDMで通知済み）
+            const skipSlackNotify = previousStatus === 'オーダー待ち' && newStatus === '打診中'
+            if (casting.slackThreadTs && !skipSlackNotify) {
                 notifyStatusUpdate({
                     castingId,
                     castName: casting.castName,
@@ -346,8 +348,9 @@ export function useCastings() {
     /**
      * Delete casting (soft delete - set status to 削除済み)
      * カレンダー削除 + Slack通知も同時実行
+     * @param skipSlackNotify true の場合、Slack通知をスキップ
      */
-    async function deleteCasting(castingId: string): Promise<boolean> {
+    async function deleteCasting(castingId: string, skipSlackNotify = false): Promise<boolean> {
         if (!db) return false
 
         const casting = castings.value.find(c => c.id === castingId)
@@ -358,7 +361,7 @@ export function useCastings() {
             if (functions) {
                 try {
                     const cleanup = httpsCallable(functions, 'deleteCastingCleanup')
-                    await cleanup({ castingId })
+                    await cleanup({ castingId, skipSlackNotify })
                 } catch (cfError) {
                     console.warn('deleteCastingCleanup CF failed (proceeding with local delete):', cfError)
                 }

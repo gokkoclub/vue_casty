@@ -813,13 +813,18 @@ exports.deleteCastingCleanup = (0, https_1.onCall)({
             newStatus: "キャンセル", // 削除 = キャンセル扱い
         });
     }
-    // Slack通知（スレッドに削除通知）— castings に保存されたチャンネル or permalink から解決
-    const slackToken = getEnv("SLACK_BOT_TOKEN");
-    const slackChannel = resolveSlackChannel(casting);
-    const slackThreadTs = casting.slackThreadTs;
-    if (slackToken && slackChannel && slackThreadTs) {
-        const text = `🗑️ *${casting.castName}* のキャスティングが削除されました（${casting.projectName}）`;
-        await (0, slack_1.postToSlack)(slackToken, slackChannel, text, undefined, slackThreadTs);
+    // Slack通知（スレッドに削除通知）— skipSlackNotify フラグで制御
+    if (!data.skipSlackNotify) {
+        const slackToken = getEnv("SLACK_BOT_TOKEN");
+        const slackChannel = resolveSlackChannel(casting);
+        const slackThreadTs = casting.slackThreadTs;
+        if (slackToken && slackChannel && slackThreadTs) {
+            const text = `🗑️ *${casting.castName}* のキャスティングが削除されました（${casting.projectName}）`;
+            await (0, slack_1.postToSlack)(slackToken, slackChannel, text, undefined, slackThreadTs);
+        }
+    }
+    else {
+        console.log("Slack notification skipped for deletion:", data.castingId);
     }
     return { success: true };
 });

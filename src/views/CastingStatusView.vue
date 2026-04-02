@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
 import ProgressSpinner from 'primevue/progressspinner'
 import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'
@@ -186,12 +187,23 @@ const handleSaveTime = async (castingId: string, startTime: string, endTime: str
   })
 }
 
-const handleDelete = async (castingId: string) => {
-  if (confirm('本当にこのキャスティングを削除しますか？')) {
-    await withLoading('削除中...', async () => {
-      await deleteCasting(castingId)
-    })
-  }
+// 削除確認ダイアログ
+const deleteConfirmId = ref<string | null>(null)
+const showDeleteConfirm = ref(false)
+
+const handleDelete = (castingId: string) => {
+  deleteConfirmId.value = castingId
+  showDeleteConfirm.value = true
+}
+
+const handleDeleteConfirm = async (withSlackNotify: boolean) => {
+  showDeleteConfirm.value = false
+  if (!deleteConfirmId.value) return
+  const castingId = deleteConfirmId.value
+  deleteConfirmId.value = null
+  await withLoading('削除中...', async () => {
+    await deleteCasting(castingId, !withSlackNotify)
+  })
 }
 
 const handleSaveProjectName = async (castingIds: string[], newProjectName: string) => {
@@ -245,13 +257,19 @@ const handleSelectAll = () => {
   selectAll(getAllCastingIds())
 }
 
-const handleBulkDelete = async () => {
-  const count = selectedCount.value
-  if (!confirm(`${count}件のキャスティングを削除しますか？`)) return
+// 一括削除確認
+const showBulkDeleteConfirm = ref(false)
+
+const handleBulkDelete = () => {
+  showBulkDeleteConfirm.value = true
+}
+
+const handleBulkDeleteConfirm = async (withSlackNotify: boolean) => {
+  showBulkDeleteConfirm.value = false
   await withLoading('一括削除中...', async () => {
     const ids = getSelectedIds()
     for (const id of ids) {
-      await deleteCasting(id)
+      await deleteCasting(id, !withSlackNotify)
     }
     clearSelection()
     toggleBulkMode()
@@ -681,6 +699,74 @@ const countCastings = (dateGroup: any) => {
       :selectedCount="selectedCount"
       @confirm="executeBulkStatusUpdate"
     />
+
+    <!-- 削除確認ダイアログ（単体） -->
+    <Dialog
+      v-model:visible="showDeleteConfirm"
+      modal
+      header="キャスティングを削除"
+      :style="{ width: '400px' }"
+    >
+      <p style="margin: 0 0 1rem; line-height: 1.6;">
+        このキャスティングを削除しますか？<br>
+        Slackスレッドに削除通知を送信しますか？
+      </p>
+      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+        <Button
+          label="キャンセル"
+          severity="secondary"
+          text
+          @click="showDeleteConfirm = false"
+        />
+        <Button
+          label="通知なしで削除"
+          severity="secondary"
+          outlined
+          icon="pi pi-trash"
+          @click="handleDeleteConfirm(false)"
+        />
+        <Button
+          label="通知して削除"
+          severity="danger"
+          icon="pi pi-trash"
+          @click="handleDeleteConfirm(true)"
+        />
+      </div>
+    </Dialog>
+
+    <!-- 一括削除確認ダイアログ -->
+    <Dialog
+      v-model:visible="showBulkDeleteConfirm"
+      modal
+      header="一括削除"
+      :style="{ width: '400px' }"
+    >
+      <p style="margin: 0 0 1rem; line-height: 1.6;">
+        {{ selectedCount }}件のキャスティングを削除しますか？<br>
+        Slackスレッドに削除通知を送信しますか？
+      </p>
+      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+        <Button
+          label="キャンセル"
+          severity="secondary"
+          text
+          @click="showBulkDeleteConfirm = false"
+        />
+        <Button
+          label="通知なしで削除"
+          severity="secondary"
+          outlined
+          icon="pi pi-trash"
+          @click="handleBulkDeleteConfirm(false)"
+        />
+        <Button
+          label="通知して削除"
+          severity="danger"
+          icon="pi pi-trash"
+          @click="handleBulkDeleteConfirm(true)"
+        />
+      </div>
+    </Dialog>
   </div>
 </template>
 
