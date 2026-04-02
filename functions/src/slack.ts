@@ -99,87 +99,32 @@ export async function uploadFileToSlack(
         const fileBuffer = Buffer.from(fileBase64, "base64");
         console.log("[SLACK SDK] Uploading file:", fileName, "size:", fileBuffer.length);
 
-        const client = new WebClient(token);
+        // ── Step 1: テキストメッセージを先に投稿（信頼できる ts を取得） ──
+        // filesUploadV2 のレスポンスから取れる ts は不正確な場合があるため、
+        // chat.postMessage で確実な ts を取得し、ファイルはそのスレッドに添付する
+        const messageResult = await postToSlack(token, channel, text, undefined, threadTs);
+        const messageTs = messageResult.ts || "";
+        const permalink = messageResult.permalink || "";
+        console.log("[SLACK SDK] Text message posted, ts:", messageTs);
 
-        // V1と同じ方式: filesUploadV2 でファイル + メッセージを同時投稿
-        // SDK が内部で getUploadURLExternal → PUT → completeUploadExternal を処理
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const uploadOptions: any = {
-            channel_id: channel,
-            initial_comment: text,
-            file: fileBuffer,
-            filename: fileName,
-            title: fileName,
-        };
-        if (threadTs) {
-            uploadOptions.thread_ts = threadTs;
-        }
-        const uploadResult = await client.filesUploadV2(uploadOptions);
-
-        console.log("[SLACK SDK] Upload result ok:", uploadResult.ok);
-
-        // ts を取得（filesUploadV2 のレスポンスから）
-        let ts = "";
-        let permalink = "";
-
-        // files[0].shares からts取得を試みる
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const resultAny = uploadResult as any;
-        const files = resultAny.files as Array<{
-            id: string;
-            shares?: Record<string, Record<string, Array<{ ts: string }>>>;
-        }> | undefined;
-
-        if (files?.[0]?.shares) {
-            for (const shareType of Object.values(files[0].shares)) {
-                for (const channelShares of Object.values(shareType)) {
-                    if (channelShares?.[0]?.ts) {
-                        ts = channelShares[0].ts;
-                        break;
-                    }
-                }
-                if (ts) break;
-            }
+        // ── Step 2: ファイルをスレッドにアップロード ──
+        if (messageTs) {
+            const client = new WebClient(token);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const uploadOptions: any = {
+                channel_id: channel,
+                file: fileBuffer,
+                filename: fileName,
+                title: fileName,
+                thread_ts: threadTs || messageTs,  // 追加オーダー時は元スレッド、新規時はメッセージ自体のスレッド
+            };
+            const uploadResult = await client.filesUploadV2(uploadOptions);
+            console.log("[SLACK SDK] File uploaded to thread, ok:", uploadResult.ok);
+        } else {
+            console.warn("[SLACK SDK] No message ts, skipping file upload");
         }
 
-        // ts が取れない場合は files.info で再取得
-        if (!ts && files?.[0]?.id) {
-            console.log("[SLACK SDK] No ts from shares, trying files.info...");
-            try {
-                const infoResult = await client.files.info({ file: files[0].id });
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const infoShares = (infoResult.file as any)?.shares as Record<string, Record<string, Array<{ ts: string }>>> | undefined;
-                if (infoShares) {
-                    for (const shareType of Object.values(infoShares)) {
-                        for (const channelShares of Object.values(shareType)) {
-                            if (channelShares?.[0]?.ts) {
-                                ts = channelShares[0].ts;
-                                break;
-                            }
-                        }
-                        if (ts) break;
-                    }
-                }
-            } catch (infoErr) {
-                console.warn("[SLACK SDK] files.info failed:", infoErr);
-            }
-        }
-
-        // permalink 取得
-        if (ts) {
-            try {
-                const plResult = await client.chat.getPermalink({
-                    channel,
-                    message_ts: ts,
-                });
-                permalink = plResult.permalink || "";
-            } catch (plErr) {
-                console.warn("[SLACK SDK] getPermalink failed:", plErr);
-            }
-        }
-
-        console.log("[SLACK SDK] File uploaded, ts:", ts, "permalink:", permalink);
-        return { ok: true, ts, permalink };
+        return { ok: true, ts: messageTs, permalink };
 
     } catch (error) {
         console.error("[SLACK SDK] File upload error:", error);
