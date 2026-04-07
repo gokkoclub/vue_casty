@@ -17,6 +17,8 @@ import ShootingList from '@/components/shooting/ShootingList.vue'
 import OrderTypeDialog from '@/components/casting/OrderTypeDialog.vue'
 import ProgressModal from '@/components/common/ProgressModal.vue'
 import NewCastModal from '@/components/cast/NewCastModal.vue'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
 import { useCasts } from '@/composables/useCasts'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAvailability } from '@/composables/useAvailability'
@@ -357,30 +359,25 @@ const handleOpenCart = () => {
 }
 
 
-// 撮影日手動同期
-const SHOOTINGS_SYNC_URL = import.meta.env.VITE_SHOOTINGS_SYNC_URL || ''
-
+// 撮影日手動同期（Cloud Function: syncScheduleFromSam）
 const handleSyncShootings = async () => {
-  if (!SHOOTINGS_SYNC_URL) {
-    toast.add({ severity: 'warn', summary: '未設定', detail: 'VITE_SHOOTINGS_SYNC_URL を .env.local に設定してください', life: 5000 })
-    return
-  }
   syncingShootings.value = true
-  toast.add({ severity: 'info', summary: '同期中...', detail: 'Notionから撮影データを取得しています', life: 3000 })
+  toast.add({ severity: 'info', summary: '同期中...', detail: 'gokko-sam から撮影データを取得しています', life: 3000 })
   try {
-    const res = await fetch(SHOOTINGS_SYNC_URL)
-    const json = await res.json()
-    if (json.success) {
-      toast.add({ severity: 'success', summary: '同期完了', detail: `更新${json.result?.updated || 0}件 / 新規${json.result?.added || 0}件 / 削除${json.result?.deleted || 0}件`, life: 5000 })
+    const syncFn = httpsCallable(functions!, 'syncScheduleFromSam')
+    const result = await syncFn({})
+    const data = result.data as { success?: boolean; synced?: number; errors?: number; dateChanges?: number }
+    if (data.success) {
+      toast.add({ severity: 'success', summary: '同期完了', detail: `${data.synced || 0}件同期 / 日付変更${data.dateChanges || 0}件`, life: 5000 })
       // Firestoreのshootingsを再取得
       if (selectedDates.value.length > 0) {
         await fetchShootingsByDates(selectedDates.value)
       }
     } else {
-      toast.add({ severity: 'error', summary: '同期失敗', detail: json.error || '不明なエラー', life: 5000 })
+      toast.add({ severity: 'error', summary: '同期失敗', detail: `エラー: ${data.errors || 0}件`, life: 5000 })
     }
   } catch (e: any) {
-    toast.add({ severity: 'error', summary: '通信エラー', detail: e.message, life: 5000 })
+    toast.add({ severity: 'error', summary: '同期エラー', detail: e.message, life: 5000 })
   } finally {
     syncingShootings.value = false
   }
