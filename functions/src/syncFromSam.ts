@@ -116,7 +116,7 @@ function mapEntriesToShootingFields(entries: NotionScheduleEntry[]): {
 // ─────────────────────────────────────────────
 // 同期メインロジック
 // ─────────────────────────────────────────────
-async function performSync(): Promise<{ synced: number; errors: number; dateChanges: number }> {
+async function performSync(): Promise<{ synced: number; added: number; updated: number; errors: number; dateChanges: number }> {
     const samDb = getSamFirestore();
     const castyDb = admin.firestore(); // デフォルト (gokko-casty)
 
@@ -125,12 +125,14 @@ async function performSync(): Promise<{ synced: number; errors: number; dateChan
 
     if (snapshot.empty) {
         console.log("[syncFromSam] notionSchedule is empty");
-        return { synced: 0, errors: 0, dateChanges: 0 };
+        return { synced: 0, added: 0, updated: 0, errors: 0, dateChanges: 0 };
     }
 
     console.log(`[syncFromSam] Found ${snapshot.size} notionSchedule docs`);
 
     let synced = 0;
+    let added = 0;
+    let updated = 0;
     let errors = 0;
     let dateChanges = 0;
 
@@ -138,6 +140,7 @@ async function performSync(): Promise<{ synced: number; errors: number; dateChan
     const batchDocs: Array<{
         docId: string;
         data: Record<string, unknown>;
+        isNew: boolean;
     }> = [];
 
     for (const doc of snapshot.docs) {
@@ -210,7 +213,9 @@ async function performSync(): Promise<{ synced: number; errors: number; dateChan
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             };
 
-            batchDocs.push({ docId, data: shootingData });
+            // 新規 or 更新を判定（dateChange で新IDになった場合も新規扱い）
+            const isNew = !existingDoc.exists || docId !== baseDocId;
+            batchDocs.push({ docId, data: shootingData, isNew });
         } catch (e) {
             console.error(`[syncFromSam] Error processing doc ${doc.id}:`, e);
             errors++;
@@ -228,14 +233,18 @@ async function performSync(): Promise<{ synced: number; errors: number; dateChan
         }
 
         await batch.commit();
+        for (const item of chunk) {
+            if (item.isNew) added++;
+            else updated++;
+        }
         synced += chunk.length;
         console.log(`[syncFromSam] Batch committed: ${chunk.length} docs (total: ${synced})`);
     }
 
     console.log(
-        `[syncFromSam] Sync complete: ${synced} synced, ${dateChanges} date changes, ${errors} errors`
+        `[syncFromSam] Sync complete: ${synced} synced (${added} added, ${updated} updated), ${dateChanges} date changes, ${errors} errors`
     );
-    return { synced, errors, dateChanges };
+    return { synced, added, updated, errors, dateChanges };
 }
 
 // ─────────────────────────────────────────────

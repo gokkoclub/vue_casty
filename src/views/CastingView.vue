@@ -366,9 +366,14 @@ const handleSyncShootings = async () => {
   try {
     const syncFn = httpsCallable(functions!, 'syncScheduleFromSam')
     const result = await syncFn({})
-    const data = result.data as { success?: boolean; synced?: number; errors?: number; dateChanges?: number }
+    const data = result.data as { success?: boolean; synced?: number; added?: number; updated?: number; errors?: number; dateChanges?: number }
     if (data.success) {
-      toast.add({ severity: 'success', summary: '同期完了', detail: `${data.synced || 0}件同期 / 日付変更${data.dateChanges || 0}件`, life: 5000 })
+      const parts = []
+      if (data.added) parts.push(`追加 ${data.added}件`)
+      if (data.updated) parts.push(`更新 ${data.updated}件`)
+      if (data.dateChanges) parts.push(`日付変更 ${data.dateChanges}件`)
+      if (parts.length === 0) parts.push('変更なし')
+      toast.add({ severity: 'success', summary: '同期完了', detail: parts.join(' / '), life: 5000 })
       // Firestoreのshootingsを再取得
       if (selectedDates.value.length > 0) {
         await fetchShootingsByDates(selectedDates.value)
