@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import Dialog from 'primevue/dialog'
 import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
 import { useEmailTemplate } from '@/composables/useEmailTemplate'
 import { useToast } from 'primevue/usetoast'
@@ -44,9 +45,36 @@ const mail = computed(() => {
   return generateInquiryMail(props.casting, shootingDates.value)
 })
 
+// 編集可能なフィールド
+const editSubject = ref('')
+const editBody = ref('')
+
+// casting/mail が変わったら初期値をセット
+watch(mail, (m) => {
+  if (m) {
+    editSubject.value = m.subject
+    editBody.value = m.body
+  }
+}, { immediate: true })
+
+// ダイアログが開いた時にもリセット
+watch(() => props.visible, (val) => {
+  if (val && mail.value) {
+    editSubject.value = mail.value.subject
+    editBody.value = mail.value.body
+  }
+})
+
+const resetToTemplate = () => {
+  if (mail.value) {
+    editSubject.value = mail.value.subject
+    editBody.value = mail.value.body
+  }
+}
+
 const handleCopyAndUpdate = async () => {
-  if (!mail.value || !props.casting) return
-  await copyToClipboard(`${mail.value.subject}\n\n${mail.value.body}`)
+  if (!props.casting) return
+  await copyToClipboard(`${editSubject.value}\n\n${editBody.value}`)
   toast.add({
     severity: 'success',
     summary: 'コピー完了',
@@ -57,9 +85,9 @@ const handleCopyAndUpdate = async () => {
 }
 
 const handleMailtoAndUpdate = () => {
-  if (!mail.value || !props.casting) return
+  if (!props.casting) return
   // メーラーで開く（メールアドレスがない場合は空で開く）
-  openMailto('', mail.value.subject, mail.value.body)
+  openMailto('', editSubject.value, editBody.value)
   toast.add({
     severity: 'success',
     summary: 'メーラー起動',
@@ -102,14 +130,26 @@ const handleClose = () => {
       <!-- メール内容 -->
       <div class="owem-mail">
         <div class="owem-field">
-          <label>件名</label>
-          <div class="owem-subject">{{ mail.subject }}</div>
+          <div class="owem-field-header">
+            <label>件名</label>
+            <Button
+              label="リセット"
+              icon="pi pi-refresh"
+              text
+              size="small"
+              severity="secondary"
+              @click="resetToTemplate"
+            />
+          </div>
+          <InputText
+            v-model="editSubject"
+            class="w-full"
+          />
         </div>
         <div class="owem-field">
           <label>本文</label>
           <Textarea
-            :modelValue="mail.body"
-            readonly
+            v-model="editBody"
             rows="10"
             class="w-full"
           />
@@ -198,6 +238,12 @@ const handleClose = () => {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+}
+
+.owem-field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .owem-field label {

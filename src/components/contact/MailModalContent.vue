@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useEmailTemplate } from '@/composables/useEmailTemplate'
 import type { EmailTemplateType } from '@/composables/useEmailTemplate'
 import type { ShootingContact, ShootingContactStatus } from '@/types'
@@ -21,14 +21,33 @@ const { generateMail, getDefaultTemplate, allTemplates, copyToClipboard, openMai
 const selectedTemplate = ref<EmailTemplateType>(getDefaultTemplate(props.status))
 const mail = computed(() => generateMail(props.contact, selectedTemplate.value))
 
+// 編集可能なフィールド
+const editSubject = ref('')
+const editBody = ref('')
+
+// テンプレートが変わったら初期値をセット
+watch([mail, selectedTemplate], () => {
+    if (mail.value) {
+        editSubject.value = mail.value.subject
+        editBody.value = mail.value.body
+    }
+}, { immediate: true })
+
+const resetToTemplate = () => {
+    if (mail.value) {
+        editSubject.value = mail.value.subject
+        editBody.value = mail.value.body
+    }
+}
+
 async function handleCopyAndAdvance() {
-    await copyToClipboard(`${mail.value.subject}\n\n${mail.value.body}`)
+    await copyToClipboard(`${editSubject.value}\n\n${editBody.value}`)
     toast.add({ severity: 'success', summary: 'コピー完了', detail: 'クリップボードにコピーしました', life: 2000 })
     emit('advance', props.contact.id)
 }
 
 async function handleCopy() {
-    await copyToClipboard(`${mail.value.subject}\n\n${mail.value.body}`)
+    await copyToClipboard(`${editSubject.value}\n\n${editBody.value}`)
     toast.add({ severity: 'success', summary: 'コピー完了', detail: 'クリップボードにコピーしました', life: 2000 })
 }
 
@@ -37,7 +56,7 @@ function handleMailto() {
         toast.add({ severity: 'warn', summary: '警告', detail: 'メールアドレスが設定されていません', life: 3000 })
         return
     }
-    openMailto(props.contact.email!, mail.value.subject, mail.value.body)
+    openMailto(props.contact.email!, editSubject.value, editBody.value)
 }
 </script>
 
@@ -54,6 +73,7 @@ function handleMailto() {
                 <select v-model="selectedTemplate">
                     <option v-for="t in allTemplates" :key="t" :value="t">{{ t }}</option>
                 </select>
+                <button class="btn-reset" @click="resetToTemplate" title="テンプレートの内容にリセット">🔄 リセット</button>
             </div>
 
             <!-- 宛先セクション -->
@@ -65,13 +85,16 @@ function handleMailto() {
             <!-- 件名セクション -->
             <div class="mail-section">
                 <label class="section-label">件名:</label>
-                <div class="subject-text">{{ mail.subject }}</div>
+                <input
+                    v-model="editSubject"
+                    class="subject-input"
+                />
             </div>
 
             <!-- 本文セクション -->
             <div class="mail-section body-section">
                 <label class="section-label">本文:</label>
-                <textarea readonly :value="mail.body" rows="12"></textarea>
+                <textarea v-model="editBody" rows="12"></textarea>
             </div>
         </div>
 
@@ -158,6 +181,18 @@ function handleMailto() {
     font-size: 0.85rem;
 }
 
+.btn-reset {
+    background: none;
+    border: 1px solid var(--p-content-border-color);
+    border-radius: 6px;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    color: var(--p-text-muted-color);
+    white-space: nowrap;
+}
+.btn-reset:hover { background: var(--p-content-border-color); }
+
 /* 宛先 */
 .to-section {
     display: flex;
@@ -179,12 +214,16 @@ function handleMailto() {
     letter-spacing: 0.03em;
 }
 
-.subject-text {
+.subject-input {
+    width: 100%;
     padding: 0.5rem 0.75rem;
     background: var(--p-content-hover-background);
     border: 1px solid var(--p-content-border-color);
     border-radius: 6px;
     font-size: 0.9rem;
+    font-family: inherit;
+    color: var(--p-text-color);
+    box-sizing: border-box;
 }
 
 /* 本文 */
@@ -202,6 +241,8 @@ function handleMailto() {
     resize: vertical;
     background: var(--p-content-hover-background);
     line-height: 1.6;
+    color: var(--p-text-color);
+    box-sizing: border-box;
 }
 
 /* アクションバー */
