@@ -241,14 +241,16 @@ export function buildSpecialOrderMessage(params: {
         conflictInfo?: string;
     }>;
     ccMention?: string; // 作成者のSlackメンション or 名前
+    ordererName?: string;
 }): string {
     const lines: string[] = [];
 
-    // ヘッダー
+    // ヘッダー（オーダー主名を含む）
+    const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
     if (params.mode === "external") {
-        lines.push("【外部案件】");
+        lines.push(`【外部案件】${ordererSuffix}`);
     } else {
-        lines.push("【社内イベント】");
+        lines.push(`【社内イベント】${ordererSuffix}`);
     }
 
     // タイトル
@@ -381,6 +383,7 @@ export function buildOrderMessage(params: {
     mode?: string;
     mentionGroupId?: string;
     ccString?: string;
+    ordererName?: string;
 }): string {
     const isShooting = params.mode === "shooting" || !params.mode;
     const dateLabel = isShooting ? "撮影日" : "日程";
@@ -401,13 +404,14 @@ export function buildOrderMessage(params: {
         lines.push("");
     }
 
-    // ヘッダー
+    // ヘッダー（オーダー主名を含む）
+    const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
     if (isShooting) {
-        lines.push("キャスティングオーダーがありました。");
+        lines.push(`キャスティングオーダーがありました。${ordererSuffix}`);
     } else if (params.mode === "external") {
-        lines.push("外部案件のオーダーがありました。");
+        lines.push(`外部案件のオーダーがありました。${ordererSuffix}`);
     } else {
-        lines.push("社内イベントのオーダーがありました。");
+        lines.push(`社内イベントのオーダーがありました。${ordererSuffix}`);
     }
 
     if (params.hasInternal) {

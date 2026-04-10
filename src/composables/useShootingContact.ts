@@ -24,6 +24,15 @@ export interface ProjectGroup {
  * 撮影連絡DB管理composable
  * 外部キャストの決定後フロー管理
  */
+// タイムゾーン安全なローカル日付キー (YYYY-MM-DD)
+// toISOString() は UTC 変換するため JST で日付が1日ズレる
+function toLocalDateKey(d: Date): string {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+}
+
 export function useShootingContact() {
     const contacts = ref<ShootingContact[]>([])
     const loading = ref(false)
@@ -92,17 +101,29 @@ export function useShootingContact() {
     /**
      * 日付→作品 グルーピング (date view)
      */
-    function getDateGrouped(status: ShootingContactStatus): DateGroup[] {
-        const filtered = contacts.value.filter(c => c.status === status)
+    function getDateGrouped(status: ShootingContactStatus, searchQuery?: string): DateGroup[] {
+        let filtered = contacts.value.filter(c => c.status === status)
+
+        // フリーキーワード検索（部分一致）
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase()
+            filtered = filtered.filter(c =>
+                c.castName?.toLowerCase().includes(q) ||
+                c.projectName?.toLowerCase().includes(q) ||
+                c.accountName?.toLowerCase().includes(q) ||
+                c.roleName?.toLowerCase().includes(q) ||
+                c.location?.toLowerCase().includes(q)
+            )
+        }
         const dateMap = new Map<string, Map<string, ShootingContact[]>>()
 
         for (const c of filtered) {
             let dateStr = ''
             // 投稿日タブのみ postDate を使用
             if (status === '投稿日連絡待ち' && c.postDate?.toDate) {
-                dateStr = c.postDate.toDate().toISOString().split('T')[0] || ''
+                dateStr = toLocalDateKey(c.postDate.toDate())
             } else if (c.shootDate?.toDate) {
-                dateStr = c.shootDate.toDate().toISOString().split('T')[0] || ''
+                dateStr = toLocalDateKey(c.shootDate.toDate())
             } else {
                 dateStr = '日付未定'
             }
@@ -134,8 +155,20 @@ export function useShootingContact() {
     /**
      * 作品→日付 グルーピング (project view)
      */
-    function getProjectGrouped(status: ShootingContactStatus): { projectName: string; accountName: string; notionId?: string; contacts: ShootingContact[] }[] {
-        const filtered = contacts.value.filter(c => c.status === status)
+    function getProjectGrouped(status: ShootingContactStatus, searchQuery?: string): { projectName: string; accountName: string; notionId?: string; contacts: ShootingContact[] }[] {
+        let filtered = contacts.value.filter(c => c.status === status)
+
+        // フリーキーワード検索（部分一致）
+        if (searchQuery) {
+            const q = searchQuery.toLowerCase()
+            filtered = filtered.filter(c =>
+                c.castName?.toLowerCase().includes(q) ||
+                c.projectName?.toLowerCase().includes(q) ||
+                c.accountName?.toLowerCase().includes(q) ||
+                c.roleName?.toLowerCase().includes(q) ||
+                c.location?.toLowerCase().includes(q)
+            )
+        }
         const projMap = new Map<string, ShootingContact[]>()
 
         for (const c of filtered) {
@@ -187,6 +220,8 @@ export function useShootingContact() {
                 notionId: (casting as unknown as Record<string, unknown>).notionPageId as string || '',
                 shootDate: casting.startDate,
                 mainSub: casting.mainSub || 'その他',
+                fee: casting.cost || 0,
+                cost: casting.cost ? casting.cost.toLocaleString() : '',
                 status: '香盤連絡待ち' as ShootingContactStatus,
                 slackThreadTs: casting.slackThreadTs,
                 createdAt: now,
@@ -227,6 +262,20 @@ export function useShootingContact() {
                     console.log(`Synced time to casting ${contact.castingId}: ${data.inTime}〜${data.outTime}`)
                 } catch (err) {
                     console.warn('Failed to sync time to casting:', err)
+                }
+            }
+
+            // 金額が変更された場合、紐づくキャスティングDocにも同期
+            if ((data.fee !== undefined || data.cost !== undefined) && contact?.castingId) {
+                try {
+                    const castingRef = doc(db, 'castings', contact.castingId)
+                    const costValue = data.fee ?? (data.cost ? parseInt(String(data.cost).replace(/,/g, ''), 10) || 0 : undefined)
+                    if (costValue !== undefined) {
+                        await updateDoc(castingRef, { cost: costValue, updatedAt: Timestamp.now() })
+                        console.log(`[CostSync] shootingContact→casting ${contact.castingId}: ¥${costValue}`)
+                    }
+                } catch (err) {
+                    console.warn('Failed to sync cost to casting:', err)
                 }
             }
 

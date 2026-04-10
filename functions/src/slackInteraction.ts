@@ -163,6 +163,53 @@ export const handleSlackInteraction = onRequest(
                 const castingData = castingSnap.data()!;
                 const oldStatus = castingData.status || "仮キャスティング";
 
+                // 決定ステータス以降は変更しない（決定→OKへの逆戻り防止）
+                const terminalStatuses = ["決定", "NG", "キャンセル", "削除済み"];
+                if (terminalStatuses.includes(oldStatus)) {
+                    console.log(`[SlackInteraction] Status change skipped: ${valueData.castingId} is already "${oldStatus}"`);
+
+                    // DM のボタンを更新して現状のステータスを表示
+                    const dmChannel = payload.channel?.id;
+                    const messageTs = payload.message?.ts;
+                    if (dmChannel && messageTs) {
+                        const statusText = oldStatus === "決定"
+                            ? "✅ すでに *決定済み* です"
+                            : `ℹ️ 現在のステータスは *${oldStatus}* です`;
+                        const updatedBlocks = [
+                            {
+                                type: "header",
+                                text: {
+                                    type: "plain_text",
+                                    text: "📋 撮影オーダーのお知らせ",
+                                    emoji: true,
+                                },
+                            },
+                            {
+                                type: "section",
+                                text: {
+                                    type: "mrkdwn",
+                                    text: `*${valueData.projectName}*`,
+                                },
+                            },
+                            {
+                                type: "section",
+                                text: {
+                                    type: "mrkdwn",
+                                    text: statusText,
+                                },
+                            },
+                        ];
+                        await updateSlackMessage(
+                            slackToken,
+                            dmChannel,
+                            messageTs,
+                            statusText.replace(/\*/g, ""),
+                            updatedBlocks
+                        );
+                    }
+                    return;
+                }
+
                 await castingRef.update({
                     status: "OK",
                     updatedAt: admin.firestore.FieldValue.serverTimestamp(),

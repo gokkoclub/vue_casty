@@ -6,11 +6,26 @@ import RadioButton from 'primevue/radiobutton'
 import Checkbox from 'primevue/checkbox'
 import InputText from 'primevue/inputtext'
 
+export interface OrderSummaryItem {
+  castName: string
+  castType: string
+  roleName: string
+  rank: number
+  projectName: string
+}
+
 const props = defineProps<{
   visible: boolean
   hasPdf: boolean
   hasMinorCast: boolean
   isShootingMode: boolean
+  orderSummary?: {
+    mode: string
+    accountName: string
+    projectName: string
+    dateRanges: string[]
+    items: OrderSummaryItem[]
+  }
 }>()
 
 const emit = defineEmits<{
@@ -100,6 +115,34 @@ const handleCancel = () => {
             労働基準法（深夜労働の禁止・労働時間制限など）および関連法規を遵守した撮影計画であることを確認しました。
           </span>
         </label>
+      </div>
+
+      <!-- Slack Message Preview -->
+      <div v-if="orderSummary" class="preview-section mb-3">
+        <label class="section-label">Slackに送信される内容プレビュー</label>
+        <div class="slack-preview">
+          <div class="slack-preview-header">
+            <template v-if="orderSummary.mode === 'external'">外部案件のオーダーがありました。</template>
+            <template v-else-if="orderSummary.mode === 'internal'">社内イベントのオーダーがありました。</template>
+            <template v-else>キャスティングオーダーがありました。</template>
+          </div>
+          <div class="slack-preview-field">
+            <span class="slack-label">{{ isShootingMode ? '撮影日' : '日程' }}</span>
+            <span v-for="d in orderSummary.dateRanges" :key="d">・{{ d }}</span>
+          </div>
+          <div class="slack-preview-field">
+            <span class="slack-label">アカウント</span>
+            <span>{{ orderSummary.accountName }}</span>
+          </div>
+          <div class="slack-preview-field">
+            <span class="slack-label">キャスト</span>
+            <div v-for="item in orderSummary.items" :key="`${item.castName}-${item.rank}`" class="slack-cast-item">
+              <span>第{{ item.rank }}候補: {{ item.castName }}</span>
+              <span class="slack-cast-type">{{ item.castType }}</span>
+              <span class="slack-role">{{ item.roleName }}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Competition Info (external/internal only) -->
@@ -262,6 +305,66 @@ const handleCancel = () => {
 .comp-field label {
   font-size: 0.8rem;
   font-weight: 600;
+  color: var(--p-text-muted-color);
+}
+
+/* Slack Preview Section */
+.preview-section {
+  padding: 0.75rem;
+  background: var(--p-content-hover-background);
+  border-radius: 8px;
+}
+
+.slack-preview {
+  margin-top: 0.5rem;
+  padding: 0.75rem;
+  background: var(--p-content-background);
+  border-left: 3px solid #4A154B;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  line-height: 1.6;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.slack-preview-header {
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.slack-preview-field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.4rem;
+}
+
+.slack-label {
+  font-weight: 600;
+  background: var(--p-content-hover-background);
+  padding: 0 0.3rem;
+  border-radius: 3px;
+  display: inline-block;
+  margin-bottom: 0.15rem;
+  font-size: 0.75rem;
+}
+
+.slack-cast-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding-left: 0.5rem;
+}
+
+.slack-cast-type {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.25rem;
+  border-radius: 3px;
+  background: #E5E7EB;
+  color: #374151;
+}
+
+.slack-role {
+  font-size: 0.7rem;
   color: var(--p-text-muted-color);
 }
 </style>

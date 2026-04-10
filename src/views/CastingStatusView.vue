@@ -17,15 +17,16 @@ import BulkStatusModal from '@/components/status/BulkStatusModal.vue'
 import SummaryModal from '@/components/common/SummaryModal.vue'
 import type { Casting, CastingStatus } from '@/types'
 
-const { 
-  loading, 
-  fetchCastings, 
-  updateCastingStatus, 
+const {
+  loading,
+  fetchCastings,
+  updateCastingStatus,
+  bulkUpdateCastingStatus,
   updateCastingCost,
   updateCastingTime,
   updateProjectName,
   updateRoleName,
-  getCastingById, 
+  getCastingById,
   deleteCasting,
   getHierarchicalCastings,
   getFeatureGroupedCastings,
@@ -284,9 +285,7 @@ const handleBulkUpdateStatus = () => {
 const executeBulkStatusUpdate = async (newStatus: CastingStatus) => {
   await withLoading('一括ステータス更新中...', async () => {
     const ids = getSelectedIds()
-    for (const id of ids) {
-      await updateCastingStatus(id, newStatus)
-    }
+    await bulkUpdateCastingStatus(ids, newStatus)
     showBulkStatusModal.value = false
     clearSelection()
     toggleBulkMode()

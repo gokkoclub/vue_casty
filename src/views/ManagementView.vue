@@ -15,8 +15,9 @@ import type { EmailTemplateSetting } from '@/composables/useEmailSettings'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useAdmins } from '@/composables/useAdmins'
 import type { CastMaster, Casting } from '@/types'
-import { collection, query, where, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore'
-import { db } from '@/services/firebase'
+import { collection, query, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore'
+import { httpsCallable } from 'firebase/functions'
+import { db, functions } from '@/services/firebase'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
@@ -136,7 +137,10 @@ const groupedMasters = computed<MasterGroup[]>(() => {
             // date
             if (m.shootDate?.toDate) {
                 const d = m.shootDate.toDate()
-                key = d.toISOString().split('T')[0] || '未定'
+                const y = d.getFullYear()
+                const mo = String(d.getMonth() + 1).padStart(2, '0')
+                const day = String(d.getDate()).padStart(2, '0')
+                key = `${y}-${mo}-${day}`
             } else {
                 key = '日付未定'
             }
@@ -207,36 +211,56 @@ async function searchByProject() {
     dateSearchLoading.value = true
     dateSearchResults.value = []
 
+    const keyword = dateSearchProject.value.trim().toLowerCase()
+
     try {
+        // 全件取得してフロントで部分一致フィルタ（Firestoreは部分一致非対応のため）
         // Search castings
         const castingsSnap = await getDocs(
-            query(collection(db, 'castings'), where('projectName', '==', dateSearchProject.value.trim()))
+            query(collection(db, 'castings'))
         )
         castingsSnap.forEach(docSnap => {
             const d = docSnap.data() as Casting
-            dateSearchResults.value.push({
-                id: docSnap.id,
-                collection: 'castings',
-                castName: d.castName,
-                projectName: d.projectName,
-                shootDate: d.startDate
-            })
+            // 削除済みはスキップ
+            if (d.status === '削除済み') return
+            // 部分一致: 作品名、キャスト名、アカウント名で検索
+            const match = (d.projectName || '').toLowerCase().includes(keyword) ||
+                          (d.castName || '').toLowerCase().includes(keyword) ||
+                          (d.accountName || '').toLowerCase().includes(keyword)
+            if (match) {
+                dateSearchResults.value.push({
+                    id: docSnap.id,
+                    collection: 'castings',
+                    castName: d.castName,
+                    projectName: d.projectName,
+                    shootDate: d.startDate
+                })
+            }
         })
 
         // Search shootingContacts
         const contactsSnap = await getDocs(
-            query(collection(db, 'shootingContacts'), where('projectName', '==', dateSearchProject.value.trim()))
+            query(collection(db, 'shootingContacts'))
         )
         contactsSnap.forEach(docSnap => {
             const d = docSnap.data()
-            dateSearchResults.value.push({
-                id: docSnap.id,
-                collection: 'shootingContacts',
-                castName: d.castName || '',
-                projectName: d.projectName || '',
-                shootDate: d.shootDate
-            })
+            const match = (d.projectName || '').toLowerCase().includes(keyword) ||
+                          (d.castName || '').toLowerCase().includes(keyword) ||
+                          (d.accountName || '').toLowerCase().includes(keyword)
+            if (match) {
+                dateSearchResults.value.push({
+                    id: docSnap.id,
+                    collection: 'shootingContacts',
+                    castName: d.castName || '',
+                    projectName: d.projectName || '',
+                    shootDate: d.shootDate
+                })
+            }
         })
+
+        if (dateSearchResults.value.length === 0) {
+            toast.add({ severity: 'info', summary: '検索結果', detail: '該当するデータが見つかりませんでした', life: 3000 })
+        }
     } catch (error) {
         console.error('Error searching:', error)
         toast.add({ severity: 'error', summary: 'エラー', detail: '検索に失敗しました', life: 3000 })
@@ -248,11 +272,29 @@ async function searchByProject() {
 async function updateShootDate(item: typeof dateSearchResults.value[0]) {
     if (!db || !item.newDate) return
     try {
-        const newTs = Timestamp.fromDate(item.newDate)
+        // タイムゾーン安全な日付文字列を生成（正午に設定）
+        const d = item.newDate
+        const y = d.getFullYear()
+        const m = String(d.getMonth() + 1).padStart(2, '0')
+        const day = String(d.getDate()).padStart(2, '0')
+        const dateStr = `${y}/${m}/${day}`
+
+        const newDate = new Date(y, d.getMonth(), d.getDate(), 12, 0, 0) // 正午に設定
+        const newTs = Timestamp.fromDate(newDate)
         const colName = item.collection
+
         if (colName === 'castings') {
-            // startDate と endDate の両方を更新（片方だけ変えると isMultiDay 判定がズレる）
-            await updateDoc(doc(db, colName, item.id), { startDate: newTs, endDate: newTs })
+            // Cloud Function経由で更新 → Googleカレンダー + Slack通知も自動連動
+            if (functions) {
+                const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
+                await notifyUpdate({
+                    castingId: item.id,
+                    changes: { startDate: dateStr, endDate: dateStr }
+                })
+            } else {
+                // fallback: Firestoreのみ更新
+                await updateDoc(doc(db, colName, item.id), { startDate: newTs, endDate: newTs })
+            }
         } else {
             await updateDoc(doc(db, colName, item.id), { shootDate: newTs })
         }

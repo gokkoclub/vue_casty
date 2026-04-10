@@ -109,49 +109,58 @@ export const syncDriveLinksToContacts = onCall(
             }
 
             // Build notionPageId -> driveLink map
+            // 複数の正規化形式でマッチできるよう、元のID・ハイフン除去・小文字の全パターンを登録
             const driveLinkMap = new Map<string, string>();
             allDriveSnap.docs.forEach((doc) => {
                 const d = doc.data();
                 if (d.notionPageId && d.driveLink) {
-                    driveLinkMap.set(d.notionPageId, d.driveLink);
+                    const raw = d.notionPageId;
+                    driveLinkMap.set(raw, d.driveLink);
+                    driveLinkMap.set(raw.replace(/-/g, "").toLowerCase(), d.driveLink);
+                    driveLinkMap.set(raw.toLowerCase(), d.driveLink);
                 }
             });
 
-            // Get all contacts missing makingUrl
-            const allContactsSnap = await db
-                .collection("shootingContacts")
-                .where("makingUrl", "==", "")
-                .get();
+            // 全shootingContactsを取得（makingUrlフィールドが未設定、空、null のケースを網羅）
+            const allContactsSnap = await db.collection("shootingContacts").get();
 
-            // Also get contacts where makingUrl doesn't exist
-            const nullContactsSnap = await db
-                .collection("shootingContacts")
-                .where("makingUrl", "==", null)
-                .get();
-
-            const allContacts = [...allContactsSnap.docs, ...nullContactsSnap.docs];
             const batch = db.batch();
             let totalUpdated = 0;
+            const batchLimit = 500;
 
-            // For each contact, try to find castings -> projectId -> driveLink
-            for (const contactDoc of allContacts) {
+            for (const contactDoc of allContactsSnap.docs) {
                 const contact = contactDoc.data();
-                if (!contact.castingId) continue;
+                // 既にmakingUrlが設定されているものはスキップ
+                if (contact.makingUrl && contact.makingUrl.trim() !== "") continue;
 
-                // Get the original casting to find projectId
-                const castingDoc = await db
-                    .collection("castings")
-                    .doc(contact.castingId)
-                    .get();
+                let driveLink: string | undefined;
 
-                if (!castingDoc.exists) continue;
+                // 方法1: shootingContactsのnotionIdで直接マッチ
+                if (contact.notionId) {
+                    const normalizedNotionId = contact.notionId.replace(/-/g, "").toLowerCase();
+                    driveLink = driveLinkMap.get(normalizedNotionId);
+                }
 
-                const casting = castingDoc.data();
-                const projectId = casting?.projectId;
-                if (!projectId) continue;
+                // 方法2: notionIdがなければ castingId → casting.projectId でマッチ
+                if (!driveLink && contact.castingId) {
+                    try {
+                        const castingDoc = await db
+                            .collection("castings")
+                            .doc(contact.castingId)
+                            .get();
 
-                const normalizedProjectId = projectId.replace(/-/g, "").toLowerCase();
-                const driveLink = driveLinkMap.get(normalizedProjectId);
+                        if (castingDoc.exists) {
+                            const casting = castingDoc.data();
+                            const projectId = casting?.projectId;
+                            if (projectId) {
+                                const normalizedProjectId = projectId.replace(/-/g, "").toLowerCase();
+                                driveLink = driveLinkMap.get(normalizedProjectId);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn(`Failed to lookup casting ${contact.castingId}:`, e);
+                    }
+                }
 
                 if (driveLink) {
                     batch.update(contactDoc.ref, {
@@ -159,6 +168,9 @@ export const syncDriveLinksToContacts = onCall(
                         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                     });
                     totalUpdated++;
+
+                    // Firestoreバッチは500件まで
+                    if (totalUpdated >= batchLimit) break;
                 }
             }
 

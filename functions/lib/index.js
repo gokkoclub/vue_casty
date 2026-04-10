@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -337,6 +337,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     // ── オーダー主のSlack IDを解決 ──
     // ログインユーザーのメールアドレスからSlack IDを検索
     let orderCreatorMention = "";
+    let orderCreatorName = data.ccMention || ""; // フロント側で渡されたユーザー名をフォールバック
     try {
         const userEmail = request.auth?.token?.email;
         if (userEmail) {
@@ -350,6 +351,9 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                 if (castData.slackMentionId) {
                     orderCreatorMention = `<@${castData.slackMentionId}>`;
                 }
+                if (castData.name) {
+                    orderCreatorName = castData.name;
+                }
             }
             // castsで見つからない場合、adminsから検索
             if (!orderCreatorMention) {
@@ -362,9 +366,12 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     if (adminData.slackMentionId) {
                         orderCreatorMention = `<@${adminData.slackMentionId}>`;
                     }
+                    if (adminData.name) {
+                        orderCreatorName = adminData.name;
+                    }
                 }
             }
-            console.log("Order creator mention resolved:", orderCreatorMention, "from email:", userEmail);
+            console.log("Order creator mention resolved:", orderCreatorMention, "name:", orderCreatorName, "from email:", userEmail);
         }
     }
     catch (e) {
@@ -449,6 +456,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             endTime: data.endTime,
             items: itemsWithConflict,
             ccMention: resolvedCcMention || undefined,
+            ordererName: orderCreatorMention || orderCreatorName || undefined,
         });
     }
     else {
@@ -463,6 +471,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             mode: orderMode,
             mentionGroupId: mentionGroupId || undefined,
             ccString: ccString || undefined,
+            ordererName: orderCreatorMention || orderCreatorName || undefined,
         });
     }
     // ── Slack送信 ──
@@ -772,6 +781,49 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
                 console.warn("Failed to add to shootingContacts:", e);
             }
         }
+    }
+    return { success: true };
+});
+// ──────────────────────────────────────
+// 2b. 一括ステータス変更通知（まとめてSlack送信）
+// ──────────────────────────────────────
+exports.notifyBulkStatusUpdate = (0, https_1.onCall)({
+    maxInstances: 10,
+    secrets: [
+        "SLACK_BOT_TOKEN",
+        "SLACK_CHANNEL_INTERNAL",
+    ],
+}, async (request) => {
+    const data = request.data;
+    if (!data || !data.groups || !Array.isArray(data.groups)) {
+        throw new https_1.HttpsError("invalid-argument", "groups array is required");
+    }
+    const slackToken = getEnv("SLACK_BOT_TOKEN");
+    const db = admin.firestore();
+    for (const group of data.groups) {
+        const { slackThreadTs, newStatus, castings: castingItems } = group;
+        if (!slackThreadTs || !castingItems || castingItems.length === 0)
+            continue;
+        // スレッドのチャンネルを最初のキャスティングから取得
+        let slackChannel = "";
+        try {
+            const firstCastingDoc = await db.collection("castings").doc(castingItems[0].castingId).get();
+            if (firstCastingDoc.exists) {
+                const castingData = firstCastingDoc.data();
+                slackChannel = resolveSlackChannel(castingData);
+            }
+        }
+        catch (e) {
+            console.warn("Failed to resolve channel for bulk update:", e);
+        }
+        if (!slackChannel || !slackToken)
+            continue;
+        // まとめメッセージを構築
+        const castNames = castingItems.map((c) => c.castName).join("、");
+        const message = `📋 *一括ステータス更新*\n` +
+            `${castingItems.length}件のキャスティングを \`${newStatus}\` に変更しました\n` +
+            `対象: ${castNames}`;
+        await (0, slack_1.postToSlack)(slackToken, slackChannel, message, undefined, slackThreadTs);
     }
     return { success: true };
 });

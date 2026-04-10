@@ -5,6 +5,7 @@ import TabPanel from 'primevue/tabpanel'
 import Button from 'primevue/button'
 import Badge from 'primevue/badge'
 import Dialog from 'primevue/dialog'
+import InputText from 'primevue/inputtext'
 import ProgressSpinner from 'primevue/progressspinner'
 import { useShootingContact } from '@/composables/useShootingContact'
 import ShootingContactTable from '@/components/contact/ShootingContactTable.vue'
@@ -34,12 +35,13 @@ const tabs: TabDef[] = [
 const activeTab = ref(0)
 const viewMode = ref<'date' | 'project'>('date')
 const expandedDates = ref<Set<string>>(new Set())
+const searchQuery = ref('')
 
 const currentStatus = computed<ShootingContactStatus>(() => tabs[activeTab.value]?.status || '香盤連絡待ち')
 
-// Date-grouped data for current tab
-const dateGroups = computed(() => getDateGrouped(currentStatus.value))
-const projectGroups = computed(() => getProjectGrouped(currentStatus.value))
+// Date-grouped data for current tab (with search filter)
+const dateGroups = computed(() => getDateGrouped(currentStatus.value, searchQuery.value || undefined))
+const projectGroups = computed(() => getProjectGrouped(currentStatus.value, searchQuery.value || undefined))
 
 onMounted(() => { fetchAll() })
 
@@ -85,8 +87,8 @@ watch(dateGroups, (groups) => {
     }
 }, { immediate: true })
 
-// Tab change resets expansion
-watch(activeTab, () => { expandedDates.value.clear() })
+// Tab change resets expansion and search
+watch(activeTab, () => { expandedDates.value.clear(); searchQuery.value = '' })
 
 // -- Save handler
 async function handleSave(id: string, data: Partial<ShootingContact>) {
@@ -225,6 +227,19 @@ async function handleBulkDelete() {
                 </template>
 
                 <div class="tab-content">
+                    <!-- Search bar + Sync button -->
+                    <div class="search-sync-bar">
+                        <span class="p-input-icon-left search-input-wrapper">
+                            <i class="pi pi-search" />
+                            <InputText
+                                v-model="searchQuery"
+                                placeholder="撮影名・キャスト名などで検索..."
+                                size="small"
+                                class="search-input"
+                            />
+                        </span>
+                    </div>
+
                     <!-- Sync button -->
                     <div v-if="tab.syncLabel" class="sync-bar">
                         <Button
@@ -369,6 +384,22 @@ async function handleBulkDelete() {
     padding: 1.5rem;
     max-width: 1400px;
     margin: 0 auto;
+}
+
+.search-sync-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.search-input-wrapper {
+    flex: 1;
+    max-width: 400px;
+}
+
+.search-input {
+    width: 100%;
 }
 
 .header {

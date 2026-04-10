@@ -323,6 +323,7 @@ export const notifyOrderCreated = onCall(
         // ── オーダー主のSlack IDを解決 ──
         // ログインユーザーのメールアドレスからSlack IDを検索
         let orderCreatorMention = "";
+        let orderCreatorName = data.ccMention || ""; // フロント側で渡されたユーザー名をフォールバック
         try {
             const userEmail = request.auth?.token?.email;
             if (userEmail) {
@@ -336,6 +337,9 @@ export const notifyOrderCreated = onCall(
                     const castData = castSnap.docs[0]!.data();
                     if (castData.slackMentionId) {
                         orderCreatorMention = `<@${castData.slackMentionId}>`;
+                    }
+                    if (castData.name) {
+                        orderCreatorName = castData.name;
                     }
                 }
 
@@ -351,10 +355,13 @@ export const notifyOrderCreated = onCall(
                         if (adminData.slackMentionId) {
                             orderCreatorMention = `<@${adminData.slackMentionId}>`;
                         }
+                        if (adminData.name) {
+                            orderCreatorName = adminData.name;
+                        }
                     }
                 }
 
-                console.log("Order creator mention resolved:", orderCreatorMention, "from email:", userEmail);
+                console.log("Order creator mention resolved:", orderCreatorMention, "name:", orderCreatorName, "from email:", userEmail);
             }
         } catch (e) {
             console.warn("Order creator Slack ID lookup failed:", e);
@@ -461,6 +468,7 @@ export const notifyOrderCreated = onCall(
                 endTime: data.endTime,
                 items: itemsWithConflict,
                 ccMention: resolvedCcMention || undefined,
+                ordererName: orderCreatorMention || orderCreatorName || undefined,
             });
         } else {
             // 撮影オーダー
@@ -474,6 +482,7 @@ export const notifyOrderCreated = onCall(
                 mode: orderMode,
                 mentionGroupId: mentionGroupId || undefined,
                 ccString: ccString || undefined,
+                ordererName: orderCreatorMention || orderCreatorName || undefined,
             });
         }
 
@@ -856,6 +865,57 @@ export const notifyStatusUpdate = onCall(
                     console.warn("Failed to add to shootingContacts:", e);
                 }
             }
+        }
+
+        return { success: true };
+    }
+);
+
+// ──────────────────────────────────────
+// 2b. 一括ステータス変更通知（まとめてSlack送信）
+// ──────────────────────────────────────
+export const notifyBulkStatusUpdate = onCall(
+    {
+        maxInstances: 10,
+        secrets: [
+            "SLACK_BOT_TOKEN",
+            "SLACK_CHANNEL_INTERNAL",
+        ],
+    },
+    async (request) => {
+        const data = request.data;
+        if (!data || !data.groups || !Array.isArray(data.groups)) {
+            throw new HttpsError("invalid-argument", "groups array is required");
+        }
+
+        const slackToken = getEnv("SLACK_BOT_TOKEN");
+        const db = admin.firestore();
+
+        for (const group of data.groups) {
+            const { slackThreadTs, newStatus, castings: castingItems } = group;
+            if (!slackThreadTs || !castingItems || castingItems.length === 0) continue;
+
+            // スレッドのチャンネルを最初のキャスティングから取得
+            let slackChannel = "";
+            try {
+                const firstCastingDoc = await db.collection("castings").doc(castingItems[0].castingId).get();
+                if (firstCastingDoc.exists) {
+                    const castingData = firstCastingDoc.data()!;
+                    slackChannel = resolveSlackChannel(castingData);
+                }
+            } catch (e) {
+                console.warn("Failed to resolve channel for bulk update:", e);
+            }
+
+            if (!slackChannel || !slackToken) continue;
+
+            // まとめメッセージを構築
+            const castNames = castingItems.map((c: { castName: string }) => c.castName).join("、");
+            const message = `📋 *一括ステータス更新*\n` +
+                `${castingItems.length}件のキャスティングを \`${newStatus}\` に変更しました\n` +
+                `対象: ${castNames}`;
+
+            await postToSlack(slackToken, slackChannel, message, undefined, slackThreadTs);
         }
 
         return { success: true };

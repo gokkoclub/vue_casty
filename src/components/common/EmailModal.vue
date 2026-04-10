@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import Dialog from 'primevue/dialog'
 import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'
 import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
 import Textarea from 'primevue/textarea'
 import { useEmailTemplate } from '@/composables/useEmailTemplate'
 import { useToast } from 'primevue/usetoast'
@@ -23,26 +24,73 @@ const { generateKoubanMail, generateOrderMail, copyToClipboard, openMailto } = u
 
 const activeTab = ref(0)
 
+// 編集可能なフィールド
+const editKoubanSubject = ref('')
+const editKoubanBody = ref('')
+const editOrderSubject = ref('')
+const editOrderBody = ref('')
+
+// テンプレートから初期値を設定
 const koubanMail = computed(() => props.contact ? generateKoubanMail(props.contact) : null)
 const orderMail = computed(() => props.contact ? generateOrderMail(props.contact) : null)
 
+// contact が変わったらテンプレートの内容で初期化
+watch(() => props.contact, () => {
+  if (koubanMail.value) {
+    editKoubanSubject.value = koubanMail.value.subject
+    editKoubanBody.value = koubanMail.value.body
+  }
+  if (orderMail.value) {
+    editOrderSubject.value = orderMail.value.subject
+    editOrderBody.value = orderMail.value.body
+  }
+}, { immediate: true })
+
+// ダイアログが開いた時にもリセット
+watch(() => props.visible, (val) => {
+  if (val) {
+    if (koubanMail.value) {
+      editKoubanSubject.value = koubanMail.value.subject
+      editKoubanBody.value = koubanMail.value.body
+    }
+    if (orderMail.value) {
+      editOrderSubject.value = orderMail.value.subject
+      editOrderBody.value = orderMail.value.body
+    }
+  }
+})
+
+const resetKouban = () => {
+  if (koubanMail.value) {
+    editKoubanSubject.value = koubanMail.value.subject
+    editKoubanBody.value = koubanMail.value.body
+  }
+}
+
+const resetOrder = () => {
+  if (orderMail.value) {
+    editOrderSubject.value = orderMail.value.subject
+    editOrderBody.value = orderMail.value.body
+  }
+}
+
 const handleCopy = async (subject: string, body: string) => {
   await copyToClipboard(`${subject}\n\n${body}`)
-  toast.add({ 
-    severity: 'success', 
-    summary: 'コピー完了', 
-    detail: 'クリップボードにコピーしました', 
-    life: 3000 
+  toast.add({
+    severity: 'success',
+    summary: 'コピー完了',
+    detail: 'クリップボードにコピーしました',
+    life: 3000
   })
 }
 
 const handleMailto = (subject: string, body: string) => {
   if (!props.contact?.email) {
-    toast.add({ 
-      severity: 'warn', 
-      summary: '警告', 
-      detail: 'メールアドレスが設定されていません', 
-      life: 3000 
+    toast.add({
+      severity: 'warn',
+      summary: '警告',
+      detail: 'メールアドレスが設定されていません',
+      life: 3000
     })
     return
   }
@@ -51,7 +99,7 @@ const handleMailto = (subject: string, body: string) => {
 </script>
 
 <template>
-  <Dialog 
+  <Dialog
     :visible="visible"
     @update:visible="emit('update:visible', $event)"
     modal
@@ -62,60 +110,84 @@ const handleMailto = (subject: string, body: string) => {
       <TabPanel value="0" header="香盤連絡">
         <div v-if="koubanMail" class="mail-preview">
           <div class="field">
-            <label>件名</label>
-            <div class="subject">{{ koubanMail.subject }}</div>
+            <div class="field-header">
+              <label>件名</label>
+              <Button
+                label="リセット"
+                icon="pi pi-refresh"
+                text
+                size="small"
+                severity="secondary"
+                @click="resetKouban"
+              />
+            </div>
+            <InputText
+              v-model="editKoubanSubject"
+              class="w-full"
+            />
           </div>
           <div class="field">
             <label>本文</label>
-            <Textarea 
-              :modelValue="koubanMail.body" 
-              readonly 
-              rows="12" 
+            <Textarea
+              v-model="editKoubanBody"
+              rows="12"
               class="w-full"
             />
           </div>
           <div class="actions">
-            <Button 
-              label="クリップボードにコピー" 
+            <Button
+              label="クリップボードにコピー"
               icon="pi pi-copy"
-              @click="handleCopy(koubanMail.subject, koubanMail.body)"
+              @click="handleCopy(editKoubanSubject, editKoubanBody)"
             />
-            <Button 
-              label="メーラーで開く" 
+            <Button
+              label="メーラーで開く"
               icon="pi pi-envelope"
               severity="secondary"
-              @click="handleMailto(koubanMail.subject, koubanMail.body)"
+              @click="handleMailto(editKoubanSubject, editKoubanBody)"
             />
           </div>
         </div>
       </TabPanel>
-      
+
       <TabPanel value="1" header="発注書送付">
         <div v-if="orderMail" class="mail-preview">
           <div class="field">
-            <label>件名</label>
-            <div class="subject">{{ orderMail.subject }}</div>
+            <div class="field-header">
+              <label>件名</label>
+              <Button
+                label="リセット"
+                icon="pi pi-refresh"
+                text
+                size="small"
+                severity="secondary"
+                @click="resetOrder"
+              />
+            </div>
+            <InputText
+              v-model="editOrderSubject"
+              class="w-full"
+            />
           </div>
           <div class="field">
             <label>本文</label>
-            <Textarea 
-              :modelValue="orderMail.body" 
-              readonly 
-              rows="12" 
+            <Textarea
+              v-model="editOrderBody"
+              rows="12"
               class="w-full"
             />
           </div>
           <div class="actions">
-            <Button 
-              label="クリップボードにコピー" 
+            <Button
+              label="クリップボードにコピー"
               icon="pi pi-copy"
-              @click="handleCopy(orderMail.subject, orderMail.body)"
+              @click="handleCopy(editOrderSubject, editOrderBody)"
             />
-            <Button 
-              label="メーラーで開く" 
+            <Button
+              label="メーラーで開く"
               icon="pi pi-envelope"
               severity="secondary"
-              @click="handleMailto(orderMail.subject, orderMail.body)"
+              @click="handleMailto(editOrderSubject, editOrderBody)"
             />
           </div>
         </div>
@@ -137,17 +209,16 @@ const handleMailto = (subject: string, body: string) => {
   gap: 0.5rem;
 }
 
+.field-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 .field label {
   font-weight: 600;
   font-size: 0.875rem;
   color: var(--p-text-muted-color);
-}
-
-.subject {
-  padding: 0.5rem;
-  background: var(--p-content-hover-background);
-  border-radius: 4px;
-  font-weight: 500;
 }
 
 .actions {

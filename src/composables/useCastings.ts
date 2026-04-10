@@ -425,6 +425,27 @@ export function useCastings() {
             casting.cost = cost
             casting.updatedAt = Timestamp.now()
 
+            // 撮影香盤DBにも金額を同期（castingId で紐づく shootingContacts を更新）
+            try {
+                const scQuery = query(
+                    collection(db, 'shootingContacts'),
+                    where('castingId', '==', castingId)
+                )
+                const scSnap = await getDocs(scQuery)
+                for (const scDoc of scSnap.docs) {
+                    await updateDoc(scDoc.ref, {
+                        fee: cost,
+                        cost: cost > 0 ? cost.toLocaleString() : '',
+                        updatedAt: Timestamp.now()
+                    })
+                }
+                if (!scSnap.empty) {
+                    console.log(`[CostSync] casting→shootingContacts: ${scSnap.size}件同期`)
+                }
+            } catch (syncErr) {
+                console.warn('Failed to sync cost to shootingContacts:', syncErr)
+            }
+
             toast.add({
                 severity: 'success',
                 summary: '保存完了',
@@ -1058,6 +1079,101 @@ export function useCastings() {
         }
     }
 
+    /**
+     * 一括ステータス更新（Slackメッセージをまとめて送信）
+     * slackThreadTsでグループ化し、各スレッドに1つのまとめメッセージを送る
+     */
+    async function bulkUpdateCastingStatus(
+        castingIds: string[],
+        newStatus: CastingStatus
+    ): Promise<boolean> {
+        if (!db) return false
+
+        // 1. Firestoreの全castingsを更新
+        const batch = writeBatch(db)
+        const updatedCastings: Casting[] = []
+
+        for (const castingId of castingIds) {
+            const casting = castings.value.find(c => c.id === castingId)
+            if (!casting) continue
+
+            batch.update(doc(db, 'castings', castingId), {
+                status: newStatus,
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'unknown'
+            })
+            updatedCastings.push(casting)
+        }
+        await batch.commit()
+
+        // 2. ローカル状態更新
+        for (const casting of updatedCastings) {
+            const previousStatus = casting.status
+            casting.status = newStatus
+            casting.updatedAt = Timestamp.now()
+
+            // 決定時の後処理（castMaster追加、shootingContacts追加）
+            if (newStatus === '決定') {
+                addToCastMaster(casting).catch(err => console.warn('castMaster add failed:', err))
+                if (casting.castType === '外部') {
+                    addFromCasting(casting).catch(err => console.warn('shootingContact add failed:', err))
+                }
+                autoCancelCompetingCandidates(casting).catch(err => console.warn('auto-cancel failed:', err))
+            }
+            if (newStatus === 'NG' || newStatus === 'キャンセル') {
+                promoteNextRankCandidate(casting).catch(err => console.warn('promote failed:', err))
+            }
+        }
+
+        // 3. Slackメッセージをスレッドごとにまとめて送信
+        const threadGroups = new Map<string, Casting[]>()
+        for (const casting of updatedCastings) {
+            if (!casting.slackThreadTs) continue
+            const key = casting.slackThreadTs
+            if (!threadGroups.has(key)) threadGroups.set(key, [])
+            threadGroups.get(key)!.push(casting)
+        }
+
+        if (functions && threadGroups.size > 0) {
+            const bulkNotify = httpsCallable(functions, 'notifyBulkStatusUpdate')
+            const groups = Array.from(threadGroups.entries()).map(([threadTs, threadCastings]) => ({
+                slackThreadTs: threadTs,
+                newStatus,
+                castings: threadCastings.map(c => ({
+                    castingId: c.id,
+                    castName: c.castName,
+                    projectName: c.projectName
+                }))
+            }))
+            bulkNotify({ groups }).catch(err => {
+                console.warn('Bulk Slack notification failed:', err)
+                // フォールバック: 個別に通知
+                for (const casting of updatedCastings) {
+                    if (casting.slackThreadTs) {
+                        notifyStatusUpdate({
+                            castingId: casting.id,
+                            castName: casting.castName,
+                            projectName: casting.projectName,
+                            newStatus,
+                            previousStatus: casting.status,
+                            slackThreadTs: casting.slackThreadTs,
+                            isInternal: casting.castType === '内部'
+                        }).catch(() => {})
+                    }
+                }
+            })
+        }
+
+        toast.add({
+            severity: 'success',
+            summary: '一括更新完了',
+            detail: `${updatedCastings.length}件のステータスを「${newStatus}」に変更しました`,
+            life: 3000
+        })
+
+        return true
+    }
+
     return {
         castings,
         loading,
@@ -1065,6 +1181,7 @@ export function useCastings() {
         sortedDates,
         fetchCastings,
         updateCastingStatus,
+        bulkUpdateCastingStatus,
         updateCastingCost,
         updateCastingTime,
         updateCastingDetails,

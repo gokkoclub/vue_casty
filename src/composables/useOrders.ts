@@ -8,6 +8,8 @@ import { db, functions } from '@/services/firebase'
 import { useOrderStore } from '@/stores/orderStore'
 import { useAuth } from '@/composables/useAuth'
 import { useLoading } from '@/composables/useLoading'
+import { useShootingContact } from '@/composables/useShootingContact'
+import { useCastMaster } from '@/composables/useCastMaster'
 import { useToast } from 'primevue/usetoast'
 
 export interface OrderItem {
@@ -347,7 +349,18 @@ export function useOrders() {
             return false
         }
 
-        const { userName } = useAuth()
+        const { userName, userEmail } = useAuth()
+
+        // 認証切れチェック: ログインしていない状態でオーダーを飛ばせないようにする
+        if (!userEmail.value) {
+            toast.add({
+                severity: 'error',
+                summary: '認証エラー',
+                detail: 'ログインセッションが切れています。再度ログインしてください。',
+                life: 5000
+            })
+            return false
+        }
 
         loading.value = true
         const { startLoading, stopLoading } = useLoading()
@@ -432,8 +445,8 @@ export function useOrders() {
                         endDate: Timestamp.fromDate(parseLocalDate(endDateStr || startDateStr || dateRange)),
                         createdAt: now,
                         updatedAt: now,
-                        createdBy: 'current-user',
-                        updatedBy: 'current-user'
+                        createdBy: userEmail.value || 'unknown',
+                        updatedBy: userEmail.value || 'unknown'
                     }
 
                     // For multi-day orders (中長編), auto-generate shootingDates
@@ -473,6 +486,60 @@ export function useOrders() {
 
 
             await batch.commit()
+
+            // 外部案件/社内イベントで初期ステータスが「決定」の外部キャストを
+            // 撮影香盤連絡DBとキャスティングマスターDBに追加
+            if (payload.mode === 'external' || payload.mode === 'internal') {
+                const { addFromCasting: addToShootingContact } = useShootingContact()
+                const { addToCastMaster } = useCastMaster()
+
+                for (let i = 0; i < payload.items.length; i++) {
+                    const item = payload.items[i]!
+                    if (item.castType !== '外部') continue
+
+                    // castingIds は全items × dateRanges で生成されるためインデックスを計算
+                    const itemDates = item.selectedDates && item.selectedDates.length > 0
+                        ? item.selectedDates : payload.dateRanges
+                    // 最初の dateRange 分の castingId を使用
+                    const baseIndex = payload.items.slice(0, i).reduce((sum, it) => {
+                        const dates = it.selectedDates && it.selectedDates.length > 0
+                            ? it.selectedDates : payload.dateRanges
+                        return sum + dates.length
+                    }, 0)
+
+                    for (let j = 0; j < itemDates.length; j++) {
+                        const castingId = castingIds[baseIndex + j]
+                        if (!castingId) continue
+                        const dateRange = itemDates[j]!
+                        const [startDateStr] = dateRange.includes('~')
+                            ? dateRange.split('~').map(s => s.trim())
+                            : [dateRange]
+                        const parseLocalDate = (str: string): Date => {
+                            const parts = str.split('/')
+                            return new Date(parseInt(parts[0]!), parseInt(parts[1]!) - 1, parseInt(parts[2]!), 12, 0, 0)
+                        }
+
+                        const castingForContact = {
+                            id: castingId,
+                            castId: item.castId,
+                            castName: item.castName,
+                            castType: item.castType as '内部' | '外部',
+                            projectName: item.projectName,
+                            accountName: payload.accountName,
+                            roleName: item.roleName,
+                            mainSub: item.mainSub,
+                            startDate: Timestamp.fromDate(parseLocalDate(startDateStr || dateRange)),
+                            slackThreadTs: '',
+                        }
+                        addToShootingContact(castingForContact as any).catch(err =>
+                            console.warn('Failed to add to shooting contact DB:', err)
+                        )
+                        addToCastMaster(castingForContact as any).catch(err =>
+                            console.warn('Failed to add to castMaster:', err)
+                        )
+                    }
+                }
+            }
 
             // Cloud Functions経由でSlack通知 + カレンダー作成
             // Cloud Functionsが自動でFirestoreにslackThreadTs/calendarEventIdを書き戻す

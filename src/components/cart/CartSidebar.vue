@@ -82,6 +82,47 @@ const handleSubmitClick = () => {
   showConfirmDialog.value = true
 }
 
+// Build order summary for preview
+const orderSummary = computed(() => {
+  const items: Array<{ castName: string; castType: string; roleName: string; rank: number; projectName: string }> = []
+
+  if (store.context.mode === 'external' || store.context.mode === 'internal') {
+    Object.values(store.pool).forEach(cartCast => {
+      items.push({
+        castName: cartCast.cast.name,
+        castType: cartCast.cast.castType,
+        roleName: store.context.mode === 'external' ? '外部案件' : '社内イベント',
+        rank: 1,
+        projectName: store.manualMeta.projectName || ''
+      })
+    })
+  } else {
+    store.projects.forEach(project => {
+      project.roles.forEach(role => {
+        role.castIds.forEach((castId, index) => {
+          const cartCast = store.pool[castId]
+          if (!cartCast) return
+          items.push({
+            castName: cartCast.cast.name,
+            castType: cartCast.cast.castType,
+            roleName: role.name || '役名なし',
+            rank: index + 1,
+            projectName: project.title || store.displayProjectName
+          })
+        })
+      })
+    })
+  }
+
+  return {
+    mode: store.context.mode,
+    accountName: store.displayAccountName,
+    projectName: store.displayProjectName,
+    dateRanges: store.context.dateRanges,
+    items
+  }
+})
+
 const handleConfirmed = (intimacy: string, competition?: { type: string; period: string }) => {
   emit('submit', uploadedPdf.value, intimacy, competition)
   // PDF添付ファイルをリセット
@@ -259,6 +300,7 @@ const handleConfirmed = (intimacy: string, competition?: { type: string; period:
     :hasPdf="!!uploadedPdf"
     :hasMinorCast="hasMinorCast"
     :isShootingMode="store.isShootingMode"
+    :orderSummary="orderSummary"
     @confirm="handleConfirmed"
   />
 </template>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import Button from 'primevue/button'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
@@ -160,6 +160,42 @@ const openSlack = (url: string) => {
 const handleSummaryClick = () => {
   emit('open-summary', props.castings)
 }
+
+// 内部/外部ソート
+type SortMode = 'default' | 'internal-first' | 'external-first'
+const sortMode = ref<SortMode>('default')
+
+const sortedCastings = computed(() => {
+  const list = [...props.castings]
+  if (sortMode.value === 'internal-first') {
+    list.sort((a, b) => {
+      if (a.castType === '内部' && b.castType !== '内部') return -1
+      if (a.castType !== '内部' && b.castType === '内部') return 1
+      return (a.rank || 0) - (b.rank || 0)
+    })
+  } else if (sortMode.value === 'external-first') {
+    list.sort((a, b) => {
+      if (a.castType === '外部' && b.castType !== '外部') return -1
+      if (a.castType !== '外部' && b.castType === '外部') return 1
+      return (a.rank || 0) - (b.rank || 0)
+    })
+  }
+  return list
+})
+
+const cycleSortMode = () => {
+  const modes: SortMode[] = ['default', 'internal-first', 'external-first']
+  const idx = modes.indexOf(sortMode.value)
+  sortMode.value = modes[(idx + 1) % modes.length]!
+}
+
+const sortLabel = computed(() => {
+  switch (sortMode.value) {
+    case 'internal-first': return '内部優先'
+    case 'external-first': return '外部優先'
+    default: return '候補順'
+  }
+})
 </script>
 
 <template>
@@ -190,6 +226,15 @@ const handleSummaryClick = () => {
           {{ updaters.join(', ') }}
         </span>
         <Button
+          :label="sortLabel"
+          icon="pi pi-sort-alt"
+          text
+          size="small"
+          severity="secondary"
+          @click="cycleSortMode"
+          v-tooltip.bottom="'内部/外部で並び替え'"
+        />
+        <Button
           v-if="isAdmin"
           label="まとめ"
           icon="pi pi-list"
@@ -202,8 +247,8 @@ const handleSummaryClick = () => {
 
     <!-- Cast Rows -->
     <div class="csl-rows">
-      <div 
-        v-for="casting in castings" 
+      <div
+        v-for="casting in sortedCastings"
         :key="casting.id"
         class="csl-row"
         :class="{ 'dimmed': isRowDimmed(casting.status) }"
@@ -216,6 +261,9 @@ const handleSummaryClick = () => {
 
         <!-- Cast Name & Type -->
         <div class="csl-cell csl-cast">
+          <i v-if="casting.mode === 'external'" class="pi pi-briefcase csl-mode-icon" style="color: #E74C3C;" title="外部案件"></i>
+          <i v-else-if="casting.mode === 'internal'" class="pi pi-building csl-mode-icon" style="color: #F59E0B;" title="社内イベント"></i>
+          <i v-else class="pi pi-video csl-mode-icon" style="color: #3B82F6;" title="撮影"></i>
           <span class="csl-cast-name">{{ casting.castName }}</span>
           <span class="csl-cast-type" :class="casting.castType === '内部' ? 'internal' : 'external'">
             {{ casting.castType }}
@@ -444,6 +492,11 @@ const handleSummaryClick = () => {
 .csl-cast {
   min-width: 140px;
   gap: 0.4rem;
+}
+
+.csl-mode-icon {
+  font-size: 0.75rem;
+  flex-shrink: 0;
 }
 
 .csl-cast-name {

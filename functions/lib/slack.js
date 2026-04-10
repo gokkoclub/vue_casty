@@ -203,12 +203,13 @@ async function uploadFileToSlack(token, channel, text, fileBase64, fileName, thr
  */
 function buildSpecialOrderMessage(params) {
     const lines = [];
-    // ヘッダー
+    // ヘッダー（オーダー主名を含む）
+    const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
     if (params.mode === "external") {
-        lines.push("【外部案件】");
+        lines.push(`【外部案件】${ordererSuffix}`);
     }
     else {
-        lines.push("【社内イベント】");
+        lines.push(`【社内イベント】${ordererSuffix}`);
     }
     // タイトル
     lines.push("`タイトル`");
@@ -326,15 +327,16 @@ function buildOrderMessage(params) {
     if (params.mentionGroupId || params.ccString) {
         lines.push("");
     }
-    // ヘッダー
+    // ヘッダー（オーダー主名を含む）
+    const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
     if (isShooting) {
-        lines.push("キャスティングオーダーがありました。");
+        lines.push(`キャスティングオーダーがありました。${ordererSuffix}`);
     }
     else if (params.mode === "external") {
-        lines.push("外部案件のオーダーがありました。");
+        lines.push(`外部案件のオーダーがありました。${ordererSuffix}`);
     }
     else {
-        lines.push("社内イベントのオーダーがありました。");
+        lines.push(`社内イベントのオーダーがありました。${ordererSuffix}`);
     }
     if (params.hasInternal) {
         lines.push("*内部キャストはスタンプで反応ください*");
