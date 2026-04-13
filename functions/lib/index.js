@@ -1096,10 +1096,13 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     if (!startDateStr) {
         throw new https_1.HttpsError("failed-precondition", "Casting has no startDate");
     }
-    // 撮影情報から時間を取得（あれば）
-    let startTime;
-    let endTime;
-    if (casting.projectId) {
+    // 開始/終了時間の解決
+    // 優先順位:
+    //   1. casting 自体の startTime/endTime（社内イベント・外部案件はここに入る）
+    //   2. shootings コレクション（撮影オーダーは projectId 経由でここに入る）
+    let startTime = casting.startTime || undefined;
+    let endTime = casting.endTime || undefined;
+    if ((!startTime || !endTime) && casting.projectId) {
         try {
             const shootSnap = await db.collection("shootings")
                 .where("notionPageId", "==", casting.projectId)
@@ -1107,13 +1110,22 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
                 .get();
             if (!shootSnap.empty) {
                 const sd = shootSnap.docs[0].data();
-                startTime = sd.startTime || undefined;
-                endTime = sd.endTime || undefined;
+                startTime = startTime || sd.startTime || undefined;
+                endTime = endTime || sd.endTime || undefined;
             }
         }
         catch (e) {
             console.warn("[regenerateCalendar] shootings lookup failed:", e);
         }
+    }
+    // どちらか片方しかなければ無効化（createCalendarEvent は両方揃わないと dateTime にしない）
+    if (!startTime || !endTime) {
+        console.log("[regenerateCalendar] No start/end time → all-day event");
+        startTime = undefined;
+        endTime = undefined;
+    }
+    else {
+        console.log(`[regenerateCalendar] Using time: ${startTime} - ${endTime}`);
     }
     const isDecided = casting.status === "決定";
     const status = casting.status || "仮キャスティング";
