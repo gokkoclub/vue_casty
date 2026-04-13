@@ -43,7 +43,7 @@ async function main() {
     for (const doc of snap.docs) {
         const d = doc.data()
         // 削除済みは触らない
-        if (d.deleted === true || d.status === 'キャンセル' || d.status === 'NG') {
+        if (d.deleted === true || d.status === 'キャンセル' || d.status === 'NG' || d.status === '削除済み') {
             console.log(`  SKIP (inactive): ${doc.id} ${d.castName} status=${d.status}`)
             skipCount++
             continue

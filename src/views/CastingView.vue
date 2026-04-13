@@ -291,10 +291,20 @@ const { submitOrder, checkExistingProject } = useOrders()
 // 保留中の送信パラメータ
 const pendingOrderParams = ref<{ pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string } } | null>(null)
 const additionalOrderPopover = ref()
-const existingThreads = ref<Array<{ threadTs: string; dates: string[] }>>([])
+const existingThreads = ref<Array<{ threadTs: string; dates: string[]; createdAt?: Date; castNames: string[] }>>([])
 const selectedThreadTs = ref('')
 const popoverAnchor = ref()
 const manualThreadUrl = ref('')
+
+// 作成日時の表示フォーマット (M/D HH:mm)
+const formatCreatedAt = (d?: Date) => {
+  if (!d) return '不明'
+  const m = d.getMonth() + 1
+  const day = d.getDate()
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${m}/${day} ${hh}:${mm}`
+}
 
 // SlackスレッドURLからts(1234567890.123456)を抽出
 // 例: https://gokko5club.slack.com/archives/C02S1NFRH55/p1776051658223859
@@ -679,15 +689,23 @@ onUnmounted(() => {
         <div v-if="existingThreads.length > 1" style="display: flex; flex-direction: column; gap: 0.5rem;">
           <label style="font-weight: 600; font-size: 0.85rem; color: var(--p-text-muted-color);">追加先のスレッドを選択:</label>
           <div v-for="thread in existingThreads" :key="thread.threadTs"
-            style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 6px; cursor: pointer; transition: background 0.15s;"
+            style="display: flex; flex-direction: column; gap: 0.25rem; padding: 0.55rem 0.75rem; border-radius: 6px; cursor: pointer; transition: background 0.15s;"
             :style="{
               background: selectedThreadTs === thread.threadTs && !manualThreadUrl ? 'var(--p-highlight-background)' : 'var(--p-content-hover-background)',
               border: selectedThreadTs === thread.threadTs && !manualThreadUrl ? '2px solid var(--p-primary-color)' : '2px solid transparent'
             }"
             @click="selectedThreadTs = thread.threadTs; manualThreadUrl = ''"
           >
-            <i class="pi pi-comments" style="color: var(--p-primary-color);"></i>
-            <span style="font-size: 0.9rem;">撮影日: {{ thread.dates.join(', ') }}</span>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <i class="pi pi-comments" style="color: var(--p-primary-color);"></i>
+              <span style="font-size: 0.9rem; font-weight: 600;">撮影日: {{ thread.dates.join(', ') }}</span>
+              <span style="font-size: 0.75rem; color: var(--p-text-muted-color); margin-left: auto;">
+                <i class="pi pi-clock" style="margin-right: 0.2rem;"></i>{{ formatCreatedAt(thread.createdAt) }} 作成
+              </span>
+            </div>
+            <div v-if="thread.castNames.length > 0" style="font-size: 0.75rem; color: var(--p-text-muted-color); padding-left: 1.5rem;">
+              👥 {{ thread.castNames.slice(0, 5).join(' / ') }}{{ thread.castNames.length > 5 ? ` 他${thread.castNames.length - 5}名` : '' }}
+            </div>
           </div>
         </div>
 

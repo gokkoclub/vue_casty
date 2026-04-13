@@ -276,6 +276,8 @@ export function useOrders() {
     interface ExistingThread {
         threadTs: string
         dates: string[]
+        createdAt?: Date  // スレッドの最古のキャスティング作成日時
+        castNames: string[]  // 含まれているキャスト名（差分判別用）
     }
     const checkExistingProject = async (): Promise<ExistingThread[]> => {
         if (!db) return []
@@ -295,14 +297,22 @@ export function useOrders() {
             )
             if (snap.empty) return []
 
-            // スレッドTSごとにグループ化し、日付を収集
-            const threadMap = new Map<string, Set<string>>()
+            // スレッドTSごとにグループ化し、日付・作成日時・キャスト名を収集
+            const threadMap = new Map<string, {
+                dates: Set<string>
+                earliestCreatedAt: Date | null
+                castNames: Set<string>
+            }>()
             // slackThreadTs が空のドキュメントの日付も収集（ts 保存失敗のケース）
             const orphanDates = new Set<string>()
+            const orphanCastNames = new Set<string>()
+            let orphanEarliestCreatedAt: Date | null = null
             let hasOrphans = false
-            // 削除/キャンセル済みキャスティングのみが紐づくスレッドは候補から外すための集計
-            const tsActiveCount = new Map<string, number>()
-            const tsAnyCount = new Map<string, number>()
+
+            // ⚠️ 削除済み/キャンセル/NG キャスティングは候補から除外する
+            //   "削除済み" は CastingStatus 型には含まれないが実データ上は使われている
+            const isActiveStatus = (status: string) =>
+                status !== 'キャンセル' && status !== 'NG' && status !== '削除済み'
 
             snap.docs.forEach(doc => {
                 const data = doc.data()
@@ -311,36 +321,57 @@ export function useOrders() {
                     ? (() => { const d = data.startDate.toDate(); return `${d.getMonth() + 1}/${d.getDate()}` })()
                     : ''
 
-                const isActive = data.deleted !== true && data.status !== 'キャンセル' && data.status !== 'NG'
+                const isActive = data.deleted !== true && isActiveStatus(data.status)
+                if (!isActive) return
+
+                const createdAt: Date | null = data.createdAt && data.createdAt.toDate
+                    ? data.createdAt.toDate()
+                    : null
+                const castName: string = data.castName || ''
 
                 if (ts) {
-                    tsAnyCount.set(ts, (tsAnyCount.get(ts) || 0) + 1)
-                    if (isActive) {
-                        tsActiveCount.set(ts, (tsActiveCount.get(ts) || 0) + 1)
-                        if (!threadMap.has(ts)) threadMap.set(ts, new Set())
-                        if (dateStr) threadMap.get(ts)!.add(dateStr)
+                    if (!threadMap.has(ts)) {
+                        threadMap.set(ts, { dates: new Set(), earliestCreatedAt: null, castNames: new Set() })
                     }
-                } else if (isActive) {
+                    const entry = threadMap.get(ts)!
+                    if (dateStr) entry.dates.add(dateStr)
+                    if (castName) entry.castNames.add(castName)
+                    if (createdAt && (!entry.earliestCreatedAt || createdAt < entry.earliestCreatedAt)) {
+                        entry.earliestCreatedAt = createdAt
+                    }
+                } else {
                     // slackThreadTs が空 = 過去にオーダー済みだが ts 保存失敗
                     hasOrphans = true
                     if (dateStr) orphanDates.add(dateStr)
+                    if (castName) orphanCastNames.add(castName)
+                    if (createdAt && (!orphanEarliestCreatedAt || createdAt < orphanEarliestCreatedAt)) {
+                        orphanEarliestCreatedAt = createdAt
+                    }
                 }
             })
 
-            // 全部が非アクティブのスレッドは候補から除外（既に上の if (isActive) で除外済み）
-            // tsAnyCount/tsActiveCount は将来の診断用に保持
-
-            const results = Array.from(threadMap.entries()).map(([threadTs, dateSet]) => ({
-                threadTs,
-                dates: Array.from(dateSet).sort()
-            }))
+            // 作成日時が新しい順に並べる（より新しいスレッドを上に）
+            const results: ExistingThread[] = Array.from(threadMap.entries())
+                .map(([threadTs, entry]) => ({
+                    threadTs,
+                    dates: Array.from(entry.dates).sort(),
+                    createdAt: entry.earliestCreatedAt || undefined,
+                    castNames: Array.from(entry.castNames),
+                }))
+                .sort((a, b) => {
+                    const at = a.createdAt ? a.createdAt.getTime() : 0
+                    const bt = b.createdAt ? b.createdAt.getTime() : 0
+                    return bt - at
+                })
 
             // slackThreadTs 空のドキュメントのみ存在する場合
             // → 空の threadTs で返す（CF 側のリカバリに委ねる）
             if (results.length === 0 && hasOrphans) {
                 results.push({
                     threadTs: '',
-                    dates: Array.from(orphanDates).sort()
+                    dates: Array.from(orphanDates).sort(),
+                    createdAt: orphanEarliestCreatedAt || undefined,
+                    castNames: Array.from(orphanCastNames),
                 })
             }
 

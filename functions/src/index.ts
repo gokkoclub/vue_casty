@@ -309,10 +309,10 @@ export const notifyOrderCreated = onCall(
                 .where("projectId", "==", data.projectId)
                 .get();
 
-            // 有効なキャスティング（NG・キャンセル・削除フラグ以外）に絞って slackThreadTs を採用
+            // 有効なキャスティング（NG・キャンセル・削除済み・削除フラグ以外）に絞って slackThreadTs を採用
             const isActive = (d: FirebaseFirestore.DocumentData) => {
                 if (d.deleted === true) return false;
-                if (d.status === "キャンセル" || d.status === "NG") return false;
+                if (d.status === "キャンセル" || d.status === "NG" || d.status === "削除済み") return false;
                 return true;
             };
             const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs);
@@ -953,7 +953,7 @@ export const notifyStatusUpdate = onCall(
                     .get();
                 const sibling = sibSnap.docs.find(d => {
                     const dd = d.data();
-                    return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG";
+                    return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み";
                 });
                 if (sibling) {
                     const sd = sibling.data();
@@ -975,7 +975,7 @@ export const notifyStatusUpdate = onCall(
                         sibSnap.docs
                             .filter(d => {
                                 const dd = d.data();
-                                return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG";
+                                return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG" || dd.status === "削除済み";
                             })
                             .map(d => d.data().slackThreadTs)
                             .filter((ts): ts is string => !!ts)
