@@ -94,16 +94,91 @@ function resolveSlackChannel(casting: { slackChannel?: string; slackPermalink?: 
 }
 
 /**
+ * 名前のゆれを正規化（空白除去、全角半角統一など）
+ */
+function normalizeName(name: string): string {
+    return name
+        .replace(/\s+/g, "")          // 全空白除去
+        .replace(/[\u3000]/g, "")    // 全角空白除去
+        .toLowerCase();
+}
+
+// Slack ユーザー一覧キャッシュ（Cloud Function インスタンス内で使い回す）
+let slackUserCache: Array<{ id: string; names: string[] }> | null = null;
+let slackUserCacheAt = 0;
+const SLACK_USER_CACHE_TTL_MS = 10 * 60 * 1000; // 10分
+
+async function fetchSlackUsersCached(): Promise<Array<{ id: string; names: string[] }>> {
+    const now = Date.now();
+    if (slackUserCache && now - slackUserCacheAt < SLACK_USER_CACHE_TTL_MS) {
+        return slackUserCache;
+    }
+
+    const token = getEnv("SLACK_BOT_TOKEN");
+    if (!token) return slackUserCache || [];
+
+    const all: Array<{ id: string; names: string[] }> = [];
+    let cursor: string | undefined;
+    try {
+        // Slack users.list は最大1000件/ページ。通常1〜2ページで足りる。
+        for (let page = 0; page < 5; page++) {
+            const url = "https://slack.com/api/users.list?limit=200" + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+            const res = await fetch(url, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const json = await res.json() as {
+                ok: boolean;
+                members?: Array<{
+                    id: string;
+                    deleted?: boolean;
+                    is_bot?: boolean;
+                    real_name?: string;
+                    name?: string;
+                    profile?: { real_name?: string; display_name?: string; real_name_normalized?: string; display_name_normalized?: string };
+                }>;
+                response_metadata?: { next_cursor?: string };
+            };
+            if (!json.ok || !json.members) break;
+            for (const m of json.members) {
+                if (m.deleted || m.is_bot) continue;
+                const names = [
+                    m.real_name,
+                    m.name,
+                    m.profile?.real_name,
+                    m.profile?.display_name,
+                    m.profile?.real_name_normalized,
+                    m.profile?.display_name_normalized,
+                ].filter((s): s is string => !!s);
+                if (names.length > 0) {
+                    all.push({ id: m.id, names });
+                }
+            }
+            cursor = json.response_metadata?.next_cursor;
+            if (!cursor) break;
+        }
+        slackUserCache = all;
+        slackUserCacheAt = now;
+        console.log(`[SlackUsers] Cached ${all.length} users`);
+    } catch (e) {
+        console.warn("[SlackUsers] users.list failed:", e);
+    }
+    return all;
+}
+
+/**
  * 名前からSlack IDを検索するヘルパー
- * casts → admins の順に検索
+ * casts → admin → Slack users.list の順に検索
+ * 名前ゆれ（空白有無等）も吸収
  */
 async function lookupSlackIdByName(name: string): Promise<string> {
     if (!name) return "";
+    const trimmed = name.trim();
+    const normalized = normalizeName(trimmed);
     try {
         const firestore = admin.firestore();
         // castsコレクションから名前で検索
         const castSnap = await firestore.collection("casts")
-            .where("name", "==", name)
+            .where("name", "==", trimmed)
             .limit(1)
             .get();
         if (!castSnap.empty) {
@@ -113,12 +188,47 @@ async function lookupSlackIdByName(name: string): Promise<string> {
 
         // adminsコレクションから名前で検索
         const adminSnap = await firestore.collection("admin")
-            .where("name", "==", name)
+            .where("name", "==", trimmed)
             .limit(1)
             .get();
         if (!adminSnap.empty) {
             const data = adminSnap.docs[0]!.data();
             if (data.slackMentionId) return data.slackMentionId;
+        }
+
+        // フォールバック1: admin コレクション全件をスキャンし正規化一致
+        // （admin は数十件想定なので問題なし）
+        try {
+            const adminAll = await firestore.collection("admin").get();
+            for (const doc of adminAll.docs) {
+                const d = doc.data();
+                const candidates = [d.name, d.displayName, d.slackName].filter((s): s is string => !!s);
+                if (candidates.some(c => normalizeName(c) === normalized) && d.slackMentionId) {
+                    return d.slackMentionId;
+                }
+            }
+        } catch (e) {
+            console.warn(`[lookup] admin scan failed for ${trimmed}:`, e);
+        }
+
+        // フォールバック2: Slack users.list で名前検索
+        const users = await fetchSlackUsersCached();
+        // 厳密一致（正規化後）
+        for (const u of users) {
+            if (u.names.some(n => normalizeName(n) === normalized)) {
+                return u.id;
+            }
+        }
+        // 部分一致（正規化後）— 苗字のみ等のショートネーム対策
+        if (normalized.length >= 2) {
+            for (const u of users) {
+                if (u.names.some(n => {
+                    const nn = normalizeName(n);
+                    return nn.includes(normalized) || normalized.includes(nn);
+                })) {
+                    return u.id;
+                }
+            }
         }
     } catch (e) {
         console.warn(`Slack ID lookup failed for name: ${name}`, e);
@@ -193,20 +303,35 @@ export const notifyOrderCreated = onCall(
             }
         } else if (data.projectId && !data.forceNewThread) {
             // Firestore から slackThreadTs を探す
+            // ⚠️ キャンセル/NG/削除済みのキャスティングは別スレッドへ誤投稿の原因になるため除外
+            //    （旧スレッドが残ったまま再キャスティングするケースで、新オーダーが旧スレッドに飛ぶバグ対策）
             const existingSnap = await db.collection("castings")
                 .where("projectId", "==", data.projectId)
                 .get();
 
-            const docWithThread = existingSnap.docs.find(d => d.data().slackThreadTs);
+            // 有効なキャスティング（NG・キャンセル・削除フラグ以外）に絞って slackThreadTs を採用
+            const isActive = (d: FirebaseFirestore.DocumentData) => {
+                if (d.deleted === true) return false;
+                if (d.status === "キャンセル" || d.status === "NG") return false;
+                return true;
+            };
+            const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs);
             if (docWithThread) {
                 const existingData = docWithThread.data();
                 existingThreadTs = existingData.slackThreadTs || "";
                 existingPermalink = existingData.slackPermalink || "";
                 resolvedThreadChannel = resolveSlackChannel(existingData);
-            } else if (existingSnap.docs.length > 0) {
-                // slackThreadTs が空のキャスティングは存在する（= 過去にオーダー済みだが ts 保存失敗）
+            } else if (existingSnap.docs.some(d => isActive(d.data()))) {
+                // 有効なキャスティングは存在するが slackThreadTs が空 → ts 保存失敗
                 // → Slack チャンネル履歴から Notion URL で元スレッドを検索してリカバリ
-                console.log("[Recovery] slackThreadTs empty for projectId:", data.projectId, "— searching Slack channel...");
+                // ⚠️ ただし、削除/キャンセル済みキャスティングに紐づいたスレッドはブラックリスト化（誤投稿防止）
+                const blacklistedTs = new Set<string>(
+                    existingSnap.docs
+                        .filter(d => !isActive(d.data()))
+                        .map(d => d.data().slackThreadTs)
+                        .filter((ts): ts is string => !!ts)
+                );
+                console.log("[Recovery] slackThreadTs empty for projectId:", data.projectId, "— searching Slack channel...", "blacklist:", Array.from(blacklistedTs));
                 const notionUrl = `notion.so/${data.projectId.replace(/-/g, "")}`;
                 try {
                     let cursor: string | undefined;
@@ -234,6 +359,11 @@ export const notifyOrderCreated = onCall(
 
                         for (const msg of historyData.messages) {
                             if (msg.text && msg.text.includes(notionUrl)) {
+                                // 削除/キャンセル済みキャスティングと紐づいた古いスレッドはスキップ
+                                if (blacklistedTs.has(msg.ts)) {
+                                    console.log("[Recovery] Skipping blacklisted (deleted casting) thread ts:", msg.ts);
+                                    continue;
+                                }
                                 // 親メッセージ（スレッドの最初のメッセージ）のみ対象
                                 existingThreadTs = msg.ts;
                                 console.log("[Recovery] Found thread ts from Slack:", existingThreadTs);
@@ -255,10 +385,11 @@ export const notifyOrderCreated = onCall(
                                     }
                                 } catch { /* ignore */ }
 
-                                // Firestore の該当キャスティングにも書き戻して次回以降はリカバリ不要に
+                                // Firestore の該当キャスティング（有効なもののみ）に書き戻し
+                                // 削除/キャンセル済みには書き戻さない（誤投稿防止）
                                 const batch = db.batch();
                                 for (const d of existingSnap.docs) {
-                                    if (!d.data().slackThreadTs) {
+                                    if (!d.data().slackThreadTs && isActive(d.data())) {
                                         batch.update(d.ref, {
                                             slackThreadTs: existingThreadTs,
                                             slackPermalink: existingPermalink,
@@ -315,6 +446,17 @@ export const notifyOrderCreated = onCall(
                 }
                 if (producerMentions.length > 0) {
                     ccParts.push(`P: ${producerMentions.join(" ")}`);
+                }
+            }
+            if (data.shootingData.costume) {
+                const costumes = data.shootingData.costume.split(/[,、]/).map((p: string) => p.trim()).filter((p: string) => p);
+                const costumeMentions: string[] = [];
+                for (const name of costumes) {
+                    const slackId = await lookupSlackIdByName(name);
+                    costumeMentions.push(slackId ? `<@${slackId}>` : name);
+                }
+                if (costumeMentions.length > 0) {
+                    ccParts.push(`衣装: ${costumeMentions.join(" ")}`);
                 }
             }
             ccString = ccParts.join(" / ");
@@ -779,11 +921,80 @@ export const notifyStatusUpdate = onCall(
         // フロントエンドから渡された previousStatus を使用
         // （Firestore上のstatusはフロントエンドが先に更新済みのため）
         const oldStatus = data.previousStatus || casting.status || "";
-        const slackThreadTs = casting.slackThreadTs || "";
+        let slackThreadTs = casting.slackThreadTs || "";
 
         // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        const slackChannel = resolveSlackChannel(casting);
+        let slackChannel = resolveSlackChannel(casting);
+
+        // ── slackThreadTs が空のときのリカバリ ──
+        // 同じ projectId の他キャスティングから ts を借りる、
+        // それでも無ければ Slack history を Notion URL で検索
+        if (!slackThreadTs && casting.projectId && slackToken && slackChannel) {
+            try {
+                const sibSnap = await db.collection("castings")
+                    .where("projectId", "==", casting.projectId)
+                    .get();
+                const sibling = sibSnap.docs.find(d => {
+                    const dd = d.data();
+                    return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG";
+                });
+                if (sibling) {
+                    const sd = sibling.data();
+                    slackThreadTs = sd.slackThreadTs;
+                    if (sd.slackChannel) slackChannel = sd.slackChannel;
+                    console.log("[StatusRecovery] Borrowed thread ts from sibling:", slackThreadTs);
+                    // 自身にも書き戻し
+                    await castingDoc.ref.update({
+                        slackThreadTs,
+                        slackPermalink: sd.slackPermalink || casting.slackPermalink || "",
+                        slackChannel: sd.slackChannel || slackChannel,
+                    }).catch(e => console.warn("[StatusRecovery] writeback failed:", e));
+                } else {
+                    // Slack history から Notion URL で検索
+                    console.log("[StatusRecovery] No sibling thread, searching Slack history...");
+                    const notionUrlFrag = `notion.so/${(casting.projectId as string).replace(/-/g, "")}`;
+                    // 削除/キャンセル済みキャスティングに紐づくスレッドはブラックリスト化
+                    const blacklistedTs = new Set<string>(
+                        sibSnap.docs
+                            .filter(d => {
+                                const dd = d.data();
+                                return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG";
+                            })
+                            .map(d => d.data().slackThreadTs)
+                            .filter((ts): ts is string => !!ts)
+                    );
+                    let cursor: string | undefined;
+                    for (let page = 0; page < 2 && !slackThreadTs; page++) {
+                        const histRes = await fetch("https://slack.com/api/conversations.history", {
+                            method: "POST",
+                            headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+                            body: JSON.stringify({ channel: slackChannel, limit: 100, ...(cursor ? { cursor } : {}) }),
+                        });
+                        const hd = await histRes.json() as {
+                            ok: boolean;
+                            messages?: Array<{ ts: string; text?: string }>;
+                            response_metadata?: { next_cursor?: string };
+                        };
+                        if (!hd.ok || !hd.messages) break;
+                        const found = hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
+                        if (found) {
+                            slackThreadTs = found.ts;
+                            console.log("[StatusRecovery] Found ts via Slack history:", slackThreadTs);
+                            await castingDoc.ref.update({
+                                slackThreadTs,
+                                slackChannel,
+                            }).catch(e => console.warn("[StatusRecovery] writeback failed:", e));
+                            break;
+                        }
+                        cursor = hd.response_metadata?.next_cursor;
+                        if (!cursor) break;
+                    }
+                }
+            } catch (e) {
+                console.warn("[StatusRecovery] Failed:", e);
+            }
+        }
 
         if (slackToken && slackChannel && slackThreadTs) {
             const message = buildStatusMessage({

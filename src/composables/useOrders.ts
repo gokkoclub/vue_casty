@@ -40,6 +40,7 @@ export interface OrderPayload {
         director?: string
         floorDirector?: string
         producer?: string
+        costume?: string
     }
 }
 
@@ -260,7 +261,8 @@ export function useOrders() {
                 team: context.shootingData.team,
                 director: context.shootingData.director,
                 floorDirector: context.shootingData.floorDirector,
-                producer: context.shootingData.producer
+                producer: context.shootingData.producer,
+                costume: context.shootingData.costume
             }
         }
 
@@ -297,6 +299,9 @@ export function useOrders() {
             // slackThreadTs が空のドキュメントの日付も収集（ts 保存失敗のケース）
             const orphanDates = new Set<string>()
             let hasOrphans = false
+            // 削除/キャンセル済みキャスティングのみが紐づくスレッドは候補から外すための集計
+            const tsActiveCount = new Map<string, number>()
+            const tsAnyCount = new Map<string, number>()
 
             snap.docs.forEach(doc => {
                 const data = doc.data()
@@ -305,15 +310,24 @@ export function useOrders() {
                     ? (() => { const d = data.startDate.toDate(); return `${d.getMonth() + 1}/${d.getDate()}` })()
                     : ''
 
+                const isActive = data.deleted !== true && data.status !== 'キャンセル' && data.status !== 'NG'
+
                 if (ts) {
-                    if (!threadMap.has(ts)) threadMap.set(ts, new Set())
-                    if (dateStr) threadMap.get(ts)!.add(dateStr)
-                } else {
+                    tsAnyCount.set(ts, (tsAnyCount.get(ts) || 0) + 1)
+                    if (isActive) {
+                        tsActiveCount.set(ts, (tsActiveCount.get(ts) || 0) + 1)
+                        if (!threadMap.has(ts)) threadMap.set(ts, new Set())
+                        if (dateStr) threadMap.get(ts)!.add(dateStr)
+                    }
+                } else if (isActive) {
                     // slackThreadTs が空 = 過去にオーダー済みだが ts 保存失敗
                     hasOrphans = true
                     if (dateStr) orphanDates.add(dateStr)
                 }
             })
+
+            // 全部が非アクティブのスレッドは候補から除外（既に上の if (isActive) で除外済み）
+            // tsAnyCount/tsActiveCount は将来の診断用に保持
 
             const results = Array.from(threadMap.entries()).map(([threadTs, dateSet]) => ({
                 threadTs,
