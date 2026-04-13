@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -731,16 +731,25 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     const threadTs = isAdditional ? existingThreadTs : (slackResult.ts || "");
     const permalink = isAdditional ? existingPermalink : (slackResult.permalink || "");
     const castingIds = data.castingIds || [];
-    if (castingIds.length > 0 && threadTs) {
+    if (castingIds.length > 0) {
+        // ⚠️ Slack の ts が取れなかった場合でも、カレンダー ID 等の他フィールドは書き戻す
+        //    （旧コードでは threadTs が空だと全フィールドスキップで、カレンダーが Google には作られても
+        //     Firestore に ID が残らないバグがあった）
+        if (!threadTs) {
+            console.warn("[Writeback] threadTs is empty — slack fields will not be written, but calendar/etc. will still be saved");
+        }
         const batch = db.batch();
         const items = data.items;
+        let updateCount = 0;
         for (let i = 0; i < castingIds.length; i++) {
-            const updateData = {
-                slackThreadTs: threadTs,
-                slackPermalink: permalink,
-                slackChannel: postChannel,
-            };
-            // カレンダーイベントIDをマッチして書き戻す
+            const updateData = {};
+            // Slack 情報は ts が取れた時のみ書き戻す
+            if (threadTs) {
+                updateData.slackThreadTs = threadTs;
+                updateData.slackPermalink = permalink;
+                updateData.slackChannel = postChannel;
+            }
+            // カレンダーイベントIDをマッチして書き戻す（ts の有無に依存しない）
             const item = items[i];
             if (item && item.castType === "内部") {
                 const itemDates = item.selectedDates && item.selectedDates.length > 0
@@ -757,9 +766,15 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     }
                 }
             }
-            batch.update(db.collection("castings").doc(castingIds[i]), updateData);
+            if (Object.keys(updateData).length > 0) {
+                batch.update(db.collection("castings").doc(castingIds[i]), updateData);
+                updateCount++;
+            }
         }
-        await batch.commit();
+        if (updateCount > 0) {
+            await batch.commit();
+            console.log(`[Writeback] Updated ${updateCount} castings (slackTs=${threadTs ? "yes" : "NO"})`);
+        }
     }
     // ── 内部キャストへ Slack DM 送信 ──
     // 撮影オーダー時のみDM送信（外部案件・社内イベントはスキップ）
@@ -1023,6 +1038,108 @@ exports.notifyBulkStatusUpdate = (0, https_1.onCall)({
         await (0, slack_1.postToSlack)(slackToken, slackChannel, message, undefined, slackThreadTs);
     }
     return { success: true };
+});
+// ──────────────────────────────────────
+// 2c. カレンダーイベント再生成
+// ──────────────────────────────────────
+// 過去のバグやエラーで calendarEventId が空になっているキャスティング向けに、
+// 手動でカレンダーイベントを再作成して ID を書き戻す。
+exports.regenerateCalendarEvent = (0, https_1.onCall)({
+    maxInstances: 10,
+    secrets: [
+        "GOOGLE_SERVICE_ACCOUNT_KEY",
+        "GOOGLE_CALENDAR_ID",
+    ],
+}, async (request) => {
+    const data = request.data;
+    if (!data || !data.castingId) {
+        throw new https_1.HttpsError("invalid-argument", "castingId is required");
+    }
+    const db = admin.firestore();
+    const castingDoc = await db.collection("castings").doc(data.castingId).get();
+    if (!castingDoc.exists) {
+        throw new https_1.HttpsError("not-found", "Casting not found");
+    }
+    const casting = castingDoc.data();
+    if (casting.castType !== "内部") {
+        throw new https_1.HttpsError("failed-precondition", "Calendar event is only for internal casts");
+    }
+    if (casting.calendarEventId) {
+        return { success: false, message: "calendarEventId already exists", eventId: casting.calendarEventId };
+    }
+    const serviceAccountKey = getEnv("GOOGLE_SERVICE_ACCOUNT_KEY");
+    const calendarId = getEnv("GOOGLE_CALENDAR_ID");
+    if (!serviceAccountKey || !calendarId) {
+        throw new https_1.HttpsError("failed-precondition", "Calendar credentials not configured");
+    }
+    // キャストのメールアドレス
+    let castEmail = "";
+    try {
+        if (casting.castId) {
+            const castDoc = await db.collection("casts").doc(casting.castId).get();
+            if (castDoc.exists)
+                castEmail = castDoc.data()?.email || "";
+        }
+    }
+    catch (e) {
+        console.warn("[regenerateCalendar] castEmail lookup failed:", e);
+    }
+    // startDate を YYYY-MM-DD に
+    let startDateStr = "";
+    if (casting.startDate) {
+        const d = casting.startDate.toDate ? casting.startDate.toDate() : new Date(casting.startDate);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        startDateStr = `${y}-${m}-${dd}`;
+    }
+    if (!startDateStr) {
+        throw new https_1.HttpsError("failed-precondition", "Casting has no startDate");
+    }
+    // 撮影情報から時間を取得（あれば）
+    let startTime;
+    let endTime;
+    if (casting.projectId) {
+        try {
+            const shootSnap = await db.collection("shootings")
+                .where("notionPageId", "==", casting.projectId)
+                .limit(1)
+                .get();
+            if (!shootSnap.empty) {
+                const sd = shootSnap.docs[0].data();
+                startTime = sd.startTime || undefined;
+                endTime = sd.endTime || undefined;
+            }
+        }
+        catch (e) {
+            console.warn("[regenerateCalendar] shootings lookup failed:", e);
+        }
+    }
+    const isDecided = casting.status === "決定";
+    const status = casting.status || "仮キャスティング";
+    const eventId = await (0, calendar_1.createCalendarEvent)({
+        serviceAccountKey,
+        calendarId,
+        castName: casting.castName || "",
+        projectName: casting.projectName || "",
+        accountName: casting.accountName || "",
+        roleName: casting.roleName || "出演",
+        rank: String(casting.rank || ""),
+        mainSub: casting.mainSub || "その他",
+        castingId: casting.castId || "",
+        castEmail: castEmail || undefined,
+        status,
+        startDate: startDateStr,
+        startTime,
+        endTime,
+        isProvisional: !isDecided,
+    });
+    if (!eventId) {
+        throw new https_1.HttpsError("internal", "Calendar creation returned no eventId");
+    }
+    await castingDoc.ref.update({ calendarEventId: eventId });
+    console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId}`);
+    return { success: true, eventId };
 });
 // ──────────────────────────────────────
 // 3. キャスティング削除のクリーンアップ

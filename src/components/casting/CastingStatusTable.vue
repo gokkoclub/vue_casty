@@ -1,9 +1,13 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
 import InputNumber from 'primevue/inputnumber'
+import { useToast } from 'primevue/usetoast'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
 
@@ -72,6 +76,31 @@ const formatCost = (cost: number) => {
 // Open Slack thread
 const openSlack = (url: string) => {
   window.open(url, '_blank')
+}
+
+// カレンダー再生成
+const toast = useToast()
+const regeneratingCalendarId = ref<string | null>(null)
+const handleRegenerateCalendar = async (castingId: string) => {
+  if (!functions) {
+    toast.add({ severity: 'error', summary: 'エラー', detail: 'Firebase Functions 未初期化', life: 3000 })
+    return
+  }
+  regeneratingCalendarId.value = castingId
+  try {
+    const fn = httpsCallable(functions, 'regenerateCalendarEvent')
+    const res: any = await fn({ castingId })
+    if (res?.data?.success) {
+      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${res.data.eventId}`, life: 4000 })
+    } else {
+      toast.add({ severity: 'warn', summary: '作成スキップ', detail: res?.data?.message || '不明', life: 4000 })
+    }
+  } catch (e: any) {
+    console.error('regenerateCalendarEvent failed:', e)
+    toast.add({ severity: 'error', summary: 'エラー', detail: e?.message || String(e), life: 5000 })
+  } finally {
+    regeneratingCalendarId.value = null
+  }
 }
 </script>
 
@@ -171,7 +200,7 @@ const openSlack = (url: string) => {
       </Column>
 
       <!-- アクション -->
-      <Column header="" style="width: 80px; text-align: center">
+      <Column header="" style="width: 110px; text-align: center">
         <template #body="{ data }">
           <div class="actions">
             <Button
@@ -182,6 +211,16 @@ const openSlack = (url: string) => {
               severity="success"
               @click.stop="saveCost(data.id)"
               v-tooltip.top="'金額を保存'"
+            />
+            <Button
+              v-if="data.castType === '内部' && !data.calendarEventId && !['NG', 'キャンセル'].includes(data.status)"
+              icon="pi pi-calendar-plus"
+              text
+              size="small"
+              severity="warn"
+              :loading="regeneratingCalendarId === data.id"
+              @click.stop="handleRegenerateCalendar(data.id)"
+              v-tooltip.top="'カレンダーを生成'"
             />
             <Button
               v-if="data.slackPermalink"
