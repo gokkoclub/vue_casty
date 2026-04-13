@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -1154,6 +1154,131 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     // フロント側で attendees 追加 (Domain-Wide Delegation 不要、ユーザーOAuth経由) するため
     // castEmail を返す。通常オーダー時の calendarResults と同じ仕組みで再利用される。
     return { success: true, eventId, castEmail };
+});
+// ──────────────────────────────────────
+// 2d. キャスティングの slackThreadTs 修復
+// ──────────────────────────────────────
+// 過去のバグや書き戻し失敗で slackThreadTs が空になっているキャスティングに対し、
+//  - manualUrl 指定: そのSlack URLから ts/channel を抽出して書き戻す
+//  - manualUrl 未指定: 兄弟キャスティング借用 → Slack history 検索で自動復旧
+// （ロジックは notifyStatusUpdate の StatusRecovery と同じ仕組み）
+exports.repairCastingThread = (0, https_1.onCall)({
+    maxInstances: 10,
+    secrets: [
+        "SLACK_BOT_TOKEN",
+        "SLACK_CHANNEL_INTERNAL",
+    ],
+}, async (request) => {
+    const data = request.data;
+    if (!data || !data.castingId) {
+        throw new https_1.HttpsError("invalid-argument", "castingId is required");
+    }
+    const db = admin.firestore();
+    const castingDoc = await db.collection("castings").doc(data.castingId).get();
+    if (!castingDoc.exists) {
+        throw new https_1.HttpsError("not-found", "Casting not found");
+    }
+    const casting = castingDoc.data();
+    // 1. manualUrl 指定パス
+    if (data.manualUrl) {
+        // https://gokko5club.slack.com/archives/CXXXX/p1234567890123456 → ts/channel 抽出
+        const urlStr = String(data.manualUrl).trim();
+        const urlMatch = urlStr.match(/\/archives\/(C[A-Z0-9]+)\/p(\d{10})(\d{6})/);
+        if (!urlMatch) {
+            throw new https_1.HttpsError("invalid-argument", "Slack URL の形式が不正です（…/archives/C.../p1234567890123456 を想定）");
+        }
+        const channel = urlMatch[1];
+        const ts = `${urlMatch[2]}.${urlMatch[3]}`;
+        await castingDoc.ref.update({
+            slackThreadTs: ts,
+            slackChannel: channel,
+            slackPermalink: urlStr,
+        });
+        console.log(`[repairCastingThread] Manual URL: casting=${data.castingId} ts=${ts} channel=${channel}`);
+        return { success: true, mode: "manual", slackThreadTs: ts, slackChannel: channel };
+    }
+    // 2. 自動復旧パス（StatusRecovery と同じロジック）
+    const slackToken = getEnv("SLACK_BOT_TOKEN");
+    let slackChannel = resolveSlackChannel(casting);
+    let slackThreadTs = "";
+    if (!casting.projectId) {
+        throw new https_1.HttpsError("failed-precondition", "casting に projectId がないため自動復旧不可");
+    }
+    // 兄弟から借用
+    const sibSnap = await db.collection("castings")
+        .where("projectId", "==", casting.projectId)
+        .get();
+    const sibling = sibSnap.docs.find(d => {
+        const dd = d.data();
+        return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み";
+    });
+    if (sibling) {
+        const sd = sibling.data();
+        slackThreadTs = sd.slackThreadTs;
+        if (sd.slackChannel)
+            slackChannel = sd.slackChannel;
+        await castingDoc.ref.update({
+            slackThreadTs,
+            slackPermalink: sd.slackPermalink || "",
+            slackChannel: sd.slackChannel || slackChannel,
+        });
+        console.log(`[repairCastingThread] Borrowed from sibling: casting=${data.castingId} ts=${slackThreadTs}`);
+        return { success: true, mode: "sibling", slackThreadTs, slackChannel };
+    }
+    // Slack history 検索
+    if (!slackToken || !slackChannel) {
+        throw new https_1.HttpsError("failed-precondition", "Slack認証情報がない");
+    }
+    const blacklistedTs = new Set(sibSnap.docs
+        .filter(d => {
+        const dd = d.data();
+        return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG" || dd.status === "削除済み";
+    })
+        .map(d => d.data().slackThreadTs)
+        .filter((ts) => !!ts));
+    const notionUrlFrag = `notion.so/${casting.projectId.replace(/-/g, "")}`;
+    let cursor;
+    let foundPermalink = "";
+    for (let page = 0; page < 3 && !slackThreadTs; page++) {
+        const histRes = await fetch("https://slack.com/api/conversations.history", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ channel: slackChannel, limit: 100, ...(cursor ? { cursor } : {}) }),
+        });
+        const hd = await histRes.json();
+        if (!hd.ok || !hd.messages)
+            break;
+        const found = hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
+        if (found) {
+            slackThreadTs = found.ts;
+            // permalink 取得
+            try {
+                const plRes = await fetch("https://slack.com/api/chat.getPermalink", {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ channel: slackChannel, message_ts: slackThreadTs }),
+                });
+                const plData = await plRes.json();
+                if (plData.ok && plData.permalink)
+                    foundPermalink = plData.permalink;
+            }
+            catch { /* ignore */ }
+            break;
+        }
+        cursor = hd.response_metadata?.next_cursor;
+        if (!cursor)
+            break;
+    }
+    if (!slackThreadTs) {
+        throw new https_1.HttpsError("not-found", "自動復旧できませんでした。Slack URLを手動で指定してください");
+    }
+    await castingDoc.ref.update({
+        slackThreadTs,
+        slackChannel,
+        slackPermalink: foundPermalink || "",
+    });
+    console.log(`[repairCastingThread] Recovered from history: casting=${data.castingId} ts=${slackThreadTs}`);
+    return { success: true, mode: "history", slackThreadTs, slackChannel };
 });
 // ──────────────────────────────────────
 // 3. キャスティング削除のクリーンアップ

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue'
 import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
 import { useToast } from 'primevue/usetoast'
@@ -98,6 +99,53 @@ const { isAdmin } = useAuth()
 // カレンダー再生成
 const toast = useToast()
 const regeneratingCalendarId = ref<string | null>(null)
+
+// スレッドts修復
+const repairingThreadId = ref<string | null>(null)
+const showThreadRepairDialog = ref(false)
+const repairTargetCasting = ref<Casting | null>(null)
+const repairManualUrl = ref('')
+
+const openThreadRepair = (casting: Casting) => {
+  repairTargetCasting.value = casting
+  repairManualUrl.value = ''
+  showThreadRepairDialog.value = true
+}
+
+const callRepair = async (manualUrl?: string) => {
+  if (!functions || !repairTargetCasting.value) return
+  const target = repairTargetCasting.value
+  showThreadRepairDialog.value = false
+  repairingThreadId.value = target.id
+  try {
+    const fn = httpsCallable(functions, 'repairCastingThread')
+    const payload: { castingId: string; manualUrl?: string } = { castingId: target.id }
+    if (manualUrl) payload.manualUrl = manualUrl
+    const res = await fn(payload)
+    const d = res?.data as { success?: boolean; mode?: string; slackThreadTs?: string; message?: string } | undefined
+    if (d?.success) {
+      const modeLabel = d.mode === 'manual' ? '手動URL' : d.mode === 'sibling' ? '兄弟キャスティングから借用' : 'Slack履歴から復旧'
+      toast.add({ severity: 'success', summary: 'スレッド修復', detail: `${modeLabel} (ts: ${d.slackThreadTs})`, life: 4500 })
+    } else {
+      toast.add({ severity: 'warn', summary: '修復スキップ', detail: d?.message || '不明', life: 4000 })
+    }
+  } catch (e: unknown) {
+    console.error('repairCastingThread failed:', e)
+    const msg = e instanceof Error ? e.message : String(e)
+    toast.add({ severity: 'error', summary: 'エラー', detail: msg, life: 5000 })
+  } finally {
+    repairingThreadId.value = null
+  }
+}
+
+// 手動URLからts抽出（プレビュー用）
+const parsedRepairTs = computed(() => {
+  const url = repairManualUrl.value.trim()
+  if (!url) return ''
+  const m = url.match(/\/p(\d{10})(\d{6})/)
+  if (!m) return ''
+  return `${m[1]}.${m[2]}`
+})
 const handleRegenerateCalendar = async (castingId: string) => {
   if (!functions) {
     toast.add({ severity: 'error', summary: 'エラー', detail: 'Firebase Functions 未初期化', life: 3000 })
@@ -410,7 +458,16 @@ const sortLabel = computed(() => {
             <i class="pi pi-comments"></i>
           </button>
           <button
-            v-if="casting.castType === '内部' && !casting.calendarEventId && !['NG', 'キャンセル'].includes(casting.status)"
+            v-if="!casting.slackThreadTs && !['NG', 'キャンセル', '削除済み'].includes(casting.status)"
+            class="csl-act-btn warn"
+            :disabled="repairingThreadId === casting.id"
+            @click="openThreadRepair(casting)"
+            :title="repairingThreadId === casting.id ? '修復中...' : 'スレッド ts を修復'"
+          >
+            <i :class="repairingThreadId === casting.id ? 'pi pi-spin pi-spinner' : 'pi pi-link'"></i>
+          </button>
+          <button
+            v-if="casting.castType === '内部' && !casting.calendarEventId && !['NG', 'キャンセル', '削除済み'].includes(casting.status)"
             class="csl-act-btn"
             :disabled="regeneratingCalendarId === casting.id"
             @click="handleRegenerateCalendar(casting.id)"
@@ -431,6 +488,59 @@ const sortLabel = computed(() => {
       </div>
     </div>
   </div>
+
+  <!-- スレッドts修復ダイアログ -->
+  <Dialog
+    v-model:visible="showThreadRepairDialog"
+    modal
+    :style="{ width: '500px' }"
+    header="スレッド ts を修復"
+    :closable="true"
+  >
+    <div style="display: flex; flex-direction: column; gap: 1rem;">
+      <p style="margin: 0; font-size: 0.85rem; line-height: 1.5; color: var(--p-text-color);">
+        対象: <strong>{{ repairTargetCasting?.castName }}</strong>（{{ repairTargetCasting?.projectName }}）<br>
+        現在 slackThreadTs が空のため、ステータス変更通知が飛ばない状態です。
+      </p>
+
+      <div style="padding: 0.75rem; background: var(--p-content-hover-background); border-radius: 6px; font-size: 0.8rem;">
+        <strong>方法 1: 自動復旧</strong><br>
+        同 projectId の他キャスティングまたは Slack 履歴から ts を探して書き戻します。
+      </div>
+
+      <div style="padding: 0.75rem; background: var(--p-content-hover-background); border-radius: 6px; display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.8rem;">
+        <strong>方法 2: Slack URL を手動指定</strong>
+        <input
+          v-model="repairManualUrl"
+          type="text"
+          placeholder="https://gokko5club.slack.com/archives/C.../p1234567890123456"
+          style="padding: 0.5rem; border: 1px solid var(--p-content-border-color); border-radius: 4px; font-size: 0.8rem; background: var(--p-content-background); color: var(--p-text-color);"
+        />
+        <span v-if="repairManualUrl && !parsedRepairTs" style="color: var(--p-message-error-color); font-size: 0.75rem;">
+          URL の形式が不正です
+        </span>
+        <span v-else-if="parsedRepairTs" style="color: var(--p-primary-color); font-size: 0.75rem;">
+          ✓ ts: {{ parsedRepairTs }}
+        </span>
+      </div>
+    </div>
+
+    <template #footer>
+      <Button label="キャンセル" severity="secondary" text @click="showThreadRepairDialog = false" />
+      <Button
+        label="自動復旧で実行"
+        icon="pi pi-search"
+        severity="info"
+        @click="callRepair()"
+      />
+      <Button
+        label="URLで実行"
+        icon="pi pi-link"
+        :disabled="!parsedRepairTs"
+        @click="callRepair(repairManualUrl)"
+      />
+    </template>
+  </Dialog>
 </template>
 
 <style scoped>
