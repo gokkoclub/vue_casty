@@ -3,6 +3,9 @@ import { ref, reactive, computed } from 'vue'
 import Button from 'primevue/button'
 import InputNumber from 'primevue/inputnumber'
 import InputText from 'primevue/inputtext'
+import { useToast } from 'primevue/usetoast'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
 
@@ -90,6 +93,33 @@ const saveRoleEdit = (castingId: string) => {
 }
 
 const { isAdmin } = useAuth()
+
+// カレンダー再生成
+const toast = useToast()
+const regeneratingCalendarId = ref<string | null>(null)
+const handleRegenerateCalendar = async (castingId: string) => {
+  if (!functions) {
+    toast.add({ severity: 'error', summary: 'エラー', detail: 'Firebase Functions 未初期化', life: 3000 })
+    return
+  }
+  regeneratingCalendarId.value = castingId
+  try {
+    const fn = httpsCallable(functions, 'regenerateCalendarEvent')
+    const res = await fn({ castingId })
+    const data = res?.data as { success?: boolean; eventId?: string; message?: string } | undefined
+    if (data?.success) {
+      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${data.eventId}`, life: 4000 })
+    } else {
+      toast.add({ severity: 'warn', summary: '作成スキップ', detail: data?.message || '不明', life: 4000 })
+    }
+  } catch (e: unknown) {
+    console.error('regenerateCalendarEvent failed:', e)
+    const msg = e instanceof Error ? e.message : String(e)
+    toast.add({ severity: 'error', summary: 'エラー', detail: msg, life: 5000 })
+  } finally {
+    regeneratingCalendarId.value = null
+  }
+}
 
 // ダークモード検知
 const isDark = ref(
@@ -363,6 +393,15 @@ const sortLabel = computed(() => {
         <div class="csl-cell csl-actions" @click.stop>
           <button v-if="casting.slackPermalink" class="csl-act-btn" @click="openSlack(casting.slackPermalink)" title="Slack">
             <i class="pi pi-comments"></i>
+          </button>
+          <button
+            v-if="casting.castType === '内部' && !casting.calendarEventId && !['NG', 'キャンセル'].includes(casting.status)"
+            class="csl-act-btn"
+            :disabled="regeneratingCalendarId === casting.id"
+            @click="handleRegenerateCalendar(casting.id)"
+            :title="regeneratingCalendarId === casting.id ? 'カレンダー作成中...' : 'カレンダーを生成'"
+          >
+            <i :class="regeneratingCalendarId === casting.id ? 'pi pi-spin pi-spinner' : 'pi pi-calendar-plus'"></i>
           </button>
           <button class="csl-act-btn" @click="emit('additional-order', casting)" title="追加オーダー">
             <i class="pi pi-plus"></i>

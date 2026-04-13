@@ -10,6 +10,7 @@ const emit = defineEmits<{
   (e: 'updateStatus'): void
   (e: 'selectAll'): void
   (e: 'clearSelection'): void
+  (e: 'regenerateCalendar'): void
 }>()
 </script>
 
@@ -28,15 +29,23 @@ const emit = defineEmits<{
         :disabled="selectedCount === 0"
         @click="emit('delete')"
       />
-      <Button 
-        label="一括ステータス更新" 
-        icon="pi pi-pencil" 
+      <Button
+        label="一括ステータス更新"
+        icon="pi pi-pencil"
         severity="info"
         :disabled="selectedCount === 0"
         @click="emit('updateStatus')"
       />
-      <Button 
-        label="全選択" 
+      <Button
+        label="カレンダー生成"
+        icon="pi pi-calendar-plus"
+        severity="warn"
+        :disabled="selectedCount === 0"
+        @click="emit('regenerateCalendar')"
+        v-tooltip.bottom="'選択した内部キャストのカレンダーを生成（calendarEventIdが空のものだけ）'"
+      />
+      <Button
+        label="全選択"
         icon="pi pi-check-circle" 
         text
         @click="emit('selectAll')"

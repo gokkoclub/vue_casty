@@ -6,6 +6,9 @@ import ProgressSpinner from 'primevue/progressspinner'
 import TabView from 'primevue/tabview'
 import TabPanel from 'primevue/tabpanel'
 import Checkbox from 'primevue/checkbox'
+import { useToast } from 'primevue/usetoast'
+import { httpsCallable } from 'firebase/functions'
+import { functions } from '@/services/firebase'
 import { useCastings } from '@/composables/useCastings'
 import { useBulkSelection } from '@/composables/useBulkSelection'
 import { useLoading } from '@/composables/useLoading'
@@ -162,6 +165,7 @@ const openStatusModal = (castingId: string) => {
 }
 
 const { withLoading } = useLoading()
+const toast = useToast()
 
 const handleModalStatusUpdate = async (castingId: string, newStatus: CastingStatus, extraMessage?: string) => {
   await withLoading('ステータスを更新中...', async () => {
@@ -293,6 +297,55 @@ const executeBulkStatusUpdate = async (newStatus: CastingStatus) => {
   })
 }
 
+// 一括カレンダー再生成
+const handleBulkRegenerateCalendar = async () => {
+  const ids = getSelectedIds()
+  if (ids.length === 0) return
+
+  // 選択されたキャスティングを取得 → 内部 × calendarEventId空 × 非NG/キャンセル に絞る
+  const targets: Casting[] = []
+  for (const id of ids) {
+    const c = getCastingById(id)
+    if (!c) continue
+    if (c.castType !== '内部') continue
+    if (c.calendarEventId) continue
+    if (c.status === 'NG' || c.status === 'キャンセル') continue
+    targets.push(c)
+  }
+
+  if (targets.length === 0) {
+    toast.add({ severity: 'info', summary: '対象なし', detail: '内部キャストかつカレンダー未作成のキャスティングがありません', life: 3000 })
+    return
+  }
+
+  await withLoading(`カレンダー生成中... (${targets.length}件)`, async () => {
+    if (!functions) return
+    const fn = httpsCallable(functions, 'regenerateCalendarEvent')
+    let ok = 0
+    let failed = 0
+    for (const c of targets) {
+      try {
+        const res = await fn({ castingId: c.id })
+        const d = res?.data as { success?: boolean } | undefined
+        if (d?.success) ok++
+        else failed++
+      } catch (e) {
+        console.error('regenerateCalendarEvent failed:', c.id, e)
+        failed++
+      }
+    }
+    toast.add({
+      severity: failed === 0 ? 'success' : (ok > 0 ? 'warn' : 'error'),
+      summary: 'カレンダー生成完了',
+      detail: `成功: ${ok}件 / 失敗: ${failed}件`,
+      life: 5000
+    })
+    clearSelection()
+    toggleBulkMode()
+    await fetchCastings()
+  })
+}
+
 const reload = () => {
   fetchCastings()
 }
@@ -370,13 +423,14 @@ const countCastings = (dateGroup: any) => {
     </div>
 
     <!-- Bulk Action Bar -->
-    <BulkActionBar 
+    <BulkActionBar
       v-if="bulkSelectMode"
       :selected-count="selectedCount"
       @delete="handleBulkDelete"
       @update-status="handleBulkUpdateStatus"
       @select-all="handleSelectAll"
       @clear-selection="clearSelection"
+      @regenerate-calendar="handleBulkRegenerateCalendar"
     />
 
     <!-- Controls Bar -->
