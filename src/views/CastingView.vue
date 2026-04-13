@@ -294,6 +294,18 @@ const additionalOrderPopover = ref()
 const existingThreads = ref<Array<{ threadTs: string; dates: string[] }>>([])
 const selectedThreadTs = ref('')
 const popoverAnchor = ref()
+const manualThreadUrl = ref('')
+
+// SlackスレッドURLからts(1234567890.123456)を抽出
+// 例: https://gokko5club.slack.com/archives/C02S1NFRH55/p1776051658223859
+//     → 1776051658.223859
+const parsedManualTs = computed(() => {
+  const url = manualThreadUrl.value.trim()
+  if (!url) return ''
+  const m = url.match(/\/p(\d{10})(\d{6})/)
+  if (!m) return ''
+  return `${m[1]}.${m[2]}`
+})
 
 const handleSubmitOrder = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }) => {
   // 既存オーダーがあるかチェック
@@ -323,9 +335,11 @@ const handleAdditionalOrderChoice = async (forceNew: boolean) => {
   if (forceNew) {
     await executeSubmit(pdfFile, intimacy, competition, true)
   } else {
-    // 選択されたスレッドに追加オーダー
-    await executeSubmit(pdfFile, intimacy, competition, false, selectedThreadTs.value)
+    // 手動入力URLが有効ならそれを優先、それ以外は選択スレッド
+    const targetTs = parsedManualTs.value || selectedThreadTs.value
+    await executeSubmit(pdfFile, intimacy, competition, false, targetTs)
   }
+  manualThreadUrl.value = ''
 }
 
 const executeSubmit = async (pdfFile?: File | null, intimacy?: string, competition?: { type: string; period: string }, forceNewThread?: boolean, replyToThreadTs?: string) => {
@@ -667,13 +681,32 @@ onUnmounted(() => {
           <div v-for="thread in existingThreads" :key="thread.threadTs"
             style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-radius: 6px; cursor: pointer; transition: background 0.15s;"
             :style="{
-              background: selectedThreadTs === thread.threadTs ? 'var(--p-highlight-background)' : 'var(--p-content-hover-background)',
-              border: selectedThreadTs === thread.threadTs ? '2px solid var(--p-primary-color)' : '2px solid transparent'
+              background: selectedThreadTs === thread.threadTs && !manualThreadUrl ? 'var(--p-highlight-background)' : 'var(--p-content-hover-background)',
+              border: selectedThreadTs === thread.threadTs && !manualThreadUrl ? '2px solid var(--p-primary-color)' : '2px solid transparent'
             }"
-            @click="selectedThreadTs = thread.threadTs"
+            @click="selectedThreadTs = thread.threadTs; manualThreadUrl = ''"
           >
             <i class="pi pi-comments" style="color: var(--p-primary-color);"></i>
             <span style="font-size: 0.9rem;">撮影日: {{ thread.dates.join(', ') }}</span>
+          </div>
+        </div>
+
+        <!-- 手動URL指定（DBに見つからないスレッドへ手動で送る用） -->
+        <div style="display: flex; flex-direction: column; gap: 0.35rem;">
+          <label style="font-weight: 600; font-size: 0.8rem; color: var(--p-text-muted-color);">
+            または Slack スレッドURLを直接指定:
+          </label>
+          <input
+            v-model="manualThreadUrl"
+            type="text"
+            placeholder="https://gokko5club.slack.com/archives/C.../p1234567890123456"
+            style="padding: 0.45rem 0.6rem; border: 1px solid var(--p-content-border-color); border-radius: 6px; font-size: 0.82rem; background: var(--p-content-background); color: var(--p-text-color);"
+          />
+          <div v-if="manualThreadUrl && !parsedManualTs" style="font-size: 0.75rem; color: var(--p-message-error-color);">
+            URLからスレッドtsを抽出できません（…/p1234567890123456 形式が必要です）
+          </div>
+          <div v-else-if="parsedManualTs" style="font-size: 0.75rem; color: var(--p-primary-color);">
+            ✓ このURLを優先して送信します（ts: {{ parsedManualTs }}）
           </div>
         </div>
 
@@ -688,6 +721,7 @@ onUnmounted(() => {
           <Button
             label="追加オーダー"
             icon="pi pi-reply"
+            :disabled="!!manualThreadUrl && !parsedManualTs"
             @click="handleAdditionalOrderChoice(false)"
           />
         </div>
