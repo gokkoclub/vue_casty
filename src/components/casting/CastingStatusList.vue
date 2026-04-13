@@ -8,6 +8,7 @@ import { httpsCallable } from 'firebase/functions'
 import { functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
+import { addAttendeeToCalendarEvent } from '@/composables/useGoogleCalendar'
 
 const props = defineProps<{
   castings: Casting[]
@@ -104,11 +105,25 @@ const handleRegenerateCalendar = async (castingId: string) => {
   }
   regeneratingCalendarId.value = castingId
   try {
+    // OAuthトークンを事前取得（attendees追加に必要）— 通常オーダー時と同じ仕組み
+    const { getAccessToken } = useAuth()
+    let accessToken: string | null = null
+    try {
+      accessToken = await getAccessToken()
+    } catch (authErr) {
+      console.warn('[CALENDAR] OAuth token failed, attendees will be skipped:', authErr)
+    }
+
     const fn = httpsCallable(functions, 'regenerateCalendarEvent')
     const res = await fn({ castingId })
-    const data = res?.data as { success?: boolean; eventId?: string; message?: string } | undefined
-    if (data?.success) {
-      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${data.eventId}`, life: 4000 })
+    const data = res?.data as { success?: boolean; eventId?: string; castEmail?: string; message?: string } | undefined
+
+    if (data?.success && data.eventId) {
+      // attendees 追加（通常オーダー時と同じ共通関数を再利用）
+      if (accessToken && data.castEmail) {
+        await addAttendeeToCalendarEvent(data.eventId, data.castEmail, accessToken)
+      }
+      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${data.eventId}${accessToken ? '（招待送信済み）' : ''}`, life: 4000 })
     } else {
       toast.add({ severity: 'warn', summary: '作成スキップ', detail: data?.message || '不明', life: 4000 })
     }

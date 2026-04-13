@@ -12,6 +12,8 @@ import { functions } from '@/services/firebase'
 import { useCastings } from '@/composables/useCastings'
 import { useBulkSelection } from '@/composables/useBulkSelection'
 import { useLoading } from '@/composables/useLoading'
+import { useAuth } from '@/composables/useAuth'
+import { addAttendeeToCalendarEvent } from '@/composables/useGoogleCalendar'
 import CastingStatusList from '@/components/casting/CastingStatusList.vue'
 import StatusChangeModal from '@/components/status/StatusChangeModal.vue'
 import OrderWaitEmailModal from '@/components/status/OrderWaitEmailModal.vue'
@@ -320,15 +322,33 @@ const handleBulkRegenerateCalendar = async () => {
 
   await withLoading(`カレンダー生成中... (${targets.length}件)`, async () => {
     if (!functions) return
+    // OAuthトークンを事前取得（attendees追加に必要）— 通常オーダー時と同じ仕組み
+    const { getAccessToken } = useAuth()
+    let accessToken: string | null = null
+    try {
+      accessToken = await getAccessToken()
+    } catch (e) {
+      console.warn('[CALENDAR] OAuth token failed for bulk regenerate:', e)
+    }
+
     const fn = httpsCallable(functions, 'regenerateCalendarEvent')
     let ok = 0
     let failed = 0
+    let invited = 0
     for (const c of targets) {
       try {
         const res = await fn({ castingId: c.id })
-        const d = res?.data as { success?: boolean } | undefined
-        if (d?.success) ok++
-        else failed++
+        const d = res?.data as { success?: boolean; eventId?: string; castEmail?: string } | undefined
+        if (d?.success) {
+          ok++
+          // attendees 追加（通常オーダー時と同じ共通関数）
+          if (accessToken && d.eventId && d.castEmail) {
+            const added = await addAttendeeToCalendarEvent(d.eventId, d.castEmail, accessToken)
+            if (added) invited++
+          }
+        } else {
+          failed++
+        }
       } catch (e) {
         console.error('regenerateCalendarEvent failed:', c.id, e)
         failed++
@@ -337,7 +357,7 @@ const handleBulkRegenerateCalendar = async () => {
     toast.add({
       severity: failed === 0 ? 'success' : (ok > 0 ? 'warn' : 'error'),
       summary: 'カレンダー生成完了',
-      detail: `成功: ${ok}件 / 失敗: ${failed}件`,
+      detail: `成功: ${ok}件 / 失敗: ${failed}件 / 招待: ${invited}件`,
       life: 5000
     })
     clearSelection()

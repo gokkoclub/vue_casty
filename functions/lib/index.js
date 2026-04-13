@@ -1151,7 +1151,9 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     }
     await castingDoc.ref.update({ calendarEventId: eventId });
     console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId}`);
-    return { success: true, eventId };
+    // フロント側で attendees 追加 (Domain-Wide Delegation 不要、ユーザーOAuth経由) するため
+    // castEmail を返す。通常オーダー時の calendarResults と同じ仕組みで再利用される。
+    return { success: true, eventId, castEmail };
 });
 // ──────────────────────────────────────
 // 3. キャスティング削除のクリーンアップ

@@ -11,6 +11,7 @@ import { useLoading } from '@/composables/useLoading'
 import { useShootingContact } from '@/composables/useShootingContact'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useToast } from 'primevue/usetoast'
+import { addAttendeeToCalendarEvent } from './useGoogleCalendar'
 
 export interface OrderItem {
     castId: string
@@ -633,44 +634,12 @@ export function useOrders() {
                         // ── カレンダー招待: 事前取得したOAuthトークンでattendees追加 ──
                         const cfData = result.data as Record<string, unknown>
                         const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
-                        const calendarId = import.meta.env.VITE_CALENDAR_ID_INTERNAL
                         const accessToken = calendarAccessToken // 事前取得済み
 
-                        if (calendarResults && calendarId && accessToken) {
-                            for (const [key, { eventId, castEmail }] of Object.entries(calendarResults)) {
+                        if (calendarResults && accessToken) {
+                            for (const [, { eventId, castEmail }] of Object.entries(calendarResults)) {
                                 if (!eventId || !castEmail) continue
-                                try {
-                                    // 既存attendees取得
-                                    const getUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`
-                                    const getResp = await fetch(getUrl, {
-                                        headers: { 'Authorization': `Bearer ${accessToken}` }
-                                    })
-                                    let existingAttendees: Array<{ email: string }> = []
-                                    if (getResp.ok) {
-                                        const eventData = await getResp.json() as { attendees?: Array<{ email: string }> }
-                                        existingAttendees = eventData.attendees || []
-                                    }
-                                    if (existingAttendees.some(a => a.email === castEmail)) continue
-
-                                    // 既存 + 新規でPATCH
-                                    const resp = await fetch(`${getUrl}?sendUpdates=all`, {
-                                        method: 'PATCH',
-                                        headers: {
-                                            'Authorization': `Bearer ${accessToken}`,
-                                            'Content-Type': 'application/json',
-                                        },
-                                        body: JSON.stringify({
-                                            attendees: [...existingAttendees, { email: castEmail }],
-                                        }),
-                                    })
-                                    if (resp.ok) {
-                                        console.log(`[CALENDAR] Attendee added: ${castEmail} → event ${eventId}`)
-                                    } else {
-                                        console.warn(`[CALENDAR] Attendee add failed for ${key}:`, resp.status)
-                                    }
-                                } catch (calErr) {
-                                    console.warn(`[CALENDAR] Attendee add error for ${key}:`, calErr)
-                                }
+                                await addAttendeeToCalendarEvent(eventId, castEmail, accessToken)
                             }
                         } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
                             console.warn('[CALENDAR] Attendee addition skipped: no OAuth token available')

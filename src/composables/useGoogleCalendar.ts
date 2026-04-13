@@ -96,3 +96,68 @@ export function useGoogleCalendar() {
         handleStatusChange
     }
 }
+
+/**
+ * 既存のカレンダーイベントにキャストをattendeeとして追加
+ * (サービスアカウント経由ではattendees追加にDomain-Wide Delegationが必要なため、
+ *  ユーザーOAuthトークンを使って Calendar API を直接呼ぶ)
+ *
+ * @param eventId Google Calendar event id
+ * @param castEmail 追加するキャストのメール
+ * @param accessToken ユーザーのOAuthアクセストークン
+ * @param calendarId 対象カレンダーID（省略時は VITE_CALENDAR_ID_INTERNAL）
+ * @returns true if added or already exists, false on error
+ */
+export async function addAttendeeToCalendarEvent(
+    eventId: string,
+    castEmail: string,
+    accessToken: string,
+    calendarId?: string
+): Promise<boolean> {
+    const calId = calendarId || import.meta.env.VITE_CALENDAR_ID_INTERNAL
+    if (!calId || !eventId || !castEmail || !accessToken) {
+        console.warn('[CALENDAR] addAttendeeToCalendarEvent: missing params', { calId: !!calId, eventId: !!eventId, castEmail: !!castEmail, accessToken: !!accessToken })
+        return false
+    }
+
+    const baseUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(eventId)}`
+
+    try {
+        // 既存attendeesを取得（重複追加防止）
+        const getResp = await fetch(baseUrl, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        })
+        let existingAttendees: Array<{ email: string }> = []
+        if (getResp.ok) {
+            const eventData = await getResp.json() as { attendees?: Array<{ email: string }> }
+            existingAttendees = eventData.attendees || []
+        } else {
+            console.warn(`[CALENDAR] event GET failed (${getResp.status}) — proceeding with empty attendees`)
+        }
+
+        if (existingAttendees.some(a => a.email === castEmail)) {
+            console.log(`[CALENDAR] Attendee already present: ${castEmail}`)
+            return true
+        }
+
+        const resp = await fetch(`${baseUrl}?sendUpdates=all`, {
+            method: 'PATCH',
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                attendees: [...existingAttendees, { email: castEmail }],
+            }),
+        })
+        if (resp.ok) {
+            console.log(`[CALENDAR] Attendee added: ${castEmail} → event ${eventId}`)
+            return true
+        }
+        console.warn(`[CALENDAR] Attendee add failed: ${resp.status}`)
+        return false
+    } catch (e) {
+        console.warn('[CALENDAR] addAttendeeToCalendarEvent error:', e)
+        return false
+    }
+}
