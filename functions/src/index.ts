@@ -96,10 +96,25 @@ function resolveSlackChannel(casting: { slackChannel?: string; slackPermalink?: 
 /**
  * 名前のゆれを正規化（空白除去、全角半角統一など）
  */
+/**
+ * 複数人名の文字列を配列に分割する。
+ *   対応セパレータ: , 、 ， / ／ ・ 改行 タブ
+ *   想定入力: "田中太郎, 鈴木花子" / "田中、鈴木" / "田中／鈴木" / "田中・鈴木"
+ */
+function splitNameList(input: string): string[] {
+    return input
+        .split(/[,、，/／・\n\t]/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+}
+
 function normalizeName(name: string): string {
     return name
         .replace(/\s+/g, "")          // 全空白除去
         .replace(/[\u3000]/g, "")    // 全角空白除去
+        // 末尾の敬称を除去: 様/さん/殿/氏/ちゃん/君/くん/さま
+        //   ※「山田様太郎」のように途中に含まれる敬称は触らない（誤一致防止）
+        .replace(/(様|さま|さん|殿|氏|ちゃん|君|くん)$/u, "")
         .toLowerCase();
 }
 
@@ -107,6 +122,41 @@ function normalizeName(name: string): string {
 let slackUserCache: Array<{ id: string; names: string[] }> | null = null;
 let slackUserCacheAt = 0;
 const SLACK_USER_CACHE_TTL_MS = 10 * 60 * 1000; // 10分
+
+// staffMentions コレクションのキャッシュ（Cloud Function インスタンス内で使い回す）
+//   「キャストでも admin でもないスタッフ（CD/FD/P/衣装など）」の Slack ID マップ。
+//   ManagementView の「スタッフメンション」タブから管理される。
+let staffMentionsCache: Array<{ id: string; slackMentionId: string; names: string[] }> | null = null;
+let staffMentionsCacheAt = 0;
+const STAFF_MENTIONS_CACHE_TTL_MS = 5 * 60 * 1000; // 5分
+
+async function fetchStaffMentionsCached(): Promise<Array<{ id: string; slackMentionId: string; names: string[] }>> {
+    const now = Date.now();
+    if (staffMentionsCache && now - staffMentionsCacheAt < STAFF_MENTIONS_CACHE_TTL_MS) {
+        return staffMentionsCache;
+    }
+    try {
+        const firestore = admin.firestore();
+        const snap = await firestore.collection("staffMentions").get();
+        const all: Array<{ id: string; slackMentionId: string; names: string[] }> = [];
+        for (const doc of snap.docs) {
+            const d = doc.data();
+            if (d.active === false) continue;
+            if (!d.slackMentionId) continue;
+            const names = [d.name, ...(Array.isArray(d.aliases) ? d.aliases : [])]
+                .filter((s): s is string => !!s);
+            if (names.length === 0) continue;
+            all.push({ id: doc.id, slackMentionId: d.slackMentionId, names });
+        }
+        staffMentionsCache = all;
+        staffMentionsCacheAt = now;
+        console.log(`[StaffMentions] Cached ${all.length} entries`);
+        return all;
+    } catch (e) {
+        console.warn("[StaffMentions] fetch failed:", e);
+        return staffMentionsCache || [];
+    }
+}
 
 async function fetchSlackUsersCached(): Promise<Array<{ id: string; names: string[] }>> {
     const now = Date.now();
@@ -167,8 +217,12 @@ async function fetchSlackUsersCached(): Promise<Array<{ id: string; names: strin
 
 /**
  * 名前からSlack IDを検索するヘルパー
- * casts → admin → Slack users.list の順に検索
- * 名前ゆれ（空白有無等）も吸収
+ *   検索順: casts → admin → staffMentions → Slack users.list
+ *   名前ゆれ（空白有無・末尾敬称等）も吸収
+ *
+ *   staffMentions は「キャストでも admin でもないスタッフ」用の専用DB。
+ *   ManagementView の「スタッフメンション」タブで管理され、
+ *   本名 + aliases[] の配列で複数のゆらぎを登録できる。
  */
 async function lookupSlackIdByName(name: string): Promise<string> {
     if (!name) return "";
@@ -211,7 +265,27 @@ async function lookupSlackIdByName(name: string): Promise<string> {
             console.warn(`[lookup] admin scan failed for ${trimmed}:`, e);
         }
 
-        // フォールバック2: Slack users.list で名前検索
+        // フォールバック2: staffMentions（専用DB）を全件キャッシュから正規化一致
+        const staff = await fetchStaffMentionsCached();
+        // 厳密一致（正規化後）
+        for (const s of staff) {
+            if (s.names.some(n => normalizeName(n) === normalized)) {
+                return s.slackMentionId;
+            }
+        }
+        // 部分一致（正規化後）
+        if (normalized.length >= 2) {
+            for (const s of staff) {
+                if (s.names.some(n => {
+                    const nn = normalizeName(n);
+                    return nn.includes(normalized) || normalized.includes(nn);
+                })) {
+                    return s.slackMentionId;
+                }
+            }
+        }
+
+        // フォールバック3: Slack users.list で名前検索
         const users = await fetchSlackUsersCached();
         // 厳密一致（正規化後）
         for (const u of users) {
@@ -437,8 +511,8 @@ export const notifyOrderCreated = onCall(
                 ccParts.push(`FD: ${mention}`);
             }
             if (data.shootingData.producer) {
-                // producer can contain multiple names separated by comma/、
-                const producers = data.shootingData.producer.split(/[,、]/).map((p: string) => p.trim()).filter((p: string) => p);
+                // producer は複数人可。カンマ/読点/中黒/スラッシュ/改行など多様な区切りを受け付ける
+                const producers = splitNameList(data.shootingData.producer);
                 const producerMentions: string[] = [];
                 for (const name of producers) {
                     const slackId = await lookupSlackIdByName(name);
@@ -449,7 +523,7 @@ export const notifyOrderCreated = onCall(
                 }
             }
             if (data.shootingData.costume) {
-                const costumes = data.shootingData.costume.split(/[,、]/).map((p: string) => p.trim()).filter((p: string) => p);
+                const costumes = splitNameList(data.shootingData.costume);
                 const costumeMentions: string[] = [];
                 for (const name of costumes) {
                     const slackId = await lookupSlackIdByName(name);

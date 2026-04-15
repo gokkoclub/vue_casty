@@ -1129,23 +1129,35 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     }
     const isDecided = casting.status === "決定";
     const status = casting.status || "仮キャスティング";
-    const eventId = await (0, calendar_1.createCalendarEvent)({
-        serviceAccountKey,
-        calendarId,
-        castName: casting.castName || "",
-        projectName: casting.projectName || "",
-        accountName: casting.accountName || "",
-        roleName: casting.roleName || "出演",
-        rank: String(casting.rank || ""),
-        mainSub: casting.mainSub || "その他",
-        castingId: casting.castId || "",
-        castEmail: castEmail || undefined,
-        status,
-        startDate: startDateStr,
-        startTime,
-        endTime,
-        isProvisional: !isDecided,
-    });
+    // createCalendarEvent は内部でエラー時に generic Error を投げる。
+    // そのまま上に投げると onCall が "INTERNAL" にラップしてしまい、フロント側では
+    // 具体的な失敗理由（カレンダーアクセス拒否・時間形式不正など）が見えない。
+    // ここで HttpsError に変換して原因メッセージをそのままフロントに届ける。
+    let eventId;
+    try {
+        eventId = await (0, calendar_1.createCalendarEvent)({
+            serviceAccountKey,
+            calendarId,
+            castName: casting.castName || "",
+            projectName: casting.projectName || "",
+            accountName: casting.accountName || "",
+            roleName: casting.roleName || "出演",
+            rank: String(casting.rank || ""),
+            mainSub: casting.mainSub || "その他",
+            castingId: casting.castId || "",
+            castEmail: castEmail || undefined,
+            status,
+            startDate: startDateStr,
+            startTime,
+            endTime,
+            isProvisional: !isDecided,
+        });
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[regenerateCalendar] createCalendarEvent failed for casting=${data.castingId}:`, msg);
+        throw new https_1.HttpsError("internal", `カレンダー作成に失敗: ${msg}`);
+    }
     if (!eventId) {
         throw new https_1.HttpsError("internal", "Calendar creation returned no eventId");
     }

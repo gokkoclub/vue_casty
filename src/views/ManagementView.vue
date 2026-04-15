@@ -14,6 +14,8 @@ import { useEmailSettings } from '@/composables/useEmailSettings'
 import type { EmailTemplateSetting } from '@/composables/useEmailSettings'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useAdmins } from '@/composables/useAdmins'
+import { useStaffMentions } from '@/composables/useStaffMentions'
+import type { StaffMention } from '@/composables/useStaffMentions'
 import type { CastMaster, Casting } from '@/types'
 import { collection, query, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
@@ -62,10 +64,86 @@ async function handleRemoveAdmin(adminId: string) {
     await admins.removeAdmin(adminId)
 }
 
+// ========= Tab 5: Staff Mentions =========
+const staffMentions = useStaffMentions()
+const staffSearch = ref('')
+const showInactiveStaff = ref(false)
+const editingStaffId = ref<string | null>(null)
+const newStaffForm = ref({ name: '', slackMentionId: '', role: '', email: '', aliases: '', note: '' })
+const staffFormOpen = ref(false)
+const savingStaff = ref(false)
+
+const filteredStaffMentions = computed(() => {
+    const q = staffSearch.value.trim().toLowerCase()
+    return staffMentions.mentions.value.filter(s => {
+        if (!showInactiveStaff.value && s.active === false) return false
+        if (!q) return true
+        if (s.name?.toLowerCase().includes(q)) return true
+        if (s.slackMentionId?.toLowerCase().includes(q)) return true
+        if (s.role?.toLowerCase().includes(q)) return true
+        if (s.email?.toLowerCase().includes(q)) return true
+        if (s.aliases?.some(a => a.toLowerCase().includes(q))) return true
+        return false
+    })
+})
+
+function openNewStaffForm() {
+    editingStaffId.value = null
+    newStaffForm.value = { name: '', slackMentionId: '', role: '', email: '', aliases: '', note: '' }
+    staffFormOpen.value = true
+}
+
+function openEditStaff(s: StaffMention) {
+    editingStaffId.value = s.id
+    newStaffForm.value = {
+        name: s.name || '',
+        slackMentionId: s.slackMentionId || '',
+        role: s.role || '',
+        email: s.email || '',
+        aliases: (s.aliases || []).filter(a => a !== s.name).join('\n'),
+        note: s.note || '',
+    }
+    staffFormOpen.value = true
+}
+
+function closeStaffForm() {
+    staffFormOpen.value = false
+    editingStaffId.value = null
+}
+
+async function saveStaff() {
+    const form = newStaffForm.value
+    if (!form.name.trim() || !form.slackMentionId.trim()) {
+        toast.add({ severity: 'warn', summary: '入力エラー', detail: '本名とSlackユーザーIDは必須です', life: 3000 })
+        return
+    }
+    savingStaff.value = true
+    const ok = await staffMentions.upsert({
+        name: form.name,
+        slackMentionId: form.slackMentionId,
+        role: form.role,
+        email: form.email,
+        aliases: form.aliases.split(/[\n,、]/).map(s => s.trim()).filter(s => s.length > 0),
+        note: form.note,
+    })
+    savingStaff.value = false
+    if (ok) closeStaffForm()
+}
+
+async function handleToggleStaffActive(s: StaffMention) {
+    await staffMentions.setActive(s.id, !s.active)
+}
+
+async function handleRemoveStaff(s: StaffMention) {
+    if (!confirm(`${s.name} を削除しますか？（ソフト無効化で十分な場合はキャンセル）`)) return
+    await staffMentions.remove(s.id)
+}
+
 onMounted(() => {
     emailSettings.fetchTemplates()
     castMaster.fetchHistory()
     admins.fetchAdmins()
+    staffMentions.fetchAll()
 })
 
 function startEditTemplate(t: EmailTemplateSetting) {
@@ -764,6 +842,159 @@ function setAllNewDate(date: Date | null) {
                     </div>
                 </div>
             </TabPanel>
+
+            <!-- Tab 5: Staff Mentions (スタッフメンション管理) -->
+            <TabPanel value="4">
+                <template #header>
+                    <div class="tab-header">
+                        <i class="pi pi-at"></i>
+                        <span>スタッフメンション</span>
+                        <Badge :value="staffMentions.mentions.value.length" severity="secondary" />
+                    </div>
+                </template>
+
+                <div class="tab-content">
+                    <!-- 説明 -->
+                    <div class="staff-help">
+                        <i class="pi pi-info-circle"></i>
+                        <span>
+                            オーダー送信時の cc 欄で使われる <b>監督 / FD / P / 衣装</b> などの Slack メンション辞書。
+                            casts・admin にいないスタッフはここに登録してください。
+                            本名とSlackユーザーID（<code>U...</code>）必須。別名を登録すると表記ゆれに強くなります。
+                        </span>
+                    </div>
+
+                    <!-- 上部アクション -->
+                    <div class="staff-toolbar">
+                        <InputText
+                            v-model="staffSearch"
+                            placeholder="名前 / Slack ID / 役職で検索"
+                            class="staff-search"
+                        />
+                        <label class="staff-inactive-toggle">
+                            <input type="checkbox" v-model="showInactiveStaff" />
+                            <span>無効化も表示</span>
+                        </label>
+                        <Button
+                            label="追加"
+                            icon="pi pi-plus"
+                            @click="openNewStaffForm"
+                        />
+                    </div>
+
+                    <!-- フォーム -->
+                    <div v-if="staffFormOpen" class="staff-form">
+                        <h3 class="admin-section-title">
+                            <i :class="editingStaffId ? 'pi pi-pencil' : 'pi pi-user-plus'"></i>
+                            {{ editingStaffId ? '編集' : '追加' }}
+                        </h3>
+                        <div class="staff-form-grid">
+                            <div class="staff-form-field">
+                                <label>本名 <span class="required">*</span></label>
+                                <InputText v-model="newStaffForm.name" placeholder="例: 北垣拓也" />
+                            </div>
+                            <div class="staff-form-field">
+                                <label>Slack ユーザー ID <span class="required">*</span></label>
+                                <InputText v-model="newStaffForm.slackMentionId" placeholder="例: U02E6HGK4BH" />
+                            </div>
+                            <div class="staff-form-field">
+                                <label>役職（任意）</label>
+                                <InputText v-model="newStaffForm.role" placeholder="CD / FD / P / 衣装 など" />
+                            </div>
+                            <div class="staff-form-field">
+                                <label>メール（任意）</label>
+                                <InputText v-model="newStaffForm.email" placeholder="example@gokkoclub.jp" />
+                            </div>
+                            <div class="staff-form-field staff-form-full">
+                                <label>別名（1行1つ。カンマ/読点区切りでも可）</label>
+                                <Textarea
+                                    v-model="newStaffForm.aliases"
+                                    rows="3"
+                                    placeholder="例:&#10;takuya.kitagaki(北垣 拓也)&#10;北垣 拓也"
+                                />
+                            </div>
+                            <div class="staff-form-field staff-form-full">
+                                <label>メモ（任意）</label>
+                                <InputText v-model="newStaffForm.note" placeholder="" />
+                            </div>
+                        </div>
+                        <div class="staff-form-actions">
+                            <Button label="キャンセル" severity="secondary" outlined @click="closeStaffForm" />
+                            <Button label="保存" icon="pi pi-check" :loading="savingStaff" @click="saveStaff" />
+                        </div>
+                    </div>
+
+                    <!-- 一覧 -->
+                    <div v-if="staffMentions.loading.value" class="loading-container">
+                        <ProgressSpinner />
+                    </div>
+                    <div v-else-if="filteredStaffMentions.length === 0" class="empty-state">
+                        <i class="pi pi-at"></i>
+                        <p>{{ staffMentions.mentions.value.length === 0 ? 'まだ登録されていません' : '該当するスタッフがいません' }}</p>
+                    </div>
+
+                    <table v-else class="master-table admin-table">
+                        <thead>
+                            <tr>
+                                <th>本名</th>
+                                <th>役職</th>
+                                <th>Slack ID</th>
+                                <th>別名</th>
+                                <th>ステータス</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr
+                                v-for="s in filteredStaffMentions"
+                                :key="s.id"
+                                :class="{ 'admin-inactive': s.active === false }"
+                            >
+                                <td class="cast-name">{{ s.name }}</td>
+                                <td>{{ s.role || '-' }}</td>
+                                <td class="admin-email"><code>{{ s.slackMentionId }}</code></td>
+                                <td class="staff-aliases">
+                                    <span v-for="a in (s.aliases || []).filter(a => a !== s.name)" :key="a" class="alias-chip">{{ a }}</span>
+                                    <span v-if="(s.aliases || []).filter(a => a !== s.name).length === 0" class="text-secondary">-</span>
+                                </td>
+                                <td>
+                                    <Tag
+                                        :value="s.active === false ? '無効' : '有効'"
+                                        :severity="s.active === false ? 'secondary' : 'success'"
+                                    />
+                                </td>
+                                <td>
+                                    <div class="action-buttons">
+                                        <Button
+                                            icon="pi pi-pencil"
+                                            size="small"
+                                            outlined
+                                            v-tooltip.top="'編集'"
+                                            @click="openEditStaff(s)"
+                                        />
+                                        <Button
+                                            :icon="s.active === false ? 'pi pi-check-circle' : 'pi pi-ban'"
+                                            :severity="s.active === false ? 'success' : 'warning'"
+                                            size="small"
+                                            outlined
+                                            v-tooltip.top="s.active === false ? '有効化' : '無効化'"
+                                            @click="handleToggleStaffActive(s)"
+                                        />
+                                        <Button
+                                            icon="pi pi-trash"
+                                            severity="danger"
+                                            size="small"
+                                            outlined
+                                            v-tooltip.top="'削除'"
+                                            @click="handleRemoveStaff(s)"
+                                        />
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </TabPanel>
         </TabView>
     </div>
 </template>
@@ -1072,5 +1303,90 @@ function setAllNewDate(date: Date | null) {
 
 .grouped-table {
     border-top: 1px solid var(--surface-border);
+}
+
+/* ======== Staff Mentions Tab ======== */
+.staff-help {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    background: var(--p-content-hover-background);
+    border-left: 3px solid var(--primary-color);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+.staff-help i { font-size: 1.1rem; color: var(--primary-color); margin-top: 2px; }
+.staff-help code {
+    background: var(--surface-100);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+    font-size: 0.85em;
+}
+
+.staff-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+.staff-search { flex: 1; min-width: 220px; }
+.staff-inactive-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-color-secondary);
+    cursor: pointer;
+}
+
+.staff-form {
+    border: 1px solid var(--surface-border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1rem;
+    background: var(--surface-50, var(--p-content-hover-background));
+}
+.staff-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem 1rem;
+    margin-top: 0.5rem;
+}
+.staff-form-field { display: flex; flex-direction: column; gap: 0.25rem; }
+.staff-form-field label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+}
+.staff-form-field .required { color: var(--red-500); margin-left: 2px; }
+.staff-form-full { grid-column: 1 / -1; }
+.staff-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}
+
+.staff-aliases {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    max-width: 400px;
+}
+.alias-chip {
+    font-size: 0.75rem;
+    padding: 0.1rem 0.5rem;
+    background: var(--surface-100);
+    border-radius: 12px;
+    color: var(--text-color-secondary);
+}
+.text-secondary { color: var(--text-color-secondary); }
+
+@media (max-width: 720px) {
+    .staff-form-grid { grid-template-columns: 1fr; }
 }
 </style>
