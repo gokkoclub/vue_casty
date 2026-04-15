@@ -153,6 +153,13 @@ export function useOrders() {
     const loading = ref(false)
     // Note: Calendar events are now created automatically by Cloud Functions
 
+    // ⚠️ これらの composable は内部で useToast() を呼ぶので、必ず setup 段階（同期的）で
+    //   取得しておく必要がある。submitOrder 内の await 後に呼ぶと
+    //   "No PrimeVue Toast provided!" が投げられ、Cloud Function 呼び出し前に catch に飛んで
+    //   Slack/カレンダー連携がスキップされる（DB だけが書かれた状態になる）。
+    const { addFromCasting: addToShootingContact } = useShootingContact()
+    const { addToCastMaster } = useCastMaster()
+
     /**
      * カートの内容をOrderPayloadに変換
      */
@@ -535,10 +542,9 @@ export function useOrders() {
 
             // 外部案件/社内イベントで初期ステータスが「決定」の外部キャストを
             // 撮影香盤連絡DBとキャスティングマスターDBに追加
+            // addToShootingContact / addToCastMaster は setup 段階で取得済み（上部参照）。
+            // ここで useShootingContact() / useCastMaster() を呼び直してはならない。
             if (payload.mode === 'external' || payload.mode === 'internal') {
-                const { addFromCasting: addToShootingContact } = useShootingContact()
-                const { addToCastMaster } = useCastMaster()
-
                 for (let i = 0; i < payload.items.length; i++) {
                     const item = payload.items[i]!
                     if (item.castType !== '外部') continue
