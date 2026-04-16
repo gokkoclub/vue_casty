@@ -240,6 +240,11 @@ function buildSpecialOrderMessage(params) {
         lines.push("");
         lines.push(`CC: ${params.ccMention}`);
     }
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push("");
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
+    }
     return lines.join("\n");
 }
 /**
@@ -433,6 +438,11 @@ function buildOrderMessage(params) {
         lines.push("`Notionリンク`");
         lines.push(`https://www.notion.so/${params.projectId.replace(/-/g, "")}`);
     }
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push("");
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
+    }
     // フッター
     lines.push("");
     lines.push("--------------------------------------------------");
@@ -475,6 +485,10 @@ function buildAdditionalOrderMessage(params) {
             lines.push(`${roleName}：${castList}`);
         }
         lines.push("");
+    }
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
     }
     return lines.join("\n").trim();
 }

@@ -242,6 +242,7 @@ export function buildSpecialOrderMessage(params: {
     }>;
     ccMention?: string; // 作成者のSlackメンション or 名前
     ordererName?: string;
+    castingIds?: string[];
 }): string {
     const lines: string[] = [];
 
@@ -286,6 +287,12 @@ export function buildSpecialOrderMessage(params: {
     if (params.ccMention) {
         lines.push("");
         lines.push(`CC: ${params.ccMention}`);
+    }
+
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push("");
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
     }
 
     return lines.join("\n");
@@ -384,6 +391,7 @@ export function buildOrderMessage(params: {
     mentionGroupId?: string;
     ccString?: string;
     ordererName?: string;
+    castingIds?: string[];
 }): string {
     const isShooting = params.mode === "shooting" || !params.mode;
     const dateLabel = isShooting ? "撮影日" : "日程";
@@ -520,6 +528,12 @@ export function buildOrderMessage(params: {
         lines.push(`https://www.notion.so/${params.projectId.replace(/-/g, "")}`);
     }
 
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push("");
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
+    }
+
     // フッター
     lines.push("");
     lines.push("--------------------------------------------------");
@@ -544,6 +558,7 @@ export function buildAdditionalOrderMessage(params: {
     }>;
     hasInternal: boolean;
     mentionGroupId?: string;
+    castingIds?: string[];
 }): string {
     const lines: string[] = [];
 
@@ -580,6 +595,11 @@ export function buildAdditionalOrderMessage(params: {
             lines.push(`${roleName}：${castList}`);
         }
         lines.push("");
+    }
+
+    // キャスティング ID（スレッド紐付け用）
+    if (params.castingIds && params.castingIds.length > 0) {
+        lines.push(`\`casting\` ${params.castingIds.join(", ")}`);
     }
 
     return lines.join("\n").trim();

@@ -673,6 +673,7 @@ export const notifyOrderCreated = onCall(
                 items: itemsWithConflict,
                 hasInternal: data.hasInternal || false,
                 mentionGroupId: mentionGroupId || undefined,
+                castingIds: data.castingIds || [],
             });
         } else if (orderMode === "external" || orderMode === "internal") {
             // 特別オーダー: ORDER_INTEGRATION_GUIDE セクション4・5準拠
@@ -685,6 +686,7 @@ export const notifyOrderCreated = onCall(
                 items: itemsWithConflict,
                 ccMention: resolvedCcMention || undefined,
                 ordererName: orderCreatorMention || orderCreatorName || undefined,
+                castingIds: data.castingIds || [],
             });
         } else {
             // 撮影オーダー
@@ -699,6 +701,7 @@ export const notifyOrderCreated = onCall(
                 mentionGroupId: mentionGroupId || undefined,
                 ccString: ccString || undefined,
                 ordererName: orderCreatorMention || orderCreatorName || undefined,
+                castingIds: data.castingIds || [],
             });
         }
 

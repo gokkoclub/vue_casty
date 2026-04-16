@@ -648,6 +648,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             items: itemsWithConflict,
             hasInternal: data.hasInternal || false,
             mentionGroupId: mentionGroupId || undefined,
+            castingIds: data.castingIds || [],
         });
     }
     else if (orderMode === "external" || orderMode === "internal") {
@@ -661,6 +662,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             items: itemsWithConflict,
             ccMention: resolvedCcMention || undefined,
             ordererName: orderCreatorMention || orderCreatorName || undefined,
+            castingIds: data.castingIds || [],
         });
     }
     else {
@@ -676,6 +678,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             mentionGroupId: mentionGroupId || undefined,
             ccString: ccString || undefined,
             ordererName: orderCreatorMention || orderCreatorName || undefined,
+            castingIds: data.castingIds || [],
         });
     }
     // ── Slack送信 ──
