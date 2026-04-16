@@ -136,15 +136,23 @@ export function useCastings() {
         try {
             // 1. Update Firestore
             const castingRef = doc(db, 'castings', castingId)
-            await updateDoc(castingRef, {
+            const updateData: Record<string, unknown> = {
                 status: newStatus,
                 updatedAt: Timestamp.now(),
                 updatedBy: userEmail.value || 'unknown'
-            })
+            }
+            // 条件つきOK / コメント付きステータス変更時にメッセージを永続化
+            if (extraMessage) {
+                updateData.conditionalMessage = extraMessage
+            }
+            await updateDoc(castingRef, updateData)
 
             // 2. Update local state
             casting.status = newStatus
             casting.updatedAt = Timestamp.now()
+            if (extraMessage) {
+                (casting as Record<string, unknown>).conditionalMessage = extraMessage
+            }
 
             // 3. Send Slack notification (background, don't block)
             // オーダー待ち → 打診中 は通知不要（オーダー送信時にDMで通知済み）

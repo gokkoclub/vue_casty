@@ -289,19 +289,37 @@ export function useOrders() {
     const checkExistingProject = async (): Promise<ExistingThread[]> => {
         if (!db) return []
         const { context } = orderStore
-        const projectId = context.mode === 'shooting' && context.shootingData?.notionPageId
-            ? context.shootingData.notionPageId : null
-        if (!projectId) return []
+
+        // ── クエリ条件の決定 ──
+        // shooting: projectId（Notion ページ ID）で検索
+        // external/internal: projectName + mode で検索（projectId がないため）
+        let snap
+        try {
+            if (context.mode === 'shooting' && context.shootingData?.notionPageId) {
+                snap = await getDocs(
+                    query(
+                        collection(db, 'castings'),
+                        where('projectId', '==', context.shootingData.notionPageId)
+                    )
+                )
+            } else if ((context.mode === 'external' || context.mode === 'internal') && orderStore.manualMeta.projectName) {
+                // 外部案件 / 社内イベント: 同じ案件名 × 同じモード の既存オーダーを検索
+                snap = await getDocs(
+                    query(
+                        collection(db, 'castings'),
+                        where('projectName', '==', orderStore.manualMeta.projectName),
+                        where('mode', '==', context.mode)
+                    )
+                )
+            } else {
+                return []
+            }
+        } catch (queryErr) {
+            console.warn('checkExistingProject query failed:', queryErr)
+            return []
+        }
 
         try {
-            // NOTE: where('slackThreadTs', '!=', '') は複合インデックスが必要なため
-            // projectId のみでクエリし、slackThreadTs はクライアント側でフィルタ
-            const snap = await getDocs(
-                query(
-                    collection(db, 'castings'),
-                    where('projectId', '==', projectId)
-                )
-            )
             if (snap.empty) return []
 
             // スレッドTSごとにグループ化し、日付・作成日時・キャスト名を収集

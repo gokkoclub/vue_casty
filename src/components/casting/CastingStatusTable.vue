@@ -195,6 +195,7 @@ const handleRegenerateCalendar = async (castingId: string) => {
       <!-- 備考 -->
       <Column field="note" header="備考" style="min-width: 150px">
         <template #body="{ data }">
+          <div v-if="data.conditionalMessage" class="conditional-msg">{{ data.conditionalMessage }}</div>
           <span class="note-text">{{ data.note || '' }}</span>
         </template>
       </Column>
@@ -309,6 +310,16 @@ const handleRegenerateCalendar = async (castingId: string) => {
 .note-text {
   font-size: 0.75rem;
   color: var(--text-color-secondary);
+}
+
+.conditional-msg {
+  font-size: 0.75rem;
+  color: var(--yellow-700);
+  background: var(--yellow-50);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
+  margin-bottom: 0.2rem;
+  display: inline-block;
 }
 
 .actions {

@@ -396,7 +396,14 @@ const sortLabel = computed(() => {
               <i class="pi pi-pencil csl-role-edit-icon"></i>
             </span>
             <span v-if="casting.mainSub === 'メイン'" class="csl-main-badge">メイン</span>
+            <span v-if="casting.rank" class="csl-rank-badge">第{{ casting.rank }}候補</span>
           </template>
+        </div>
+
+        <!-- Note / Conditional Message -->
+        <div v-if="casting.conditionalMessage || casting.note" class="csl-cell csl-note-row">
+          <span v-if="casting.conditionalMessage" class="csl-conditional-msg">{{ casting.conditionalMessage }}</span>
+          <span v-if="casting.note" class="csl-note-text">{{ casting.note }}</span>
         </div>
 
         <!-- Time (for external/internal events) -->
@@ -727,6 +734,32 @@ const sortLabel = computed(() => {
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
   font-weight: 600;
+}
+.csl-rank-badge {
+  font-size: 0.6rem;
+  background: var(--p-blue-100);
+  color: var(--p-blue-800);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-weight: 600;
+}
+.csl-note-row {
+  grid-column: 1 / -1;
+  padding: 0 0.75rem 0.4rem;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.csl-conditional-msg {
+  font-size: 0.75rem;
+  color: var(--p-yellow-800);
+  background: var(--p-yellow-50);
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+}
+.csl-note-text {
+  font-size: 0.75rem;
+  color: var(--text-color-secondary);
 }
 
 .csl-role-name.clickable {
