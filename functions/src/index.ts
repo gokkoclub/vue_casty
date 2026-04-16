@@ -1135,35 +1135,33 @@ export const notifyStatusUpdate = onCall(
             }
 
             // ── 撮影連絡DB自動追加（外部キャストのみ）──
+            // DB統合済み: castings ドキュメントに contactStatus を設定するだけ
             if (casting.castType === "外部") {
                 try {
-                    // 重複チェック
-                    const existingContact = await db.collection("shootingContacts")
-                        .where("castingId", "==", data.castingId)
-                        .limit(1)
-                        .get();
-
-                    if (existingContact.empty) {
-                        await db.collection("shootingContacts").add({
-                            castingId: data.castingId,
-                            castName: casting.castName,
-                            castType: casting.castType,
-                            projectName: casting.projectName,
-                            accountName: casting.accountName,
-                            roleName: casting.roleName,
-                            shootDate: casting.startDate,
-                            mainSub: casting.mainSub || "その他",
-                            status: "香盤連絡待ち",
-                            slackThreadTs: casting.slackThreadTs || "",
-                            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    if (!casting.contactStatus) {
+                        await castingDoc.ref.update({
+                            contactStatus: "香盤連絡待ち",
+                            isDecided: true,
+                            decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+                            decidedBy: "Slack応答",
                         });
-                        console.log("Added to shootingContacts:", casting.castName);
-                    } else {
-                        console.log("ShootingContact already exists for:", data.castingId);
+                        console.log("Set contactStatus on casting:", casting.castName);
                     }
                 } catch (e) {
-                    console.warn("Failed to add to shootingContacts:", e);
+                    console.warn("Failed to set contactStatus:", e);
+                }
+            }
+
+            // マスターDB: isDecided フラグ設定（内部・外部両方）
+            if (!casting.isDecided) {
+                try {
+                    await castingDoc.ref.update({
+                        isDecided: true,
+                        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        decidedBy: "auto",
+                    });
+                } catch (e) {
+                    console.warn("Failed to set isDecided:", e);
                 }
             }
         }
@@ -1652,52 +1650,10 @@ export const notifyOrderUpdated = onCall(
         // Firestore更新
         await castingRef.update(updateData);
 
-        // ── projectName cascade: castMaster / shootingContacts 更新 ──
+        // DB統合済み: castMaster / shootingContacts は castings に統合されたため
+        // projectName の変更は castings の updateDoc だけで完結する（cascade 不要）
         if (projectNameTo && projectNameFrom !== projectNameTo) {
-            const castId = casting.castId;
-            console.log(`Cascading projectName change for castId=${castId}: "${projectNameFrom}" → "${projectNameTo}"`);
-
-            // castMaster 更新
-            try {
-                const masterSnap = await db.collection("castMaster")
-                    .where("castId", "==", castId)
-                    .where("projectName", "==", projectNameFrom)
-                    .get();
-                const batch1 = db.batch();
-                masterSnap.docs.forEach(doc => {
-                    batch1.update(doc.ref, {
-                        projectName: projectNameTo,
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    });
-                });
-                if (!masterSnap.empty) {
-                    await batch1.commit();
-                    console.log(`Updated ${masterSnap.size} castMaster docs`);
-                }
-            } catch (e) {
-                console.error("castMaster cascade failed:", e);
-            }
-
-            // shootingContacts 更新（castingId で検索）
-            try {
-                const contactSnap = await db.collection("shootingContacts")
-                    .where("castingId", "==", data.castingId)
-                    .where("projectName", "==", projectNameFrom)
-                    .get();
-                const batch2 = db.batch();
-                contactSnap.docs.forEach(doc => {
-                    batch2.update(doc.ref, {
-                        projectName: projectNameTo,
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                    });
-                });
-                if (!contactSnap.empty) {
-                    await batch2.commit();
-                    console.log(`Updated ${contactSnap.size} shootingContacts docs`);
-                }
-            } catch (e) {
-                console.error("shootingContacts cascade failed:", e);
-            }
+            console.log(`projectName changed: "${projectNameFrom}" → "${projectNameTo}" (cascade no longer needed)`);
         }
 
         // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先

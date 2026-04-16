@@ -47,6 +47,23 @@ export interface Casting {
     competitionType?: string  // 競合の種類 (e.g., "化粧品", "飲料")
     competitionPeriod?: string // 競合の期間 (e.g., "2026/03-2027/03")
     conditionalMessage?: string // 条件つきOK 時のメッセージ / コメント
+    // ── 撮影連絡フロー（旧 shootingContacts を統合） ──
+    contactStatus?: ShootingContactStatus | null  // null = 撮影連絡対象外
+    inTime?: string
+    outTime?: string
+    location?: string
+    address?: string
+    fee?: number            // 撮影連絡側の金額（= cost と同一にすることで同期不要に）
+    makingUrl?: string
+    postDate?: Timestamp
+    contactEmail?: string   // 撮影連絡用メールアドレス
+    orderDocumentId?: string
+    poUuid?: string
+    // ── マスターDB（旧 castMaster を統合） ──
+    isDecided?: boolean      // true = 決定履歴に表示
+    decidedAt?: Timestamp
+    decidedBy?: string
+    // ── 共通 ──
     createdBy: string
     updatedBy: string
     createdAt: Timestamp

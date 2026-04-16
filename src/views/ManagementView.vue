@@ -316,25 +316,8 @@ async function searchByProject() {
             }
         })
 
-        // Search shootingContacts
-        const contactsSnap = await getDocs(
-            query(collection(db, 'shootingContacts'))
-        )
-        contactsSnap.forEach(docSnap => {
-            const d = docSnap.data()
-            const match = (d.projectName || '').toLowerCase().includes(keyword) ||
-                          (d.castName || '').toLowerCase().includes(keyword) ||
-                          (d.accountName || '').toLowerCase().includes(keyword)
-            if (match) {
-                dateSearchResults.value.push({
-                    id: docSnap.id,
-                    collection: 'shootingContacts',
-                    castName: d.castName || '',
-                    projectName: d.projectName || '',
-                    shootDate: d.shootDate
-                })
-            }
-        })
+        // DB統合済み: shootingContacts のデータは castings に含まれているため
+        // castings の検索結果に撮影連絡分も含まれる（重複追加不要）
 
         if (dateSearchResults.value.length === 0) {
             toast.add({ severity: 'info', summary: '検索結果', detail: '該当するデータが見つかりませんでした', life: 3000 })
@@ -361,20 +344,17 @@ async function updateShootDate(item: typeof dateSearchResults.value[0]) {
         const newTs = Timestamp.fromDate(newDate)
         const colName = item.collection
 
-        if (colName === 'castings') {
-            // Cloud Function経由で更新 → Googleカレンダー + Slack通知も自動連動
-            if (functions) {
-                const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
-                await notifyUpdate({
-                    castingId: item.id,
-                    changes: { startDate: dateStr, endDate: dateStr }
-                })
-            } else {
-                // fallback: Firestoreのみ更新
-                await updateDoc(doc(db, colName, item.id), { startDate: newTs, endDate: newTs })
-            }
+        // DB統合済み: 全て castings を更新
+        // Cloud Function経由で更新 → Googleカレンダー + Slack通知も自動連動
+        if (functions) {
+            const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
+            await notifyUpdate({
+                castingId: item.id,
+                changes: { startDate: dateStr, endDate: dateStr }
+            })
         } else {
-            await updateDoc(doc(db, colName, item.id), { shootDate: newTs })
+            // fallback: Firestoreのみ更新
+            await updateDoc(doc(db, 'castings', item.id), { startDate: newTs, endDate: newTs })
         }
         item.shootDate = newTs
         item.newDate = undefined

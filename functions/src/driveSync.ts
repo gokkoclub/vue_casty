@@ -45,7 +45,7 @@ export const syncDriveLinksToContacts = onCall(
 
                 // Update shooting contact
                 await db
-                    .collection("shootingContacts")
+                    .collection("castings")
                     .doc(shootingContactId)
                     .update({
                         makingUrl: driveLink,
@@ -73,7 +73,7 @@ export const syncDriveLinksToContacts = onCall(
                 const driveLink = driveSnap.docs[0]!.data().driveLink;
 
                 // Find matching shooting contacts
-                let contactsQuery: admin.firestore.Query = db.collection("shootingContacts");
+                let contactsQuery: admin.firestore.Query = db.collection("castings");
                 if (projectName) {
                     contactsQuery = contactsQuery.where("projectName", "==", projectName);
                 }
@@ -121,8 +121,10 @@ export const syncDriveLinksToContacts = onCall(
                 }
             });
 
-            // 全shootingContactsを取得（makingUrlフィールドが未設定、空、null のケースを網羅）
-            const allContactsSnap = await db.collection("shootingContacts").get();
+            // DB統合済み: castings コレクションから contactStatus が設定済みのものを取得
+            const allContactsSnap = await db.collection("castings")
+                .where("contactStatus", "!=", null)
+                .get();
 
             const batch = db.batch();
             let totalUpdated = 0;
@@ -135,31 +137,10 @@ export const syncDriveLinksToContacts = onCall(
 
                 let driveLink: string | undefined;
 
-                // 方法1: shootingContactsのnotionIdで直接マッチ
-                if (contact.notionId) {
-                    const normalizedNotionId = contact.notionId.replace(/-/g, "").toLowerCase();
-                    driveLink = driveLinkMap.get(normalizedNotionId);
-                }
-
-                // 方法2: notionIdがなければ castingId → casting.projectId でマッチ
-                if (!driveLink && contact.castingId) {
-                    try {
-                        const castingDoc = await db
-                            .collection("castings")
-                            .doc(contact.castingId)
-                            .get();
-
-                        if (castingDoc.exists) {
-                            const casting = castingDoc.data();
-                            const projectId = casting?.projectId;
-                            if (projectId) {
-                                const normalizedProjectId = projectId.replace(/-/g, "").toLowerCase();
-                                driveLink = driveLinkMap.get(normalizedProjectId);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn(`Failed to lookup casting ${contact.castingId}:`, e);
-                    }
+                // castings.projectId で直接マッチ（統合済みなので間接参照不要）
+                if (contact.projectId) {
+                    const normalizedProjectId = contact.projectId.replace(/-/g, "").toLowerCase();
+                    driveLink = driveLinkMap.get(normalizedProjectId);
                 }
 
                 if (driveLink) {

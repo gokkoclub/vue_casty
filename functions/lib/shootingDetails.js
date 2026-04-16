@@ -94,7 +94,7 @@ exports.getShootingDetails = (0, https_1.onCall)({ maxInstances: 10 }, async (re
                 updateData.address = detail.address;
             updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
             await db
-                .collection("shootingContacts")
+                .collection("castings")
                 .doc(shootingContactId)
                 .update(updateData);
         }
@@ -146,7 +146,7 @@ exports.syncShootingDetailsToContacts = (0, https_1.onCall)({ maxInstances: 10 }
         });
         // 2. Get shooting contacts that need updating
         const contactsSnap = await db
-            .collection("shootingContacts")
+            .collection("castings")
             .where("projectName", "==", data.projectName || "")
             .get();
         let updateCount = 0;

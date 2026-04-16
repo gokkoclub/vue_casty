@@ -111,6 +111,14 @@ const handleClose = () => {
                     <span class="label">現在のステータス</span>
                     <Tag :value="casting.status" :severity="getTagSeverity(casting.status)" />
                 </div>
+                <div v-if="casting.conditionalMessage" class="info-row conditional-row">
+                    <span class="label">条件コメント</span>
+                    <span class="conditional-value">{{ casting.conditionalMessage }}</span>
+                </div>
+                <div v-if="casting.note" class="info-row">
+                    <span class="label">備考</span>
+                    <span class="value note-value">{{ casting.note }}</span>
+                </div>
             </div>
 
             <!-- Status Selection -->
@@ -214,6 +222,24 @@ const handleClose = () => {
 
 .info-row .value {
     font-weight: 500;
+}
+
+.conditional-row .conditional-value {
+    font-size: 0.85rem;
+    color: var(--p-yellow-800);
+    background: var(--p-yellow-50);
+    padding: 0.3rem 0.6rem;
+    border-radius: 6px;
+    max-width: 300px;
+    text-align: right;
+    line-height: 1.4;
+}
+
+.note-value {
+    font-size: 0.85rem;
+    color: var(--text-color-secondary);
+    max-width: 300px;
+    text-align: right;
 }
 
 .status-selection,

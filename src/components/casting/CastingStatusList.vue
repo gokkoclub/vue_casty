@@ -366,12 +366,13 @@ const sortLabel = computed(() => {
 
         <!-- Status -->
         <div class="csl-cell csl-status" @click.stop="isAdmin && emit('open-modal', casting.id)">
-          <span 
+          <span
             class="csl-status-badge"
             :style="{ background: getStatusStyle(casting.status).bg, color: getStatusStyle(casting.status).color }"
           >
             {{ casting.status }}
           </span>
+          <span v-if="casting.conditionalMessage" class="csl-condition-chip" title="クリックで条件を確認">条件あり</span>
         </div>
 
         <!-- Role & Rank -->
@@ -400,10 +401,9 @@ const sortLabel = computed(() => {
           </template>
         </div>
 
-        <!-- Note / Conditional Message -->
-        <div v-if="casting.conditionalMessage || casting.note" class="csl-cell csl-note-row">
-          <span v-if="casting.conditionalMessage" class="csl-conditional-msg">{{ casting.conditionalMessage }}</span>
-          <span v-if="casting.note" class="csl-note-text">{{ casting.note }}</span>
+        <!-- Note -->
+        <div v-if="casting.note" class="csl-cell csl-note-row">
+          <span class="csl-note-text">{{ casting.note }}</span>
         </div>
 
         <!-- Time (for external/internal events) -->
@@ -750,12 +750,16 @@ const sortLabel = computed(() => {
   gap: 0.5rem;
   flex-wrap: wrap;
 }
-.csl-conditional-msg {
-  font-size: 0.75rem;
+.csl-condition-chip {
+  font-size: 0.55rem;
   color: var(--p-yellow-800);
   background: var(--p-yellow-50);
-  border-radius: 4px;
-  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--p-yellow-200);
+  padding: 0.05rem 0.3rem;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 0.2rem;
 }
 .csl-note-text {
   font-size: 0.75rem;

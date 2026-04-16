@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import {
-    collection, query, where, getDocs, addDoc, updateDoc, doc, Timestamp
+    collection, query, where, getDocs, updateDoc, doc, Timestamp
 } from 'firebase/firestore'
 import { db } from '@/services/firebase'
 import type { CastMaster, Casting } from '@/types'
@@ -8,10 +8,34 @@ import { useToast } from 'primevue/usetoast'
 import { useAuth } from '@/composables/useAuth'
 
 /**
- * キャスティングマスターDB管理composable
- * 「決定」ステータスになったキャスティングの履歴を保存
- * 内部・外部両方のキャストが対象
+ * キャスティングマスターDB管理composable（統合版）
+ *
+ * 旧: castMaster コレクションを CRUD
+ * 新: castings コレクション（isDecided == true）を読み書き
+ *
+ * CastMaster 型への変換アダプタを含むので、ManagementView 側の変更は最小限。
  */
+
+function castingToMaster(id: string, data: Record<string, unknown>): CastMaster {
+    return {
+        id,
+        castingId: id,  // 統合後は自分自身
+        castId: (data.castId as string) || '',
+        castName: (data.castName as string) || '',
+        castType: (data.castType as '内部' | '外部') || '外部',
+        accountName: (data.accountName as string) || '',
+        projectName: (data.projectName as string) || '',
+        roleName: (data.roleName as string) || '',
+        mainSub: (data.mainSub as 'メイン' | 'サブ' | 'その他') || 'その他',
+        shootDate: data.startDate as Timestamp,
+        endDate: (data.endDate as Timestamp) || (data.startDate as Timestamp),
+        cost: (data.cost as number) || 0,
+        decidedAt: (data.decidedAt as Timestamp) || (data.updatedAt as Timestamp) || Timestamp.now(),
+        decidedBy: (data.decidedBy as string) || (data.updatedBy as string) || 'unknown',
+        createdAt: data.createdAt as Timestamp,
+    }
+}
+
 export function useCastMaster() {
     const masters = ref<CastMaster[]>([])
     const loading = ref(false)
@@ -19,8 +43,8 @@ export function useCastMaster() {
     const { user } = useAuth()
 
     /**
-     * キャスティングマスターDBに追加
-     * 決定ステータス時に呼び出される
+     * キャスティングを決定履歴にマーク
+     * 統合版: castings ドキュメントに isDecided=true を設定するだけ
      */
     async function addToCastMaster(casting: Casting): Promise<boolean> {
         if (!db) {
@@ -29,44 +53,24 @@ export function useCastMaster() {
         }
 
         try {
-            // 重複チェック
-            const existingQuery = query(
-                collection(db, 'castMaster'),
-                where('castingId', '==', casting.id)
-            )
-            const existing = await getDocs(existingQuery)
-
-            if (!existing.empty) {
-                console.log('CastMaster already exists for casting:', casting.id)
+            // 既に isDecided なら skip
+            if ((casting as Record<string, unknown>).isDecided === true) {
+                console.log('Already decided:', casting.id)
                 return false
             }
 
-            // 新規作成
-            const now = Timestamp.now()
-            const masterData: Omit<CastMaster, 'id'> = {
-                castingId: casting.id,
-                castId: casting.castId,
-                castName: casting.castName,
-                castType: casting.castType,
-                accountName: casting.accountName,
-                projectName: casting.projectName,
-                roleName: casting.roleName,
-                mainSub: casting.mainSub || 'その他',
-                shootDate: casting.startDate,
-                endDate: casting.endDate,
-                cost: casting.cost || 0,
-                decidedAt: now,
+            const castingRef = doc(db, 'castings', casting.id)
+            await updateDoc(castingRef, {
+                isDecided: true,
+                decidedAt: Timestamp.now(),
                 decidedBy: user.value?.email || 'unknown',
-                createdAt: now
-            }
+                updatedAt: Timestamp.now(),
+            })
 
-            await addDoc(collection(db, 'castMaster'), masterData)
-
-            console.log(`Added to castMaster: ${casting.castName} (${casting.castType})`)
-
+            console.log(`Marked as decided: ${casting.castName} (${casting.castType})`)
             return true
         } catch (error) {
-            console.error('Error adding to castMaster:', error)
+            console.error('Error marking as decided:', error)
             toast.add({
                 severity: 'error',
                 summary: 'エラー',
@@ -79,14 +83,21 @@ export function useCastMaster() {
 
     /**
      * マスターデータを更新
+     * 統合版: castings ドキュメントを直接更新
      */
     async function updateMaster(masterId: string, data: Partial<CastMaster>): Promise<boolean> {
         if (!db) return false
         try {
-            const masterRef = doc(db, 'castMaster', masterId)
-            // id, castingId, createdAt など不変フィールドは除外
-            const { id: _id, castingId: _cid, createdAt: _ca, ...updateData } = data as Record<string, unknown>
-            await updateDoc(masterRef, updateData)
+            const castingRef = doc(db, 'castings', masterId)
+            const updateData: Record<string, unknown> = { updatedAt: Timestamp.now() }
+
+            // CastMaster フィールド → castings フィールドのマッピング
+            if (data.cost !== undefined) { updateData.cost = data.cost; updateData.fee = data.cost }
+            if (data.projectName !== undefined) updateData.projectName = data.projectName
+            if (data.roleName !== undefined) updateData.roleName = data.roleName
+            if (data.mainSub !== undefined) updateData.mainSub = data.mainSub
+
+            await updateDoc(castingRef, updateData)
 
             // ローカル更新
             const master = masters.value.find(m => m.id === masterId)
@@ -102,7 +113,8 @@ export function useCastMaster() {
     }
 
     /**
-     * キャスティングマスターDBから履歴を取得
+     * 決定済みキャスティングの履歴を取得
+     * 統合版: castings where isDecided == true
      */
     async function fetchHistory(filters?: {
         castId?: string
@@ -110,21 +122,21 @@ export function useCastMaster() {
         dateRange?: { start: Date; end: Date }
     }): Promise<void> {
         if (!db) return
-
         loading.value = true
 
         try {
-            const q = query(collection(db, 'castMaster'))
-
+            const q = query(
+                collection(db, 'castings'),
+                where('isDecided', '==', true)
+            )
             const snapshot = await getDocs(q)
             let results: CastMaster[] = []
 
             snapshot.forEach((docSnap) => {
                 const data = docSnap.data()
-                results.push({
-                    id: docSnap.id,
-                    ...data
-                } as CastMaster)
+                // 削除済みは除外
+                if (data.deleted === true) return
+                results.push(castingToMaster(docSnap.id, data))
             })
 
             // クライアントサイドフィルタリング
@@ -138,13 +150,13 @@ export function useCastMaster() {
                 const start = filters.dateRange.start.getTime()
                 const end = filters.dateRange.end.getTime()
                 results = results.filter(m => {
-                    const shootTime = m.shootDate.toDate().getTime()
+                    const shootTime = m.shootDate?.toDate?.()?.getTime() || 0
                     return shootTime >= start && shootTime <= end
                 })
             }
 
-            // 日付降順でソート
-            results.sort((a, b) => b.decidedAt.toMillis() - a.decidedAt.toMillis())
+            // 決定日時降順
+            results.sort((a, b) => (b.decidedAt?.toMillis?.() || 0) - (a.decidedAt?.toMillis?.() || 0))
 
             masters.value = results
         } catch (error) {
@@ -165,11 +177,11 @@ export function useCastMaster() {
      */
     async function getAppearanceCount(castId: string): Promise<number> {
         if (!db) return 0
-
         try {
             const q = query(
-                collection(db, 'castMaster'),
-                where('castId', '==', castId)
+                collection(db, 'castings'),
+                where('castId', '==', castId),
+                where('isDecided', '==', true)
             )
             const snapshot = await getDocs(q)
             return snapshot.size

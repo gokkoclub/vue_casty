@@ -123,16 +123,67 @@ function resolveSlackChannel(casting) {
 /**
  * 名前のゆれを正規化（空白除去、全角半角統一など）
  */
+/**
+ * 複数人名の文字列を配列に分割する。
+ *   対応セパレータ: , 、 ， / ／ ・ 改行 タブ
+ *   想定入力: "田中太郎, 鈴木花子" / "田中、鈴木" / "田中／鈴木" / "田中・鈴木"
+ */
+function splitNameList(input) {
+    return input
+        .split(/[,、，/／・\n\t]/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+}
 function normalizeName(name) {
     return name
         .replace(/\s+/g, "") // 全空白除去
         .replace(/[\u3000]/g, "") // 全角空白除去
+        // 末尾の敬称を除去: 様/さん/殿/氏/ちゃん/君/くん/さま
+        //   ※「山田様太郎」のように途中に含まれる敬称は触らない（誤一致防止）
+        .replace(/(様|さま|さん|殿|氏|ちゃん|君|くん)$/u, "")
         .toLowerCase();
 }
 // Slack ユーザー一覧キャッシュ（Cloud Function インスタンス内で使い回す）
 let slackUserCache = null;
 let slackUserCacheAt = 0;
 const SLACK_USER_CACHE_TTL_MS = 10 * 60 * 1000; // 10分
+// staffMentions コレクションのキャッシュ（Cloud Function インスタンス内で使い回す）
+//   「キャストでも admin でもないスタッフ（CD/FD/P/衣装など）」の Slack ID マップ。
+//   ManagementView の「スタッフメンション」タブから管理される。
+let staffMentionsCache = null;
+let staffMentionsCacheAt = 0;
+const STAFF_MENTIONS_CACHE_TTL_MS = 5 * 60 * 1000; // 5分
+async function fetchStaffMentionsCached() {
+    const now = Date.now();
+    if (staffMentionsCache && now - staffMentionsCacheAt < STAFF_MENTIONS_CACHE_TTL_MS) {
+        return staffMentionsCache;
+    }
+    try {
+        const firestore = admin.firestore();
+        const snap = await firestore.collection("staffMentions").get();
+        const all = [];
+        for (const doc of snap.docs) {
+            const d = doc.data();
+            if (d.active === false)
+                continue;
+            if (!d.slackMentionId)
+                continue;
+            const names = [d.name, ...(Array.isArray(d.aliases) ? d.aliases : [])]
+                .filter((s) => !!s);
+            if (names.length === 0)
+                continue;
+            all.push({ id: doc.id, slackMentionId: d.slackMentionId, names });
+        }
+        staffMentionsCache = all;
+        staffMentionsCacheAt = now;
+        console.log(`[StaffMentions] Cached ${all.length} entries`);
+        return all;
+    }
+    catch (e) {
+        console.warn("[StaffMentions] fetch failed:", e);
+        return staffMentionsCache || [];
+    }
+}
 async function fetchSlackUsersCached() {
     const now = Date.now();
     if (slackUserCache && now - slackUserCacheAt < SLACK_USER_CACHE_TTL_MS) {
@@ -183,8 +234,12 @@ async function fetchSlackUsersCached() {
 }
 /**
  * 名前からSlack IDを検索するヘルパー
- * casts → admin → Slack users.list の順に検索
- * 名前ゆれ（空白有無等）も吸収
+ *   検索順: casts → admin → staffMentions → Slack users.list
+ *   名前ゆれ（空白有無・末尾敬称等）も吸収
+ *
+ *   staffMentions は「キャストでも admin でもないスタッフ」用の専用DB。
+ *   ManagementView の「スタッフメンション」タブで管理され、
+ *   本名 + aliases[] の配列で複数のゆらぎを登録できる。
  */
 async function lookupSlackIdByName(name) {
     if (!name)
@@ -228,7 +283,26 @@ async function lookupSlackIdByName(name) {
         catch (e) {
             console.warn(`[lookup] admin scan failed for ${trimmed}:`, e);
         }
-        // フォールバック2: Slack users.list で名前検索
+        // フォールバック2: staffMentions（専用DB）を全件キャッシュから正規化一致
+        const staff = await fetchStaffMentionsCached();
+        // 厳密一致（正規化後）
+        for (const s of staff) {
+            if (s.names.some(n => normalizeName(n) === normalized)) {
+                return s.slackMentionId;
+            }
+        }
+        // 部分一致（正規化後）
+        if (normalized.length >= 2) {
+            for (const s of staff) {
+                if (s.names.some(n => {
+                    const nn = normalizeName(n);
+                    return nn.includes(normalized) || normalized.includes(nn);
+                })) {
+                    return s.slackMentionId;
+                }
+            }
+        }
+        // フォールバック3: Slack users.list で名前検索
         const users = await fetchSlackUsersCached();
         // 厳密一致（正規化後）
         for (const u of users) {
@@ -440,8 +514,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             ccParts.push(`FD: ${mention}`);
         }
         if (data.shootingData.producer) {
-            // producer can contain multiple names separated by comma/、
-            const producers = data.shootingData.producer.split(/[,、]/).map((p) => p.trim()).filter((p) => p);
+            // producer は複数人可。カンマ/読点/中黒/スラッシュ/改行など多様な区切りを受け付ける
+            const producers = splitNameList(data.shootingData.producer);
             const producerMentions = [];
             for (const name of producers) {
                 const slackId = await lookupSlackIdByName(name);
@@ -452,7 +526,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             }
         }
         if (data.shootingData.costume) {
-            const costumes = data.shootingData.costume.split(/[,、]/).map((p) => p.trim()).filter((p) => p);
+            const costumes = splitNameList(data.shootingData.costume);
             const costumeMentions = [];
             for (const name of costumes) {
                 const slackId = await lookupSlackIdByName(name);
@@ -961,36 +1035,34 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
             });
         }
         // ── 撮影連絡DB自動追加（外部キャストのみ）──
+        // DB統合済み: castings ドキュメントに contactStatus を設定するだけ
         if (casting.castType === "外部") {
             try {
-                // 重複チェック
-                const existingContact = await db.collection("shootingContacts")
-                    .where("castingId", "==", data.castingId)
-                    .limit(1)
-                    .get();
-                if (existingContact.empty) {
-                    await db.collection("shootingContacts").add({
-                        castingId: data.castingId,
-                        castName: casting.castName,
-                        castType: casting.castType,
-                        projectName: casting.projectName,
-                        accountName: casting.accountName,
-                        roleName: casting.roleName,
-                        shootDate: casting.startDate,
-                        mainSub: casting.mainSub || "その他",
-                        status: "香盤連絡待ち",
-                        slackThreadTs: casting.slackThreadTs || "",
-                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                if (!casting.contactStatus) {
+                    await castingDoc.ref.update({
+                        contactStatus: "香盤連絡待ち",
+                        isDecided: true,
+                        decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        decidedBy: "Slack応答",
                     });
-                    console.log("Added to shootingContacts:", casting.castName);
-                }
-                else {
-                    console.log("ShootingContact already exists for:", data.castingId);
+                    console.log("Set contactStatus on casting:", casting.castName);
                 }
             }
             catch (e) {
-                console.warn("Failed to add to shootingContacts:", e);
+                console.warn("Failed to set contactStatus:", e);
+            }
+        }
+        // マスターDB: isDecided フラグ設定（内部・外部両方）
+        if (!casting.isDecided) {
+            try {
+                await castingDoc.ref.update({
+                    isDecided: true,
+                    decidedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    decidedBy: "auto",
+                });
+            }
+            catch (e) {
+                console.warn("Failed to set isDecided:", e);
             }
         }
     }
@@ -1413,52 +1485,10 @@ exports.notifyOrderUpdated = (0, https_1.onCall)({
     }
     // Firestore更新
     await castingRef.update(updateData);
-    // ── projectName cascade: castMaster / shootingContacts 更新 ──
+    // DB統合済み: castMaster / shootingContacts は castings に統合されたため
+    // projectName の変更は castings の updateDoc だけで完結する（cascade 不要）
     if (projectNameTo && projectNameFrom !== projectNameTo) {
-        const castId = casting.castId;
-        console.log(`Cascading projectName change for castId=${castId}: "${projectNameFrom}" → "${projectNameTo}"`);
-        // castMaster 更新
-        try {
-            const masterSnap = await db.collection("castMaster")
-                .where("castId", "==", castId)
-                .where("projectName", "==", projectNameFrom)
-                .get();
-            const batch1 = db.batch();
-            masterSnap.docs.forEach(doc => {
-                batch1.update(doc.ref, {
-                    projectName: projectNameTo,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-            });
-            if (!masterSnap.empty) {
-                await batch1.commit();
-                console.log(`Updated ${masterSnap.size} castMaster docs`);
-            }
-        }
-        catch (e) {
-            console.error("castMaster cascade failed:", e);
-        }
-        // shootingContacts 更新（castingId で検索）
-        try {
-            const contactSnap = await db.collection("shootingContacts")
-                .where("castingId", "==", data.castingId)
-                .where("projectName", "==", projectNameFrom)
-                .get();
-            const batch2 = db.batch();
-            contactSnap.docs.forEach(doc => {
-                batch2.update(doc.ref, {
-                    projectName: projectNameTo,
-                    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-                });
-            });
-            if (!contactSnap.empty) {
-                await batch2.commit();
-                console.log(`Updated ${contactSnap.size} shootingContacts docs`);
-            }
-        }
-        catch (e) {
-            console.error("shootingContacts cascade failed:", e);
-        }
+        console.log(`projectName changed: "${projectNameFrom}" → "${projectNameTo}" (cascade no longer needed)`);
     }
     // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
     const slackToken = getEnv("SLACK_BOT_TOKEN");

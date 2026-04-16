@@ -162,14 +162,17 @@ const handleRegenerateCalendar = async (castingId: string) => {
       </Column>
 
       <!-- ステータス -->
-      <Column field="status" header="ステータス" style="width: 130px">
+      <Column field="status" header="ステータス" style="width: 150px">
         <template #body="{ data }">
-          <Tag 
-            :value="data.status" 
-            :severity="getStatusSeverity(data.status)"
-            class="status-tag"
-            @click.stop="isAdmin && emit('open-modal', data.id)"
-          />
+          <div class="status-cell">
+            <Tag
+              :value="data.status"
+              :severity="getStatusSeverity(data.status)"
+              class="status-tag"
+              @click.stop="isAdmin && emit('open-modal', data.id)"
+            />
+            <span v-if="data.conditionalMessage" class="condition-chip" @click.stop="emit('open-modal', data.id)" title="クリックで条件を確認">条件あり</span>
+          </div>
         </template>
       </Column>
 
@@ -195,7 +198,6 @@ const handleRegenerateCalendar = async (castingId: string) => {
       <!-- 備考 -->
       <Column field="note" header="備考" style="min-width: 150px">
         <template #body="{ data }">
-          <div v-if="data.conditionalMessage" class="conditional-msg">{{ data.conditionalMessage }}</div>
           <span class="note-text">{{ data.note || '' }}</span>
         </template>
       </Column>
@@ -312,14 +314,22 @@ const handleRegenerateCalendar = async (castingId: string) => {
   color: var(--text-color-secondary);
 }
 
-.conditional-msg {
-  font-size: 0.75rem;
-  color: var(--yellow-700);
-  background: var(--yellow-50);
-  border-radius: 4px;
-  padding: 0.15rem 0.4rem;
-  margin-bottom: 0.2rem;
-  display: inline-block;
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.condition-chip {
+  font-size: 0.6rem;
+  color: var(--p-yellow-800);
+  background: var(--p-yellow-50);
+  border: 1px solid var(--p-yellow-200);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
 }
 
 .actions {

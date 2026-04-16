@@ -77,7 +77,7 @@ export const getShootingDetails = onCall(
                 updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
                 await db
-                    .collection("shootingContacts")
+                    .collection("castings")
                     .doc(shootingContactId)
                     .update(updateData);
             }
@@ -147,7 +147,7 @@ export const syncShootingDetailsToContacts = onCall(
 
             // 2. Get shooting contacts that need updating
             const contactsSnap = await db
-                .collection("shootingContacts")
+                .collection("castings")
                 .where("projectName", "==", data.projectName || "")
                 .get();
 

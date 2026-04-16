@@ -433,26 +433,8 @@ export function useCastings() {
             casting.cost = cost
             casting.updatedAt = Timestamp.now()
 
-            // 撮影香盤DBにも金額を同期（castingId で紐づく shootingContacts を更新）
-            try {
-                const scQuery = query(
-                    collection(db, 'shootingContacts'),
-                    where('castingId', '==', castingId)
-                )
-                const scSnap = await getDocs(scQuery)
-                for (const scDoc of scSnap.docs) {
-                    await updateDoc(scDoc.ref, {
-                        fee: cost,
-                        cost: cost > 0 ? cost.toLocaleString() : '',
-                        updatedAt: Timestamp.now()
-                    })
-                }
-                if (!scSnap.empty) {
-                    console.log(`[CostSync] casting→shootingContacts: ${scSnap.size}件同期`)
-                }
-            } catch (syncErr) {
-                console.warn('Failed to sync cost to shootingContacts:', syncErr)
-            }
+            // DB統合済み: castings.cost = castings.fee なので cascade sync 不要
+            // shootingContacts は castings に統合された
 
             toast.add({
                 severity: 'success',

@@ -1,7 +1,7 @@
 import { ref, computed } from 'vue'
 import {
-    collection, query, where, orderBy, getDocs,
-    addDoc, updateDoc, deleteDoc, doc, Timestamp
+    collection, query, where, getDocs,
+    updateDoc, doc, Timestamp
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
@@ -21,16 +21,55 @@ export interface ProjectGroup {
 }
 
 /**
- * 撮影連絡DB管理composable
- * 外部キャストの決定後フロー管理
+ * 撮影連絡DB管理composable（統合版）
+ *
+ * 旧: shootingContacts コレクションを CRUD
+ * 新: castings コレクション（contactStatus != null）を読み書き
+ *
+ * ShootingContact 型への変換アダプタを含むので、
+ * ShootingContactView 側のコード変更は最小限で済む。
  */
+
 // タイムゾーン安全なローカル日付キー (YYYY-MM-DD)
-// toISOString() は UTC 変換するため JST で日付が1日ズレる
 function toLocalDateKey(d: Date): string {
     const y = d.getFullYear()
     const m = String(d.getMonth() + 1).padStart(2, '0')
     const day = String(d.getDate()).padStart(2, '0')
     return `${y}-${m}-${day}`
+}
+
+/**
+ * Casting ドキュメントを ShootingContact 型に変換するアダプタ
+ * ShootingContactView が期待するインターフェースに合わせる
+ */
+function castingToContact(id: string, data: Record<string, unknown>): ShootingContact {
+    return {
+        id,
+        castingId: id,  // 統合後は自分自身
+        castName: (data.castName as string) || '',
+        castType: (data.castType as '内部' | '外部') || '外部',
+        projectName: (data.projectName as string) || '',
+        accountName: (data.accountName as string) || '',
+        roleName: (data.roleName as string) || '',
+        notionId: (data.projectId as string) || '',
+        shootDate: data.startDate as Timestamp,
+        inTime: (data.inTime as string) || undefined,
+        outTime: (data.outTime as string) || undefined,
+        location: (data.location as string) || undefined,
+        address: (data.address as string) || undefined,
+        fee: (data.fee as number) ?? (data.cost as number) ?? undefined,
+        cost: data.fee ? String(data.fee) : data.cost ? String(data.cost) : undefined,
+        makingUrl: (data.makingUrl as string) || undefined,
+        postDate: (data.postDate as Timestamp) || undefined,
+        mainSub: (data.mainSub as 'メイン' | 'サブ' | 'その他') || 'その他',
+        status: (data.contactStatus as ShootingContactStatus) || '香盤連絡待ち',
+        email: (data.contactEmail as string) || undefined,
+        orderDocumentId: (data.orderDocumentId as string) || undefined,
+        poUuid: (data.poUuid as string) || undefined,
+        slackThreadTs: (data.slackThreadTs as string) || undefined,
+        createdAt: data.createdAt as Timestamp,
+        updatedAt: data.updatedAt as Timestamp,
+    }
 }
 
 export function useShootingContact() {
@@ -40,7 +79,7 @@ export function useShootingContact() {
     const toast = useToast()
 
     /**
-     * 全データを取得
+     * castings コレクションから contactStatus が設定されたものを取得
      */
     async function fetchAll() {
         if (!db) {
@@ -50,13 +89,23 @@ export function useShootingContact() {
         loading.value = true
         try {
             const q = query(
-                collection(db, 'shootingContacts'),
-                orderBy('shootDate', 'desc')
+                collection(db, 'castings'),
+                where('contactStatus', '!=', null)
             )
             const snapshot = await getDocs(q)
             const results: ShootingContact[] = []
             snapshot.forEach((docSnap) => {
-                results.push({ id: docSnap.id, ...docSnap.data() } as ShootingContact)
+                const data = docSnap.data()
+                // deleted / キャンセル / NG は除外
+                if (data.deleted === true) return
+                if (data.status === 'キャンセル' || data.status === 'NG' || data.status === '削除済み') return
+                results.push(castingToContact(docSnap.id, data))
+            })
+            // shootDate 降順
+            results.sort((a, b) => {
+                const at = a.shootDate?.toMillis?.() || 0
+                const bt = b.shootDate?.toMillis?.() || 0
+                return bt - at
             })
             contacts.value = results
         } catch (error) {
@@ -104,7 +153,6 @@ export function useShootingContact() {
     function getDateGrouped(status: ShootingContactStatus, searchQuery?: string): DateGroup[] {
         let filtered = contacts.value.filter(c => c.status === status)
 
-        // フリーキーワード検索（部分一致）
         if (searchQuery) {
             const q = searchQuery.toLowerCase()
             filtered = filtered.filter(c =>
@@ -119,7 +167,6 @@ export function useShootingContact() {
 
         for (const c of filtered) {
             let dateStr = ''
-            // 投稿日タブのみ postDate を使用
             if (status === '投稿日連絡待ち' && c.postDate?.toDate) {
                 dateStr = toLocalDateKey(c.postDate.toDate())
             } else if (c.shootDate?.toDate) {
@@ -135,7 +182,6 @@ export function useShootingContact() {
             projMap.get(key)!.push(c)
         }
 
-        // Sort by date ascending (chronological)
         const sortedDates = [...dateMap.keys()].sort((a, b) => a.localeCompare(b))
 
         return sortedDates.map(dateStr => ({
@@ -158,7 +204,6 @@ export function useShootingContact() {
     function getProjectGrouped(status: ShootingContactStatus, searchQuery?: string): { projectName: string; accountName: string; notionId?: string; contacts: ShootingContact[] }[] {
         let filtered = contacts.value.filter(c => c.status === status)
 
-        // フリーキーワード検索（部分一致）
         if (searchQuery) {
             const q = searchQuery.toLowerCase()
             filtered = filtered.filter(c =>
@@ -179,7 +224,6 @@ export function useShootingContact() {
 
         return [...projMap.entries()].map(([key, contacts]) => {
             const [accountName, projectName] = key.split('__')
-            // Sort contacts by date within project
             contacts.sort((a, b) => {
                 const da = a.shootDate?.toDate?.()?.getTime() || 0
                 const db2 = b.shootDate?.toDate?.()?.getTime() || 0
@@ -195,37 +239,21 @@ export function useShootingContact() {
     }
 
     /**
-     * キャスティングから撮影連絡DBに追加
+     * キャスティングを撮影連絡対象にする（= contactStatus を設定）
+     * 統合版: castings ドキュメントに contactStatus フィールドを追加するだけ
      */
     async function addFromCasting(casting: Casting): Promise<boolean> {
         if (!db) return false
         if (casting.castType !== '外部') return false
 
         try {
-            const existingQuery = query(
-                collection(db, 'shootingContacts'),
-                where('castingId', '==', casting.id)
-            )
-            const existing = await getDocs(existingQuery)
-            if (!existing.empty) return false
+            // 既に contactStatus が設定されている場合はスキップ
+            if ((casting as Record<string, unknown>).contactStatus) return false
 
-            const now = Timestamp.now()
-            await addDoc(collection(db, 'shootingContacts'), {
-                castingId: casting.id,
-                castName: casting.castName,
-                castType: casting.castType,
-                projectName: casting.projectName,
-                accountName: casting.accountName,
-                roleName: casting.roleName,
-                notionId: (casting as unknown as Record<string, unknown>).notionPageId as string || '',
-                shootDate: casting.startDate,
-                mainSub: casting.mainSub || 'その他',
-                fee: casting.cost || 0,
-                cost: casting.cost ? casting.cost.toLocaleString() : '',
-                status: '香盤連絡待ち' as ShootingContactStatus,
-                slackThreadTs: casting.slackThreadTs,
-                createdAt: now,
-                updatedAt: now
+            const castingRef = doc(db, 'castings', casting.id)
+            await updateDoc(castingRef, {
+                contactStatus: '香盤連絡待ち' as ShootingContactStatus,
+                updatedAt: Timestamp.now()
             })
 
             toast.add({ severity: 'success', summary: '撮影連絡DB', detail: `${casting.castName} を追加しました`, life: 2000 })
@@ -239,45 +267,37 @@ export function useShootingContact() {
 
     /**
      * 撮影連絡データを更新
-     * inTime/outTime変更時は紐づくキャスティングDocも更新（カレンダー連動）
+     * 統合版: castings ドキュメントを直接更新
      */
     async function updateContact(contactId: string, data: Partial<ShootingContact>): Promise<boolean> {
         if (!db) return false
         try {
-            const contactRef = doc(db, 'shootingContacts', contactId)
-            await updateDoc(contactRef, { ...data, updatedAt: Timestamp.now() })
+            const castingRef = doc(db, 'castings', contactId)
+
+            // ShootingContact フィールド → castings フィールドのマッピング
+            const updateData: Record<string, unknown> = { updatedAt: Timestamp.now() }
+            if (data.status !== undefined) updateData.contactStatus = data.status
+            if (data.inTime !== undefined) { updateData.inTime = data.inTime; updateData.startTime = data.inTime }
+            if (data.outTime !== undefined) { updateData.outTime = data.outTime; updateData.endTime = data.outTime }
+            if (data.location !== undefined) updateData.location = data.location
+            if (data.address !== undefined) updateData.address = data.address
+            if (data.fee !== undefined) { updateData.fee = data.fee; updateData.cost = data.fee }
+            if (data.cost !== undefined) {
+                const numCost = parseInt(String(data.cost).replace(/,/g, ''), 10) || 0
+                updateData.fee = numCost
+                updateData.cost = numCost
+            }
+            if (data.makingUrl !== undefined) updateData.makingUrl = data.makingUrl
+            if (data.postDate !== undefined) updateData.postDate = data.postDate
+            if (data.email !== undefined) updateData.contactEmail = data.email
+            if (data.orderDocumentId !== undefined) updateData.orderDocumentId = data.orderDocumentId
+            if (data.poUuid !== undefined) updateData.poUuid = data.poUuid
+
+            await updateDoc(castingRef, updateData)
 
             // ローカル更新
             const contact = contacts.value.find(c => c.id === contactId)
             if (contact) Object.assign(contact, data)
-
-            // 時間が変更された場合、紐づくキャスティングDocも更新（カレンダー連動トリガー）
-            if ((data.inTime !== undefined || data.outTime !== undefined) && contact?.castingId) {
-                try {
-                    const castingRef = doc(db, 'castings', contact.castingId)
-                    const timeUpdate: Record<string, unknown> = { updatedAt: Timestamp.now() }
-                    if (data.inTime !== undefined) timeUpdate.startTime = data.inTime
-                    if (data.outTime !== undefined) timeUpdate.endTime = data.outTime
-                    await updateDoc(castingRef, timeUpdate)
-                    console.log(`Synced time to casting ${contact.castingId}: ${data.inTime}〜${data.outTime}`)
-                } catch (err) {
-                    console.warn('Failed to sync time to casting:', err)
-                }
-            }
-
-            // 金額が変更された場合、紐づくキャスティングDocにも同期
-            if ((data.fee !== undefined || data.cost !== undefined) && contact?.castingId) {
-                try {
-                    const castingRef = doc(db, 'castings', contact.castingId)
-                    const costValue = data.fee ?? (data.cost ? parseInt(String(data.cost).replace(/,/g, ''), 10) || 0 : undefined)
-                    if (costValue !== undefined) {
-                        await updateDoc(castingRef, { cost: costValue, updatedAt: Timestamp.now() })
-                        console.log(`[CostSync] shootingContact→casting ${contact.castingId}: ¥${costValue}`)
-                    }
-                } catch (err) {
-                    console.warn('Failed to sync cost to casting:', err)
-                }
-            }
 
             toast.add({ severity: 'success', summary: '更新完了', detail: '撮影連絡情報を更新しました', life: 2000 })
             return true
@@ -304,7 +324,6 @@ export function useShootingContact() {
         const nextStatus = statusOrder[idx + 1]!
         const success = await updateContact(contactId, { status: nextStatus })
         if (success) {
-            // ローカルでもステータス反映
             contact.status = nextStatus
         }
         return success
@@ -332,14 +351,13 @@ export function useShootingContact() {
     }
 
     /**
-     * 香盤DB同期: shootingDetails → IN/OUT/場所
+     * 香盤DB同期: shootingDetails → castings の inTime/outTime/location
      * castName（様付き対応）で直接マッチング
      */
     async function syncSchedule(): Promise<number> {
         if (!db) return 0
         syncing.value = true
         try {
-            // 1. 香盤連絡待ちのcontactsを取得
             const targetContacts = contacts.value.filter(c => c.status === '香盤連絡待ち')
             if (targetContacts.length === 0) {
                 toast.add({ severity: 'info', summary: '同期完了', detail: '香盤連絡待ちのデータがありません', life: 3000 })
@@ -347,7 +365,6 @@ export function useShootingContact() {
                 return 0
             }
 
-            // 2. shootingDetails コレクションから全件取得
             const detailsSnap = await getDocs(collection(db, 'shootingDetails'))
             if (detailsSnap.empty) {
                 toast.add({ severity: 'info', summary: '同期完了', detail: '香盤DBにデータがありません', life: 3000 })
@@ -355,7 +372,6 @@ export function useShootingContact() {
                 return 0
             }
 
-            // 3. castName正規化 + マップ構築
             const normalizeName = (name: string) => name.replace(/[様さんサン]+$/u, '').trim()
 
             const detailsMap = new Map<string, { inTime: string; outTime: string; location: string; address: string }>()
@@ -371,19 +387,12 @@ export function useShootingContact() {
                 }
             })
 
-            console.log('[SYNC] shootingDetails count:', detailsSnap.size, 'unique castNames:', detailsMap.size)
-
-            // 4. マッチング + 更新
             let totalUpdated = 0
             for (const contact of targetContacts) {
                 const normalizedName = normalizeName(contact.castName)
                 const detail = detailsMap.get(normalizedName)
-                if (!detail) {
-                    console.log(`[SYNC] No match for: ${contact.castName} (normalized: ${normalizedName})`)
-                    continue
-                }
+                if (!detail) continue
 
-                // 未入力の項目のみ更新
                 const updateData: Partial<ShootingContact> = {}
                 let hasUpdate = false
 
@@ -393,11 +402,17 @@ export function useShootingContact() {
                 if (detail.address && !contact.address) { updateData.address = detail.address; hasUpdate = true }
 
                 if (hasUpdate) {
-                    const contactRef = doc(db, 'shootingContacts', contact.id)
-                    await updateDoc(contactRef, { ...updateData, updatedAt: Timestamp.now() })
+                    // castings ドキュメントを直接更新
+                    const castingRef = doc(db, 'castings', contact.id)
+                    await updateDoc(castingRef, {
+                        ...(updateData.inTime ? { inTime: updateData.inTime, startTime: updateData.inTime } : {}),
+                        ...(updateData.outTime ? { outTime: updateData.outTime, endTime: updateData.outTime } : {}),
+                        ...(updateData.location ? { location: updateData.location } : {}),
+                        ...(updateData.address ? { address: updateData.address } : {}),
+                        updatedAt: Timestamp.now()
+                    })
                     Object.assign(contact, updateData)
                     totalUpdated++
-                    console.log(`[SYNC] Updated ${contact.castName}: `, updateData)
                 }
             }
 
@@ -418,14 +433,13 @@ export function useShootingContact() {
     }
 
     /**
-     * メイキングURL同期: offshotDrive → makingUrl
+     * メイキングURL同期
      */
     async function syncMaking(): Promise<number> {
         if (!functions) return 0
         syncing.value = true
         try {
             const syncFn = httpsCallable(functions, 'syncDriveLinksToContacts')
-            // Mode 3: sync ALL
             const result = await syncFn({})
             const data = result.data as { updated?: number }
             const updated = data.updated || 0
@@ -447,19 +461,22 @@ export function useShootingContact() {
     }
 
     /**
-     * 一括削除
+     * 撮影連絡対象から外す（= contactStatus を null に）
+     * ドキュメント自体は castings に残る
      */
     async function deleteContacts(ids: string[]): Promise<boolean> {
         try {
             for (const id of ids) {
-                await deleteDoc(doc(db!, 'shootingContacts', id))
+                await updateDoc(doc(db!, 'castings', id), {
+                    contactStatus: null,
+                    updatedAt: Timestamp.now()
+                })
             }
-            // ローカルデータからも削除
             contacts.value = contacts.value.filter(c => !ids.includes(c.id))
             toast.add({
                 severity: 'success',
                 summary: '削除完了',
-                detail: `${ids.length}件のデータを削除しました`,
+                detail: `${ids.length}件のデータを撮影連絡DBから除外しました`,
                 life: 3000
             })
             return true
