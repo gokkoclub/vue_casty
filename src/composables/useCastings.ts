@@ -848,43 +848,71 @@ export function useCastings() {
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
-        // Group by project
-        const projectMap = new Map<string, {
+        // Pass 1: gather all non-special castings per project, track distinct shoot dates and multi-day flag.
+        // 中長編 の判定は「プロジェクト単位」で行う必要がある。
+        // - 日付範囲での複数日オーダー → 単一 casting が isMultiDay で判定可能
+        // - 個別日選択での複数日オーダー → 同じ project に単日 casting が複数でき、各 casting 単体では isMultiDay=false
+        // - POPCORN / 長編 アカウントは日数に関わらず 中長編 扱い
+        type RawGroup = {
             accountName: string
             castings: Casting[]
+            dates: Set<string>
+            hasMultiDay: boolean
             minStart: Date
             maxEnd: Date
-        }>()
+        }
+        const rawGroups = new Map<string, RawGroup>()
 
         castings.value.forEach(casting => {
-            if (!casting.startDate || !casting.endDate) return
-            if (!isMultiDay(casting)) return
+            if (!casting.startDate) return
             if (isSpecialAccount(casting)) return
 
             const startDate = casting.startDate.toDate()
-            const endDate = casting.endDate.toDate()
-
-            // Check month overlap
-            if (endDate < monthStart || startDate > monthEnd) return
-
-            // Check past filter
-            if (!showPast && endDate < today) return
+            const endDate = casting.endDate ? casting.endDate.toDate() : startDate
 
             const key = `${casting.accountName}__${casting.projectName}`
-            if (!projectMap.has(key)) {
-                projectMap.set(key, {
+            let group = rawGroups.get(key)
+            if (!group) {
+                group = {
                     accountName: casting.accountName,
                     castings: [],
+                    dates: new Set<string>(),
+                    hasMultiDay: false,
                     minStart: startDate,
                     maxEnd: endDate
-                })
+                }
+                rawGroups.set(key, group)
             }
-
-            const group = projectMap.get(key)!
             group.castings.push(casting)
             if (startDate < group.minStart) group.minStart = startDate
             if (endDate > group.maxEnd) group.maxEnd = endDate
+            if (isMultiDay(casting)) group.hasMultiDay = true
+
+            // startDate..endDate の各日を distinct date set に追加
+            const d = new Date(startDate)
+            d.setHours(12, 0, 0, 0)
+            const e = new Date(endDate)
+            e.setHours(12, 0, 0, 0)
+            while (d <= e) {
+                group.dates.add(toLocalDateKey(d))
+                d.setDate(d.getDate() + 1)
+            }
         })
+
+        // Pass 2: keep only projects that qualify as 中長編, and that overlap the visible month/past filters.
+        const projectMap = new Map<string, RawGroup>()
+        for (const [key, group] of rawGroups) {
+            const sample = group.castings[0]!
+            const isFeature = group.hasMultiDay
+                || group.dates.size > 1
+                || isFeatureProject(sample)
+            if (!isFeature) continue
+
+            if (group.maxEnd < monthStart || group.minStart > monthEnd) continue
+            if (!showPast && group.maxEnd < today) continue
+
+            projectMap.set(key, group)
+        }
 
         const result: FeatureCastingGroup[] = []
 

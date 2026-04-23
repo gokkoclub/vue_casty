@@ -9,7 +9,6 @@ import { httpsCallable } from 'firebase/functions'
 import { functions } from '@/services/firebase'
 import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
-import { addAttendeeToCalendarEvent } from '@/composables/useGoogleCalendar'
 
 const props = defineProps<{
   castings: Casting[]
@@ -153,25 +152,15 @@ const handleRegenerateCalendar = async (castingId: string) => {
   }
   regeneratingCalendarId.value = castingId
   try {
-    // OAuthトークンを事前取得（attendees追加に必要）— 通常オーダー時と同じ仕組み
-    const { getAccessToken } = useAuth()
-    let accessToken: string | null = null
-    try {
-      accessToken = await getAccessToken()
-    } catch (authErr) {
-      console.warn('[CALENDAR] OAuth token failed, attendees will be skipped:', authErr)
-    }
-
     const fn = httpsCallable(functions, 'regenerateCalendarEvent')
     const res = await fn({ castingId })
-    const data = res?.data as { success?: boolean; eventId?: string; castEmail?: string; message?: string } | undefined
+    const data = res?.data as { success?: boolean; eventId?: string; attendeeStatus?: string; attendeeError?: string; message?: string } | undefined
 
     if (data?.success && data.eventId) {
-      // attendees 追加（通常オーダー時と同じ共通関数を再利用）
-      if (accessToken && data.castEmail) {
-        await addAttendeeToCalendarEvent(data.eventId, data.castEmail, accessToken)
-      }
-      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${data.eventId}${accessToken ? '（招待送信済み）' : ''}`, life: 4000 })
+      const attendeeMsg = data.attendeeStatus === 'ok' ? '（招待送信済み）'
+        : data.attendeeStatus === 'pending' ? '（招待は後追いリトライ予定）'
+        : ''
+      toast.add({ severity: 'success', summary: 'カレンダー作成', detail: `eventId: ${data.eventId}${attendeeMsg}`, life: 4000 })
     } else {
       toast.add({ severity: 'warn', summary: '作成スキップ', detail: data?.message || '不明', life: 4000 })
     }
@@ -181,6 +170,32 @@ const handleRegenerateCalendar = async (castingId: string) => {
     toast.add({ severity: 'error', summary: 'エラー', detail: msg, life: 5000 })
   } finally {
     regeneratingCalendarId.value = null
+  }
+}
+
+const resendingInviteId = ref<string | null>(null)
+const handleResendInvite = async (castingId: string) => {
+  if (!functions) {
+    toast.add({ severity: 'error', summary: 'エラー', detail: 'Firebase Functions 未初期化', life: 3000 })
+    return
+  }
+  resendingInviteId.value = castingId
+  try {
+    const fn = httpsCallable(functions, 'resendCalendarInvite')
+    const res = await fn({ castingId })
+    const data = res?.data as { success?: boolean; skipped?: string } | undefined
+    if (data?.success) {
+      const msg = data.skipped ? `既に招待済み (${data.skipped})` : '招待メール再送しました'
+      toast.add({ severity: 'success', summary: '招待再送', detail: msg, life: 4000 })
+    } else {
+      toast.add({ severity: 'warn', summary: '再送スキップ', detail: '不明', life: 4000 })
+    }
+  } catch (e: unknown) {
+    console.error('resendCalendarInvite failed:', e)
+    const msg = e instanceof Error ? e.message : String(e)
+    toast.add({ severity: 'error', summary: 'エラー', detail: msg, life: 5000 })
+  } finally {
+    resendingInviteId.value = null
   }
 }
 
@@ -481,6 +496,15 @@ const sortLabel = computed(() => {
             :title="regeneratingCalendarId === casting.id ? 'カレンダー作成中...' : 'カレンダーを生成'"
           >
             <i :class="regeneratingCalendarId === casting.id ? 'pi pi-spin pi-spinner' : 'pi pi-calendar-plus'"></i>
+          </button>
+          <button
+            v-if="casting.castType === '内部' && casting.calendarEventId && (casting as unknown as { calendarAttendeePending?: boolean }).calendarAttendeePending && !['NG', 'キャンセル', '削除済み'].includes(casting.status)"
+            class="csl-act-btn warn"
+            :disabled="resendingInviteId === casting.id"
+            @click="handleResendInvite(casting.id)"
+            :title="resendingInviteId === casting.id ? '再送中...' : '招待未達 — 再送'"
+          >
+            <i :class="resendingInviteId === casting.id ? 'pi pi-spin pi-spinner' : 'pi pi-send'"></i>
           </button>
           <button class="csl-act-btn" @click="emit('additional-order', casting)" title="追加オーダー">
             <i class="pi pi-plus"></i>

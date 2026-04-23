@@ -19,6 +19,7 @@ setGlobalOptions({ region: "asia-northeast1" });
 import * as admin from "firebase-admin";
 import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrderMessage, buildSpecialOrderMessage, buildStatusMessage, buildOrderUpdateMessage, sendDmToUser, buildCastOrderDmBlocks } from "./slack";
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
+import { addAttendeeViaGas } from "./gasCalendar";
 import { syncCastToNotion, createNotionCastPage } from "./notion";
 
 // Re-export new Cloud Functions
@@ -26,6 +27,14 @@ export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDet
 export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
 export { handleSlackInteraction } from "./slackInteraction";
+
+// Automation (香盤SS submissions → 各種ディスパッチ)
+export { dispatchShootingSubmission } from "./automation/dispatchShootingSubmission";
+export { onShootingEventCreate } from "./automation/onShootingEventCreate";
+export { sendSlackOffshot } from "./automation/sendSlackOffshot";
+export { retrySlackThreadLink } from "./automation/retrySlackThreadLink";
+import { scheduleSlackThreadLinkRetry } from "./automation/retrySlackThreadLink";
+export { retryCalendarAttendee } from "./automation/retryCalendarAttendee";
 
 // ─────────────────────────────────────────────
 // createNotionCast: Vue から新規キャストを Notion に登録
@@ -323,6 +332,8 @@ export const notifyOrderCreated = onCall(
             "SLACK_MENTION_GROUP_ID",
             "GOOGLE_SERVICE_ACCOUNT_KEY",
             "GOOGLE_CALENDAR_ID",
+            "GAS_INVITE_WEBHOOK_URL",
+            "GAS_INVITE_SHARED_SECRET",
         ],
     },
     async (request) => {
@@ -745,7 +756,9 @@ export const notifyOrderCreated = onCall(
         // ── カレンダーイベント作成（内部キャストのみ）──
         const serviceAccountKey = getEnv("GOOGLE_SERVICE_ACCOUNT_KEY");
         const calendarId = getEnv("GOOGLE_CALENDAR_ID");
-        const calendarResults: Record<string, { eventId: string; castEmail: string }> = {};
+        const calendarResults: Record<string, { eventId: string; castEmail: string; attendeePending: boolean; attendeeError?: string }> = {};
+        const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+        const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
         const calendarDebug: Record<string, unknown> = {
             hasServiceAccountKey: !!serviceAccountKey,
             serviceAccountKeyLength: serviceAccountKey?.length || 0,
@@ -772,7 +785,10 @@ export const notifyOrderCreated = onCall(
 
         if (serviceAccountKey && calendarId) {
             try {
-                const internalItems = (data.items as Array<{
+                // data.castingIds はフロントで items × itemDates の順に生成されているため、
+                // ここでも同じ順序で回して global index から対応する castings ドキュメントIDを引く。
+                // （内部キャストのみカレンダーを作るが、index は全アイテム分進めないと castingIds と揃わない）
+                const itemsAll = (data.items || []) as Array<{
                     castName: string;
                     castId: string;
                     projectName: string;
@@ -781,33 +797,46 @@ export const notifyOrderCreated = onCall(
                     rank?: string;
                     mainSub?: string;
                     selectedDates?: string[];
-                }>).filter(
-                    (item) => item.castType === "内部"
-                );
+                }>;
+                const castingIdsForCalendar: string[] = data.castingIds || [];
 
-                console.log("Calendar: internalItems count:", internalItems.length);
+                const internalCount = itemsAll.filter(it => it.castType === "内部").length;
+                console.log("Calendar: internalItems count:", internalCount);
                 console.log("Calendar: dateRanges:", data.dateRanges);
-                calendarDebug.internalItemsCount = internalItems.length;
+                calendarDebug.internalItemsCount = internalCount;
 
-                for (const item of internalItems) {
-                    // キャストのメールアドレスを取得（カレンダー招待用）
-                    let castEmail = "";
-                    try {
-                        const castDoc = await db.collection("casts").doc(item.castId).get();
-                        if (castDoc.exists) {
-                            castEmail = castDoc.data()?.email || "";
-                        }
-                        console.log(`Calendar: castEmail for ${item.castName}:`, castEmail || "(none)");
-                    } catch (e) {
-                        console.warn(`Failed to get email for cast ${item.castId}:`, e);
-                    }
+                // castId -> email キャッシュ
+                const emailCache = new Map<string, string>();
 
-                    // per-item selectedDates があればそれを使用、なければ全日程
+                let calGlobalIdx = 0;
+                for (const item of itemsAll) {
                     const itemDates = item.selectedDates && item.selectedDates.length > 0
                         ? item.selectedDates
                         : (data.dateRanges || []);
 
+                    // 内部キャスト以外も globalIdx は進める必要がある
+                    if (item.castType !== "内部") {
+                        calGlobalIdx += itemDates.length;
+                        continue;
+                    }
+
+                    // キャストのメールアドレス（per-cast キャッシュ）
+                    let castEmail = emailCache.get(item.castId) || "";
+                    if (!emailCache.has(item.castId)) {
+                        try {
+                            const castDoc = await db.collection("casts").doc(item.castId).get();
+                            if (castDoc.exists) castEmail = castDoc.data()?.email || "";
+                        } catch (e) {
+                            console.warn(`Failed to get email for cast ${item.castId}:`, e);
+                        }
+                        emailCache.set(item.castId, castEmail);
+                        console.log(`Calendar: castEmail for ${item.castName}:`, castEmail || "(none)");
+                    }
+
                     for (const dateRange of itemDates) {
+                        const castingDocId = castingIdsForCalendar[calGlobalIdx] || "";
+                        calGlobalIdx++;
+
                         const [startDate] = dateRange.includes("~")
                             ? dateRange.split("~").map((s: string) => s.trim())
                             : [dateRange];
@@ -815,7 +844,7 @@ export const notifyOrderCreated = onCall(
                         // Calendar API requires YYYY-MM-DD format
                         const rawDate = startDate || dateRange;
                         const calendarDate = rawDate.replace(/\//g, "-");
-                        console.log("Calendar date:", rawDate, "→", calendarDate);
+                        console.log("Calendar date:", rawDate, "→", calendarDate, "castingId:", castingDocId);
 
                         try {
                             const eventId = await createCalendarEvent({
@@ -827,7 +856,7 @@ export const notifyOrderCreated = onCall(
                                 roleName: item.roleName || "出演",
                                 rank: item.rank || "",
                                 mainSub: item.mainSub || "その他",
-                                castingId: item.castId || "",
+                                castingId: castingDocId,
                                 castEmail: castEmail || undefined,
                                 status: "仮キャスティング",
                                 startDate: calendarDate,
@@ -836,9 +865,35 @@ export const notifyOrderCreated = onCall(
                                 isProvisional: true,
                             });
 
-                            if (eventId) {
-                                const key = `${item.castName}_${startDate || dateRange}`;
-                                calendarResults[key] = { eventId, castEmail: castEmail || "" };
+                            if (eventId && castingDocId) {
+                                // GAS 経由で attendee 追加（フロント OAuth PATCH の置き換え）
+                                let attendeePending = false;
+                                let attendeeError: string | undefined;
+                                if (castEmail) {
+                                    const gasRes = await addAttendeeViaGas({
+                                        webhookUrl: gasWebhookUrl,
+                                        secret: gasSharedSecret,
+                                        calendarId,
+                                        eventId,
+                                        attendeeEmail: castEmail,
+                                    });
+                                    if (!gasRes.ok) {
+                                        attendeePending = true;
+                                        attendeeError = gasRes.error || "unknown";
+                                        console.warn(`[GAS invite] failed for ${item.castName} (${castEmail}): ${attendeeError}`);
+                                    } else {
+                                        console.log(`[GAS invite] ok for ${item.castName} (${castEmail})${gasRes.skipped ? " skipped=" + gasRes.skipped : ""}`);
+                                    }
+                                } else {
+                                    console.log(`[GAS invite] skipped: no castEmail for ${item.castName}`);
+                                }
+
+                                calendarResults[castingDocId] = {
+                                    eventId,
+                                    castEmail: castEmail || "",
+                                    attendeePending,
+                                    ...(attendeeError ? { attendeeError } : {}),
+                                };
                             }
                         } catch (eventError) {
                             const errMsg = eventError instanceof Error ? eventError.message : String(eventError);
@@ -872,15 +927,11 @@ export const notifyOrderCreated = onCall(
                 console.warn("[Writeback] threadTs is empty — slack fields will not be written, but calendar/etc. will still be saved");
             }
             const batch = db.batch();
-            const items = data.items as Array<{
-                castName: string;
-                castType: string;
-                selectedDates?: string[];
-            }>;
             let updateCount = 0;
 
             for (let i = 0; i < castingIds.length; i++) {
-                const updateData: Record<string, string> = {};
+                const cid = castingIds[i]!;
+                const updateData: Record<string, unknown> = {};
 
                 // Slack 情報は ts が取れた時のみ書き戻す
                 if (threadTs) {
@@ -889,26 +940,22 @@ export const notifyOrderCreated = onCall(
                     updateData.slackChannel = postChannel;
                 }
 
-                // カレンダーイベントIDをマッチして書き戻す（ts の有無に依存しない）
-                const item = items[i];
-                if (item && item.castType === "内部") {
-                    const itemDates = item.selectedDates && item.selectedDates.length > 0
-                        ? item.selectedDates
-                        : (data.dateRanges || []);
-                    for (const dateRange of itemDates) {
-                        const startDate = dateRange.includes("~")
-                            ? dateRange.split("~")[0]!.trim()
-                            : dateRange;
-                        const key = `${item.castName}_${startDate}`;
-                        if (calendarResults[key]) {
-                            updateData.calendarEventId = calendarResults[key]!.eventId;
-                            break;
+                // calendarResults は castingId で直接引ける（内部キャストの分だけ存在）
+                if (calendarResults[cid]) {
+                    const r = calendarResults[cid]!;
+                    updateData.calendarEventId = r.eventId;
+                    if (r.attendeePending) {
+                        // スケジューラで後追いリトライさせる
+                        updateData.calendarAttendeePending = true;
+                        updateData.calendarAttendeeRetryCount = 0;
+                        if (r.attendeeError) {
+                            updateData.calendarAttendeeLastError = r.attendeeError;
                         }
                     }
                 }
 
                 if (Object.keys(updateData).length > 0) {
-                    batch.update(db.collection("castings").doc(castingIds[i]!), updateData);
+                    batch.update(db.collection("castings").doc(cid), updateData);
                     updateCount++;
                 }
             }
@@ -916,6 +963,17 @@ export const notifyOrderCreated = onCall(
             if (updateCount > 0) {
                 await batch.commit();
                 console.log(`[Writeback] Updated ${updateCount} castings (slackTs=${threadTs ? "yes" : "NO"})`);
+            }
+
+            // ── slackThreadTs が空のまま残った場合、3分後に自動再同期を予約 ──
+            // Slack 投稿は成功していてもフロント→CF のパスで ts/permalink が取れないケースがある。
+            // 3分待ってから conversations.history を引き直して復旧を試みる。
+            if (!threadTs) {
+                try {
+                    await scheduleSlackThreadLinkRetry(castingIds, 180);
+                } catch (schedErr) {
+                    console.error("[notifyOrderCreated] Failed to schedule slack thread retry:", schedErr);
+                }
             }
         }
 
@@ -1235,6 +1293,8 @@ export const regenerateCalendarEvent = onCall(
         secrets: [
             "GOOGLE_SERVICE_ACCOUNT_KEY",
             "GOOGLE_CALENDAR_ID",
+            "GAS_INVITE_WEBHOOK_URL",
+            "GAS_INVITE_SHARED_SECRET",
         ],
     },
     async (request) => {
@@ -1337,7 +1397,7 @@ export const regenerateCalendarEvent = onCall(
                 roleName: casting.roleName || "出演",
                 rank: String(casting.rank || ""),
                 mainSub: casting.mainSub || "その他",
-                castingId: casting.castId || "",
+                castingId: data.castingId,
                 castEmail: castEmail || undefined,
                 status,
                 startDate: startDateStr,
@@ -1355,12 +1415,113 @@ export const regenerateCalendarEvent = onCall(
             throw new HttpsError("internal", "Calendar creation returned no eventId");
         }
 
-        await castingDoc.ref.update({ calendarEventId: eventId });
-        console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId}`);
+        // attendee 追加は GAS 経由で CF 内完結させる。失敗時は pending フラグで後追いリトライ。
+        const update: Record<string, unknown> = { calendarEventId: eventId };
+        let attendeeStatus: "ok" | "pending" | "skipped" = "skipped";
+        let attendeeError: string | undefined;
+        if (castEmail) {
+            const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+            const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
+            const gasRes = await addAttendeeViaGas({
+                webhookUrl: gasWebhookUrl,
+                secret: gasSharedSecret,
+                calendarId,
+                eventId,
+                attendeeEmail: castEmail,
+            });
+            if (gasRes.ok) {
+                attendeeStatus = "ok";
+                update.calendarAttendeePending = admin.firestore.FieldValue.delete();
+                update.calendarAttendeeLastError = admin.firestore.FieldValue.delete();
+                update.calendarAttendeeRetryCount = admin.firestore.FieldValue.delete();
+            } else {
+                attendeeStatus = "pending";
+                attendeeError = gasRes.error || "unknown";
+                update.calendarAttendeePending = true;
+                update.calendarAttendeeRetryCount = 0;
+                update.calendarAttendeeLastError = attendeeError;
+            }
+        }
 
-        // フロント側で attendees 追加 (Domain-Wide Delegation 不要、ユーザーOAuth経由) するため
-        // castEmail を返す。通常オーダー時の calendarResults と同じ仕組みで再利用される。
-        return { success: true, eventId, castEmail };
+        await castingDoc.ref.update(update);
+        console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId} attendee=${attendeeStatus}`);
+
+        return {
+            success: true,
+            eventId,
+            attendeeStatus,
+            ...(attendeeError ? { attendeeError } : {}),
+        };
+    }
+);
+
+// ──────────────────────────────────────
+// 2c-2. 既存イベントへの招待再送 (eventId あり前提)
+// ──────────────────────────────────────
+// 「イベントはあるけど招待が飛んでない」状態の救済。regenerate と違い eventId は作り直さない。
+export const resendCalendarInvite = onCall(
+    {
+        maxInstances: 10,
+        secrets: [
+            "GOOGLE_CALENDAR_ID",
+            "GAS_INVITE_WEBHOOK_URL",
+            "GAS_INVITE_SHARED_SECRET",
+        ],
+    },
+    async (request) => {
+        const data = request.data;
+        if (!data || !data.castingId) {
+            throw new HttpsError("invalid-argument", "castingId is required");
+        }
+
+        const db = admin.firestore();
+        const castingDoc = await db.collection("castings").doc(data.castingId).get();
+        if (!castingDoc.exists) {
+            throw new HttpsError("not-found", "Casting not found");
+        }
+        const casting = castingDoc.data()!;
+
+        if (!casting.calendarEventId) {
+            throw new HttpsError("failed-precondition", "calendarEventId が無いので先に再生成してください");
+        }
+
+        let castEmail = "";
+        if (casting.castId) {
+            const castDoc = await db.collection("casts").doc(casting.castId).get();
+            if (castDoc.exists) castEmail = castDoc.data()?.email || "";
+        }
+        if (!castEmail) {
+            throw new HttpsError("failed-precondition", "cast の email が登録されていません");
+        }
+
+        const calendarId = getEnv("GOOGLE_CALENDAR_ID");
+        const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+        const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
+
+        const gasRes = await addAttendeeViaGas({
+            webhookUrl: gasWebhookUrl,
+            secret: gasSharedSecret,
+            calendarId,
+            eventId: casting.calendarEventId,
+            attendeeEmail: castEmail,
+        });
+
+        if (gasRes.ok) {
+            await castingDoc.ref.update({
+                calendarAttendeePending: admin.firestore.FieldValue.delete(),
+                calendarAttendeeLastError: admin.firestore.FieldValue.delete(),
+                calendarAttendeeRetryCount: admin.firestore.FieldValue.delete(),
+            });
+            return { success: true, skipped: gasRes.skipped };
+        } else {
+            const prev = (casting.calendarAttendeeRetryCount as number | undefined) || 0;
+            await castingDoc.ref.update({
+                calendarAttendeePending: true,
+                calendarAttendeeRetryCount: prev + 1,
+                calendarAttendeeLastError: gasRes.error || "unknown",
+            });
+            throw new HttpsError("internal", `GAS invite failed: ${gasRes.error}`);
+        }
     }
 );
 

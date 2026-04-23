@@ -11,7 +11,6 @@ import { useLoading } from '@/composables/useLoading'
 import { useShootingContact } from '@/composables/useShootingContact'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useToast } from 'primevue/usetoast'
-import { addAttendeeToCalendarEvent } from './useGoogleCalendar'
 
 export interface OrderItem {
     castId: string
@@ -620,20 +619,8 @@ export function useOrders() {
                     const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
                     console.log('[DEBUG CF CALL] mode:', payload.mode)
 
-                    // ── カレンダー招待用OAuthトークンを先に取得 ──
-                    // ブラウザはユーザー操作に直結しないポップアップをブロックするため、
-                    // CF呼び出し前（クリック直後）にポップアップでトークンを取得しておく
-                    const hasInternalCasts = payload.items.some(i => i.castType === '内部')
-                    let calendarAccessToken: string | null = null
-                    if (hasInternalCasts) {
-                        try {
-                            const { getAccessToken } = useAuth()
-                            calendarAccessToken = await getAccessToken()
-                            console.log('[CALENDAR] OAuth token obtained (pre-CF)')
-                        } catch (authErr) {
-                            console.warn('[CALENDAR] OAuth token failed (pre-CF), attendees will be skipped:', authErr)
-                        }
-                    }
+                    // カレンダー招待は CF → GAS で完結するため、フロント側の OAuth トークン取得は廃止
+                    // (失敗時は casting doc の calendarAttendeePending フラグで後追いリトライ)
 
                     // PDF file → base64 (CFに渡してSlack SDKでアップロード)
                     let pdfBase64: string | undefined
@@ -685,20 +672,7 @@ export function useOrders() {
                     if (result.data && typeof result.data === 'object' && 'ts' in result.data) {
                         slackResult = result.data as { ts: string; permalink: string }
                         console.log('[CF SUCCESS] Cloud Function returned:', JSON.stringify(result.data))
-
-                        // ── カレンダー招待: 事前取得したOAuthトークンでattendees追加 ──
-                        const cfData = result.data as Record<string, unknown>
-                        const calendarResults = cfData.calendarResults as Record<string, { eventId: string; castEmail: string }> | undefined
-                        const accessToken = calendarAccessToken // 事前取得済み
-
-                        if (calendarResults && accessToken) {
-                            for (const [, { eventId, castEmail }] of Object.entries(calendarResults)) {
-                                if (!eventId || !castEmail) continue
-                                await addAttendeeToCalendarEvent(eventId, castEmail, accessToken)
-                            }
-                        } else if (calendarResults && Object.keys(calendarResults).length > 0 && !accessToken) {
-                            console.warn('[CALENDAR] Attendee addition skipped: no OAuth token available')
-                        }
+                        // カレンダー招待は CF 内で GAS 経由で完結済み（旧: フロント OAuth PATCH 経路）
                     } else {
                         console.warn('[CF WARNING] Cloud Function returned unexpected data:', result.data)
                     }
