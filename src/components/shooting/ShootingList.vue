@@ -39,8 +39,8 @@ const formatShootDate = (date: any) => {
         @click="emit('select', shooting)"
       >
         <div class="item-main">
-          <span class="item-title">{{ shooting.title }}</span>
-          <span class="item-team">{{ shooting.team }}</span>
+          <span class="item-title">{{ shooting.team || shooting.title }}</span>
+          <span class="item-team">{{ shooting.director || shooting.title }}</span>
         </div>
         <span class="item-date">{{ formatShootDate(shooting.shootDate) }}</span>
       </div>

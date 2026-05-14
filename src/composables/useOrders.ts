@@ -494,16 +494,8 @@ export function useOrders() {
                         roleName: item.roleName,
                         rank: item.rank,
                         mode: payload.mode || 'shooting',
-                        // ステータス初期値:
-                        // 撮影モード: 外部=オーダー待ち, 内部=仮キャスティング
-                        // 外部案件/社内イベント: ORDER_INTEGRATION_GUIDE 準拠
-                        status: (() => {
-                            if (payload.mode === 'external' || payload.mode === 'internal') {
-                                return item.castType === '外部' ? '決定' : '仮キャスティング'
-                            }
-                            // shooting mode
-                            return item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング'
-                        })(),
+                        // ステータス初期値: 外部=オーダー待ち / 内部=仮キャスティング（mode 不問）
+                        status: item.castType === '外部' ? 'オーダー待ち' : '仮キャスティング',
                         note: item.note + (intimacy === 'あり' ? '\n【インティマシーシーンあり】' : ''),
                         mainSub: item.mainSub,
                         cost: 0,

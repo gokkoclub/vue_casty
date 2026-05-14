@@ -155,10 +155,14 @@ export const retrySlackThreadLink = onRequest(
                         .map(d => d.data().slackThreadTs as string | undefined)
                         .filter((ts): ts is string => !!ts)
                 );
+                // 探索キー: (a) この project の対象 castingId のいずれか（最優先・厳密）
+                //          (b) Notion URL フラグメント（フォールバック・古いメッセージ用）
+                const targetCastingIds = casts.map(t => t.ref.id);
                 const notionUrlFrag = `notion.so/${String(projectId).replace(/-/g, "")}`;
 
                 let foundTs = "";
                 let foundPermalink = "";
+                let foundMode: "history-castingId" | "history-notionUrl" | "" = "";
                 let cursor: string | undefined;
                 for (let page = 0; page < 3 && !foundTs; page++) {
                     const histRes = await fetch("https://slack.com/api/conversations.history", {
@@ -172,9 +176,18 @@ export const retrySlackThreadLink = onRequest(
                         response_metadata?: { next_cursor?: string };
                     };
                     if (!hd.ok || !hd.messages) break;
-                    const found = hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
+                    // 優先: 本文に対象 castingId のいずれかを含むメッセージ
+                    const foundByCastingId = hd.messages.find(m => {
+                        if (!m.text || blacklistedTs.has(m.ts)) return false;
+                        return targetCastingIds.some(id => m.text!.includes(id));
+                    });
+                    const foundByNotionUrl = !foundByCastingId
+                        ? hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts))
+                        : undefined;
+                    const found = foundByCastingId || foundByNotionUrl;
                     if (found) {
                         foundTs = found.ts;
+                        foundMode = foundByCastingId ? "history-castingId" : "history-notionUrl";
                         try {
                             const plRes = await fetch("https://slack.com/api/chat.getPermalink", {
                                 method: "POST",
@@ -198,7 +211,7 @@ export const retrySlackThreadLink = onRequest(
                             slackPermalink: foundPermalink || "",
                             slackChannel: searchChannel,
                         });
-                        results.push({ castingId: t.ref.id, status: "linked", mode: "history" });
+                        results.push({ castingId: t.ref.id, status: "linked", mode: foundMode || "history" });
                     }
                     await batch.commit();
                 } else {
