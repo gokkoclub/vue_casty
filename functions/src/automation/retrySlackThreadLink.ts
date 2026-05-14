@@ -104,6 +104,36 @@ export const retrySlackThreadLink = onRequest(
             const results: Array<{ castingId: string; status: string; mode?: string }> = [];
 
             for (const [projectId, casts] of byProject) {
+                // 0) 撮影モード: shooting.slackThreadTs を最優先
+                const isShootingMode = casts.some(t => t.data()?.mode === "shooting" || !t.data()?.mode);
+                if (isShootingMode) {
+                    try {
+                        const shootSnap = await db.collection("shootings")
+                            .where("notionPageId", "==", projectId)
+                            .get();
+                        const activeShoot = shootSnap.docs.find(d => {
+                            const sd = d.data();
+                            return sd.deleted !== true && sd.slackThreadTs;
+                        });
+                        if (activeShoot) {
+                            const sd = activeShoot.data();
+                            const batch = db.batch();
+                            for (const t of casts) {
+                                batch.update(t.ref, {
+                                    slackThreadTs: sd.slackThreadTs,
+                                    slackPermalink: sd.slackPermalink || "",
+                                    slackChannel: sd.slackChannel || defaultChannel,
+                                });
+                                results.push({ castingId: t.ref.id, status: "linked", mode: "shooting" });
+                            }
+                            await batch.commit();
+                            continue;
+                        }
+                    } catch (e) {
+                        console.warn("[retrySlackThreadLink] shooting lookup failed:", e);
+                    }
+                }
+
                 // 1) 兄弟借用
                 const sibSnap = await db.collection("castings")
                     .where("projectId", "==", projectId)

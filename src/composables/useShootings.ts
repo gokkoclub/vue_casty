@@ -52,6 +52,8 @@ export function useShootings() {
             shootings.value = snapshot.docs
                 .map(doc => {
                     const data = doc.data()
+                    // Notion 側で削除されたものは表示しない
+                    if (data.deleted === true) return null
                     // shootDateの型に応じて処理
                     let shootDateStr = ''
                     let shootDateTs: Timestamp

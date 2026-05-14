@@ -25,7 +25,7 @@ import { syncCastToNotion, createNotionCastPage } from "./notion";
 // Re-export new Cloud Functions
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
-export { syncScheduleFromSam, scheduledSyncFromSam } from "./syncFromSam";
+export { syncScheduleFromSam, scheduledSyncFromSam, consolidateShootingDuplicates } from "./syncFromSam";
 export { handleSlackInteraction } from "./slackInteraction";
 
 // Automation (香盤SS submissions → 各種ディスパッチ)
@@ -387,9 +387,32 @@ export const notifyOrderCreated = onCall(
                 }
             }
         } else if (data.projectId && !data.forceNewThread) {
-            // Firestore から slackThreadTs を探す
+            // 撮影モードは shooting.slackThreadTs を最優先（撮影単位の正）
+            if (orderMode === "shooting") {
+                try {
+                    const shootSnap = await db.collection("shootings")
+                        .where("notionPageId", "==", data.projectId)
+                        .get();
+                    const active = shootSnap.docs.find(d => {
+                        const sd = d.data();
+                        return sd.deleted !== true && sd.slackThreadTs;
+                    });
+                    if (active) {
+                        const sd = active.data();
+                        existingThreadTs = sd.slackThreadTs as string;
+                        existingPermalink = (sd.slackPermalink as string) || "";
+                        resolvedThreadChannel = (sd.slackChannel as string) || "";
+                        console.log("[Additional order] using shooting.slackThreadTs:", existingThreadTs);
+                    }
+                } catch (e) {
+                    console.warn("[Additional order] shooting lookup failed:", e);
+                }
+            }
+
+            // shooting で見つからなかった場合のみ casting 検索（fallback）
             // ⚠️ キャンセル/NG/削除済みのキャスティングは別スレッドへ誤投稿の原因になるため除外
             //    （旧スレッドが残ったまま再キャスティングするケースで、新オーダーが旧スレッドに飛ぶバグ対策）
+            if (!existingThreadTs) {
             const existingSnap = await db.collection("castings")
                 .where("projectId", "==", data.projectId)
                 .get();
@@ -497,6 +520,7 @@ export const notifyOrderCreated = onCall(
                     console.error("[Recovery] Slack channel search failed:", recoverErr);
                 }
             }
+            } // end if (!existingThreadTs)
         }
 
         const isAdditional = !!existingThreadTs;
@@ -965,6 +989,33 @@ export const notifyOrderCreated = onCall(
                 console.log(`[Writeback] Updated ${updateCount} castings (slackTs=${threadTs ? "yes" : "NO"})`);
             }
 
+            // ── shooting への dual write（撮影モードのみ）──
+            // 同 NotionID = 1 shooting に集約済みのため、shooting.slackThreadTs を「正」とする運用に寄せる。
+            // 過去データ互換のため casting 側にも書く（dual write）。読み取り側は shooting 優先で見る。
+            if (threadTs && orderMode === "shooting" && data.projectId) {
+                try {
+                    const shootSnap = await db.collection("shootings")
+                        .where("notionPageId", "==", data.projectId)
+                        .get();
+                    const activeShoots = shootSnap.docs.filter(d => d.data().deleted !== true);
+                    if (activeShoots.length > 0) {
+                        const shBatch = db.batch();
+                        for (const sdoc of activeShoots) {
+                            shBatch.update(sdoc.ref, {
+                                slackThreadTs: threadTs,
+                                slackPermalink: permalink,
+                                slackChannel: postChannel,
+                                slackUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                            });
+                        }
+                        await shBatch.commit();
+                        console.log(`[Writeback] shooting slackThreadTs updated: ${activeShoots.length}`);
+                    }
+                } catch (e) {
+                    console.warn("[Writeback] shooting slackThreadTs update failed:", e);
+                }
+            }
+
             // ── slackThreadTs が空のまま残った場合、3分後に自動再同期を予約 ──
             // Slack 投稿は成功していてもフロント→CF のパスで ts/permalink が取れないケースがある。
             // 3分待ってから conversations.history を引き直して復旧を試みる。
@@ -1358,10 +1409,11 @@ export const regenerateCalendarEvent = onCall(
             try {
                 const shootSnap = await db.collection("shootings")
                     .where("notionPageId", "==", casting.projectId)
-                    .limit(1)
                     .get();
-                if (!shootSnap.empty) {
-                    const sd = shootSnap.docs[0]!.data();
+                // deleted を除外（同 NotionID = 1 件前提だが安全のため filter）
+                const activeShoot = shootSnap.docs.find(d => d.data().deleted !== true);
+                if (activeShoot) {
+                    const sd = activeShoot.data();
                     startTime = startTime || sd.startTime || undefined;
                     endTime = endTime || sd.endTime || undefined;
                 }

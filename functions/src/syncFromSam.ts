@@ -116,7 +116,7 @@ function mapEntriesToShootingFields(entries: NotionScheduleEntry[]): {
 // ─────────────────────────────────────────────
 // 同期メインロジック
 // ─────────────────────────────────────────────
-async function performSync(): Promise<{ synced: number; added: number; updated: number; errors: number; dateChanges: number }> {
+async function performSync(): Promise<{ synced: number; added: number; updated: number; errors: number; dateChanges: number; deletedMarked: number; restored: number }> {
     const samDb = getSamFirestore();
     const castyDb = admin.firestore(); // デフォルト (gokko-casty)
 
@@ -125,7 +125,7 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
 
     if (snapshot.empty) {
         console.log("[syncFromSam] notionSchedule is empty");
-        return { synced: 0, added: 0, updated: 0, errors: 0, dateChanges: 0 };
+        return { synced: 0, added: 0, updated: 0, errors: 0, dateChanges: 0, deletedMarked: 0, restored: 0 };
     }
 
     console.log(`[syncFromSam] Found ${snapshot.size} notionSchedule docs`);
@@ -135,6 +135,7 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
     let updated = 0;
     let errors = 0;
     let dateChanges = 0;
+    let restored = 0;
 
     // バッチ書き込み（500件制限対応）
     const batchDocs: Array<{
@@ -142,6 +143,9 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
         data: Record<string, unknown>;
         isNew: boolean;
     }> = [];
+
+    // Notion 側に現存する notionPageId 集合（削除検知に使用）
+    const incomingNotionIds = new Set<string>();
 
     for (const doc of snapshot.docs) {
         try {
@@ -152,7 +156,9 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
                 continue;
             }
 
-            // ドキュメントID: notionPageId をサニタイズ
+            incomingNotionIds.add(raw.notionPageId);
+
+            // ドキュメントID: notionPageId をサニタイズ。同 NotionID = 同ドキュメントに統一
             const baseDocId = raw.notionPageId
                 .replace(/[/.]/g, "_")
                 .replace(/^__/, "xx")
@@ -171,36 +177,6 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
                 .doc(baseDocId)
                 .get();
 
-            let docId = baseDocId;
-
-            if (existingDoc.exists) {
-                const existingData = existingDoc.data();
-                const existingDate = existingData?.shootDate || "";
-
-                if (existingDate && incomingDate && existingDate !== incomingDate) {
-                    // 日付が変更された → 旧ドキュメントにマーク + 新しいIDで作成
-                    console.log(
-                        `[syncFromSam] Date changed for ${raw.notionPageId}: ${existingDate} → ${incomingDate}`
-                    );
-
-                    // 旧ドキュメントに日付変更フラグを記録
-                    await castyDb
-                        .collection("shootings")
-                        .doc(baseDocId)
-                        .update({
-                            dateChanged: true,
-                            dateChangedFrom: existingDate,
-                            dateChangedTo: incomingDate,
-                            dateChangedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        });
-
-                    // 新しいドキュメントID: notionPageId_YYYYMMDD
-                    const dateSuffix = incomingDate.replace(/-/g, "");
-                    docId = `${baseDocId}_${dateSuffix}`;
-                    dateChanges++;
-                }
-            }
-
             // shootings ドキュメント形式に変換
             const shootingData: Record<string, unknown> = {
                 title: raw.title || "",
@@ -210,12 +186,34 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
                 notionUrl: "https://www.notion.so/" + raw.notionPageId.replace(/-/g, ""),
                 ...staffFields,
                 syncSource: "gokko-sam",
+                deleted: false, // Notion に存在する間は常に false（復活も自動反映）
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             };
 
-            // 新規 or 更新を判定（dateChange で新IDになった場合も新規扱い）
-            const isNew = !existingDoc.exists || docId !== baseDocId;
-            batchDocs.push({ docId, data: shootingData, isNew });
+            if (existingDoc.exists) {
+                const existingData = existingDoc.data();
+                const existingDate = existingData?.shootDate || "";
+
+                if (existingDate && incomingDate && existingDate !== incomingDate) {
+                    // 日付変更を検知 → 既存ドキュメントを上書きし、履歴を残す
+                    console.log(
+                        `[syncFromSam] Date changed for ${raw.notionPageId}: ${existingDate} → ${incomingDate} (in-place update)`
+                    );
+                    shootingData.dateHistory = admin.firestore.FieldValue.arrayUnion({
+                        from: existingDate,
+                        to: incomingDate,
+                        changedAt: new Date(),
+                    });
+                    dateChanges++;
+                }
+
+                if (existingData?.deleted === true) {
+                    restored++;
+                }
+            }
+
+            const isNew = !existingDoc.exists;
+            batchDocs.push({ docId: baseDocId, data: shootingData, isNew });
         } catch (e) {
             console.error(`[syncFromSam] Error processing doc ${doc.id}:`, e);
             errors++;
@@ -241,10 +239,48 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
         console.log(`[syncFromSam] Batch committed: ${chunk.length} docs (total: ${synced})`);
     }
 
+    // ── 削除検知 ──
+    // gokko-sam 由来の shootings のうち、Notion 側に notionPageId が無いものを deleted:true に
+    let deletedMarked = 0;
+    try {
+        const samSnap = await castyDb
+            .collection("shootings")
+            .where("syncSource", "==", "gokko-sam")
+            .get();
+
+        const toMark: FirebaseFirestore.DocumentReference[] = [];
+        for (const s of samSnap.docs) {
+            const sd = s.data();
+            const pageId = sd.notionPageId as string | undefined;
+            if (!pageId) continue;
+            if (!incomingNotionIds.has(pageId) && sd.deleted !== true) {
+                toMark.push(s.ref);
+            }
+        }
+
+        for (let i = 0; i < toMark.length; i += 500) {
+            const chunk = toMark.slice(i, i + 500);
+            const batch = castyDb.batch();
+            for (const ref of chunk) {
+                batch.update(ref, {
+                    deleted: true,
+                    deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            await batch.commit();
+            deletedMarked += chunk.length;
+        }
+        if (deletedMarked > 0) {
+            console.log(`[syncFromSam] Marked ${deletedMarked} shootings as deleted (Notion removed)`);
+        }
+    } catch (e) {
+        console.error("[syncFromSam] Deletion detection failed:", e);
+    }
+
     console.log(
-        `[syncFromSam] Sync complete: ${synced} synced (${added} added, ${updated} updated), ${dateChanges} date changes, ${errors} errors`
+        `[syncFromSam] Sync complete: ${synced} synced (${added} added, ${updated} updated), ${dateChanges} date changes, ${deletedMarked} marked deleted, ${restored} restored, ${errors} errors`
     );
-    return { synced, added, updated, errors, dateChanges };
+    return { synced, added, updated, errors, dateChanges, deletedMarked, restored };
 }
 
 // ─────────────────────────────────────────────
@@ -288,5 +324,94 @@ export const scheduledSyncFromSam = onSchedule(
         } catch (e) {
             console.error("[scheduledSyncFromSam] Error:", e);
         }
+    }
+);
+
+/**
+ * 既存の `<baseDocId>_<YYYYMMDD>` 形式の重複 shooting ドキュメントを
+ * baseDocId 側に集約するための 1 回限りの管理者 onCall。
+ *
+ * - サフィックス付きドキュメントの最新 shootDate を baseDocId 側にコピー
+ * - サフィックス付きドキュメントは deleted:true でマーク
+ * - dryRun=true なら集約対象を返すだけで書き込みしない
+ */
+export const consolidateShootingDuplicates = onCall(
+    { maxInstances: 1 },
+    async (req) => {
+        const dryRun = req.data?.dryRun !== false; // デフォルト dryRun
+        const db = admin.firestore();
+
+        const snap = await db.collection("shootings").get();
+        const suffixRegex = /^(.+)_(\d{8})$/;
+
+        // baseDocId -> [{docId, shootDate, exists, ref}]
+        const groups = new Map<string, Array<{ docId: string; shootDate: string; ref: FirebaseFirestore.DocumentReference }>>();
+        const baseExists = new Set<string>();
+
+        for (const doc of snap.docs) {
+            const id = doc.id;
+            const data = doc.data();
+            const shootDate = (data.shootDate as string) || "";
+
+            const m = id.match(suffixRegex);
+            if (m && m[1]) {
+                const base = m[1];
+                const arr = groups.get(base) || [];
+                arr.push({ docId: id, shootDate, ref: doc.ref });
+                groups.set(base, arr);
+            } else {
+                baseExists.add(id);
+            }
+        }
+
+        const actions: Array<{ base: string; latestSuffixDoc: string; latestDate: string; baseDocExists: boolean; markDeleted: string[] }> = [];
+
+        for (const [base, suffixDocs] of groups.entries()) {
+            // 日付の新しい順
+            suffixDocs.sort((a, b) => b.shootDate.localeCompare(a.shootDate));
+            const latest = suffixDocs[0]!;
+            actions.push({
+                base,
+                latestSuffixDoc: latest.docId,
+                latestDate: latest.shootDate,
+                baseDocExists: baseExists.has(base),
+                markDeleted: suffixDocs.map(d => d.docId),
+            });
+        }
+
+        if (dryRun) {
+            return { dryRun: true, groups: actions.length, actions };
+        }
+
+        // 適用
+        let merged = 0;
+        let markedDeleted = 0;
+        for (const a of actions) {
+            const baseRef = db.collection("shootings").doc(a.base);
+            // 最新日付を baseDoc 側に書き込む（baseDoc が無い場合は最新サフィックスのデータを丸ごとコピー）
+            const latestSuffixSnap = await db.collection("shootings").doc(a.latestSuffixDoc).get();
+            const latestData = latestSuffixSnap.data() || {};
+
+            await baseRef.set({
+                ...latestData,
+                shootDate: a.latestDate,
+                deleted: false,
+                consolidatedFrom: a.latestSuffixDoc,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            merged++;
+
+            // サフィックス付きを全て deleted:true でマーク
+            for (const suffixId of a.markDeleted) {
+                await db.collection("shootings").doc(suffixId).update({
+                    deleted: true,
+                    deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    consolidatedInto: a.base,
+                });
+                markedDeleted++;
+            }
+        }
+
+        return { dryRun: false, merged, markedDeleted, actions };
     }
 );
