@@ -1126,7 +1126,6 @@ export function useCastings() {
 
         // 2. ローカル状態更新
         for (const casting of updatedCastings) {
-            const previousStatus = casting.status
             casting.status = newStatus
             casting.updatedAt = Timestamp.now()
 

@@ -54,7 +54,7 @@ export function useCastMaster() {
 
         try {
             // 既に isDecided なら skip
-            if ((casting as Record<string, unknown>).isDecided === true) {
+            if ((casting as unknown as Record<string, unknown>).isDecided === true) {
                 console.log('Already decided:', casting.id)
                 return false
             }

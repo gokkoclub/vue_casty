@@ -300,7 +300,7 @@ async function searchByProject() {
         castingsSnap.forEach(docSnap => {
             const d = docSnap.data() as Casting
             // 削除済みはスキップ
-            if (d.status === '削除済み') return
+            if ((d.status as string) === '削除済み') return
             // 部分一致: 作品名、キャスト名、アカウント名で検索
             const match = (d.projectName || '').toLowerCase().includes(keyword) ||
                           (d.castName || '').toLowerCase().includes(keyword) ||
@@ -342,7 +342,6 @@ async function updateShootDate(item: typeof dateSearchResults.value[0]) {
 
         const newDate = new Date(y, d.getMonth(), d.getDate(), 12, 0, 0) // 正午に設定
         const newTs = Timestamp.fromDate(newDate)
-        const colName = item.collection
 
         // DB統合済み: 全て castings を更新
         // Cloud Function経由で更新 → Googleカレンダー + Slack通知も自動連動

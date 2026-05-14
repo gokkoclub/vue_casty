@@ -115,7 +115,7 @@ const orderSummary = computed(() => {
   }
 
   return {
-    mode: store.context.mode,
+    mode: store.context.mode || '',
     accountName: store.displayAccountName,
     projectName: store.displayProjectName,
     dateRanges: store.context.dateRanges,

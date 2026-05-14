@@ -248,7 +248,7 @@ export function useShootingContact() {
 
         try {
             // 既に contactStatus が設定されている場合はスキップ
-            if ((casting as Record<string, unknown>).contactStatus) return false
+            if ((casting as unknown as Record<string, unknown>).contactStatus) return false
 
             const castingRef = doc(db, 'castings', casting.id)
             await updateDoc(castingRef, {
