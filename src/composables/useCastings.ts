@@ -712,9 +712,20 @@ export function useCastings() {
         tab: TabType
         showPast: boolean
         orderWaitOnly: boolean
+        shootingTeamByProjectId?: Map<string, string>
     }): DateGroup[] {
-        const { month, tab, showPast, orderWaitOnly } = options
+        const { month, tab, showPast, orderWaitOnly, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
+        // accountName を「最新の shooting.team」優先で解決。空なら casting.accountName, それも空なら "未設定"
+        const resolveAccount = (c: Casting): string => {
+            if (shootingTeamByProjectId && c.projectId) {
+                const team = shootingTeamByProjectId.get(c.projectId)
+                if (team) return team
+            }
+            if (c.accountName) return c.accountName
+            return '未設定'
+        }
 
         // Calculate month range
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
@@ -753,10 +764,11 @@ export function useCastings() {
                 }
                 const accountMap = dateMap.get(dateKey)!
 
-                if (!accountMap.has(casting.accountName)) {
-                    accountMap.set(casting.accountName, new Map())
+                const accountKey = resolveAccount(casting)
+                if (!accountMap.has(accountKey)) {
+                    accountMap.set(accountKey, new Map())
                 }
-                const projectMap = accountMap.get(casting.accountName)!
+                const projectMap = accountMap.get(accountKey)!
 
                 if (!projectMap.has(casting.projectName)) {
                     projectMap.set(casting.projectName, [])
@@ -839,9 +851,19 @@ export function useCastings() {
         month: Date
         showPast: boolean
         orderWaitOnly: boolean
+        shootingTeamByProjectId?: Map<string, string>
     }): FeatureCastingGroup[] {
-        const { month, showPast, orderWaitOnly } = options
+        const { month, showPast, orderWaitOnly, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
+        const resolveAccount = (c: Casting): string => {
+            if (shootingTeamByProjectId && c.projectId) {
+                const team = shootingTeamByProjectId.get(c.projectId)
+                if (team) return team
+            }
+            if (c.accountName) return c.accountName
+            return '未設定'
+        }
 
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
         const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
@@ -870,11 +892,12 @@ export function useCastings() {
             const startDate = casting.startDate.toDate()
             const endDate = casting.endDate ? casting.endDate.toDate() : startDate
 
-            const key = `${casting.accountName}__${casting.projectName}`
+            const acct = resolveAccount(casting)
+            const key = `${acct}__${casting.projectName}`
             let group = rawGroups.get(key)
             if (!group) {
                 group = {
-                    accountName: casting.accountName,
+                    accountName: acct,
                     castings: [],
                     dates: new Set<string>(),
                     hasMultiDay: false,
@@ -967,9 +990,19 @@ export function useCastings() {
         tab: TabType
         showPast: boolean
         orderWaitOnly: boolean
+        shootingTeamByProjectId?: Map<string, string>
     }): ProjectViewGroup[] {
-        const { month, tab, showPast, orderWaitOnly } = options
+        const { month, tab, showPast, orderWaitOnly, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
+
+        const resolveAccount = (c: Casting): string => {
+            if (shootingTeamByProjectId && c.projectId) {
+                const team = shootingTeamByProjectId.get(c.projectId)
+                if (team) return team
+            }
+            if (c.accountName) return c.accountName
+            return '未設定'
+        }
 
         const monthStart = new Date(month.getFullYear(), month.getMonth(), 1)
         const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0, 23, 59, 59, 999)
@@ -996,11 +1029,12 @@ export function useCastings() {
             if (!showPast && startDate < today) return
 
             const dateKey = toLocalDateKey(startDate)
-            const projectKey = `${casting.accountName}__${casting.projectName}`
+            const acct = resolveAccount(casting)
+            const projectKey = `${acct}__${casting.projectName}`
 
             if (!projectMap.has(projectKey)) {
                 projectMap.set(projectKey, {
-                    accountName: casting.accountName,
+                    accountName: acct,
                     castingsByDate: new Map()
                 })
             }

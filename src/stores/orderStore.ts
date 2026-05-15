@@ -37,15 +37,14 @@ export const useOrderStore = defineStore('order', () => {
 
     const displayProjectName = computed(() => {
         if (context.value.mode === 'shooting' && context.value.shootingData) {
-            // 案件名は Notion の team（作品名）を優先。title は監督名が入りがちなので fallback のみ
-            return context.value.shootingData.team || context.value.shootingData.title
+            return context.value.shootingData.title
         }
         return manualMeta.value.projectName
     })
 
     const displayAccountName = computed(() => {
         if (context.value.mode === 'shooting' && context.value.shootingData) {
-            return context.value.shootingData.director || context.value.shootingData.title
+            return context.value.shootingData.team || context.value.shootingData.director
         }
         return manualMeta.value.accountName
     })
@@ -56,7 +55,7 @@ export const useOrderStore = defineStore('order', () => {
 
         // Initialize projects based on mode
         if (newContext.mode === 'shooting' && newContext.shootingData) {
-            initializeForShooting(newContext.shootingData.team || newContext.shootingData.title)
+            initializeForShooting(newContext.shootingData.title)
         } else if (newContext.mode === 'external' || newContext.mode === 'internal') {
             initializeForManual()
         }
@@ -233,7 +232,7 @@ export const useOrderStore = defineStore('order', () => {
         projects.value = []
         // Re-init empty state
         if (isShootingMode.value && context.value.shootingData) {
-            initializeForShooting(context.value.shootingData.team || context.value.shootingData.title)
+            initializeForShooting(context.value.shootingData.title)
         } else {
             initializeForManual()
         }

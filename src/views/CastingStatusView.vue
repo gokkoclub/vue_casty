@@ -8,7 +8,8 @@ import TabPanel from 'primevue/tabpanel'
 import Checkbox from 'primevue/checkbox'
 import { useToast } from 'primevue/usetoast'
 import { httpsCallable } from 'firebase/functions'
-import { functions } from '@/services/firebase'
+import { functions, db } from '@/services/firebase'
+import { collection, getDocs } from 'firebase/firestore'
 import { useCastings } from '@/composables/useCastings'
 import { useBulkSelection } from '@/composables/useBulkSelection'
 import { useLoading } from '@/composables/useLoading'
@@ -59,6 +60,27 @@ const showPast = ref(false)
 const orderWaitOnly = ref(false)
 const viewMode = ref<'date' | 'project'>('date')
 
+// Notion 同期由来の shooting.team を projectId（=notionPageId） で引けるマップ。
+// キャスティング状況の最上位グループ見出しに使う。
+const shootingTeamByProjectId = ref<Map<string, string>>(new Map())
+
+async function loadShootingTeams() {
+  if (!db) return
+  try {
+    const snap = await getDocs(collection(db, 'shootings'))
+    const map = new Map<string, string>()
+    snap.forEach(doc => {
+      const d = doc.data() as { notionPageId?: string; team?: string; deleted?: boolean }
+      if (d.deleted === true) return
+      if (!d.notionPageId || !d.team) return
+      map.set(d.notionPageId, d.team)
+    })
+    shootingTeamByProjectId.value = map
+  } catch (e) {
+    console.error('Failed to load shooting team map:', e)
+  }
+}
+
 const showStatusModal = ref(false)
 const showOrderWaitEmail = ref(false)
 const selectedCasting = ref<Casting | null>(null)
@@ -73,7 +95,8 @@ const hierarchicalData = computed(() => {
     month: currentMonth.value,
     tab: currentTab.value,
     showPast: showPast.value,
-    orderWaitOnly: orderWaitOnly.value
+    orderWaitOnly: orderWaitOnly.value,
+    shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
 
@@ -82,7 +105,8 @@ const featureData = computed(() => {
   return getFeatureGroupedCastings({
     month: currentMonth.value,
     showPast: showPast.value,
-    orderWaitOnly: orderWaitOnly.value
+    orderWaitOnly: orderWaitOnly.value,
+    shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
 
@@ -92,12 +116,14 @@ const projectData = computed(() => {
     month: currentMonth.value,
     tab: currentTab.value,
     showPast: showPast.value,
-    orderWaitOnly: orderWaitOnly.value
+    orderWaitOnly: orderWaitOnly.value,
+    shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
 
 onMounted(() => {
   fetchCastings()
+  loadShootingTeams()
 })
 
 const prevMonth = () => {
