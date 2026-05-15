@@ -415,3 +415,74 @@ export const consolidateShootingDuplicates = onCall(
         return { dryRun: false, merged, markedDeleted, actions };
     }
 );
+
+/**
+ * 既存 casting の projectName を shooting.team で一括上書きするバックフィル onCall。
+ *
+ * 既にオーダー済みの casting.projectName には、オーダー時点の値（Notion Title = 監督名のことが多い）が
+ * コピー保存されている。表示時に「team（作品名）」で出るよう、shooting.team を正として書き戻す。
+ *
+ * 入力: { dryRun?: boolean (default true), accountFilter?: string }
+ * 出力: dryRun=true → { count, updates[:100], totalCount }
+ *       dryRun=false → { applied, totalCount }
+ */
+export const backfillCastingProjectName = onCall(
+    { maxInstances: 1 },
+    async (req) => {
+        const dryRun = req.data?.dryRun !== false;
+        const accountFilter = (req.data?.accountFilter as string | undefined) || undefined;
+        const db = admin.firestore();
+
+        // shootings: notionPageId → team
+        const shootSnap = await db.collection("shootings").get();
+        const teamByNotionId = new Map<string, string>();
+        for (const s of shootSnap.docs) {
+            const d = s.data();
+            if (d.deleted === true) continue;
+            const npid = d.notionPageId as string | undefined;
+            const team = (d.team as string | undefined) || "";
+            if (!npid || !team) continue;
+            teamByNotionId.set(npid, team);
+        }
+
+        let q: FirebaseFirestore.Query = db.collection("castings");
+        if (accountFilter) q = q.where("accountName", "==", accountFilter);
+        const castingSnap = await q.get();
+
+        const updates: Array<{ id: string; from: string; to: string }> = [];
+        for (const c of castingSnap.docs) {
+            const cd = c.data();
+            const pid = cd.projectId as string | undefined;
+            if (!pid) continue;
+            const team = teamByNotionId.get(pid);
+            if (!team) continue;
+            const current = (cd.projectName as string) || "";
+            if (current === team) continue;
+            updates.push({ id: c.id, from: current, to: team });
+        }
+
+        if (dryRun) {
+            return {
+                dryRun: true,
+                totalCount: updates.length,
+                preview: updates.slice(0, 100),
+            };
+        }
+
+        let applied = 0;
+        for (let i = 0; i < updates.length; i += 500) {
+            const chunk = updates.slice(i, i + 500);
+            const batch = db.batch();
+            for (const u of chunk) {
+                batch.update(db.collection("castings").doc(u.id), {
+                    projectName: u.to,
+                    projectNameBackfilledFrom: u.from,
+                    projectNameBackfilledAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+            }
+            await batch.commit();
+            applied += chunk.length;
+        }
+        return { dryRun: false, applied, totalCount: updates.length };
+    }
+);
