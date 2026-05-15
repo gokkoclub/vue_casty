@@ -724,6 +724,8 @@ export function useCastings() {
                 if (team) return team
             }
             if (c.accountName) return c.accountName
+            if (c.mode === 'external') return '外部案件'
+            if (c.mode === 'internal') return '社内イベント'
             return '未設定'
         }
 
@@ -862,6 +864,8 @@ export function useCastings() {
                 if (team) return team
             }
             if (c.accountName) return c.accountName
+            if (c.mode === 'external') return '外部案件'
+            if (c.mode === 'internal') return '社内イベント'
             return '未設定'
         }
 
@@ -1001,6 +1005,8 @@ export function useCastings() {
                 if (team) return team
             }
             if (c.accountName) return c.accountName
+            if (c.mode === 'external') return '外部案件'
+            if (c.mode === 'internal') return '社内イベント'
             return '未設定'
         }
 

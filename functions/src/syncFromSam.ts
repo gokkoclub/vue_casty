@@ -171,6 +171,14 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
 
             const incomingDate = raw.date || ""; // "2026-03-10" 形式
 
+            // title の先頭が "YYYY-MM-DD_" 形式の日付プレフィックスなら除去
+            // （古い同期/手入力で混入した分の正規化）
+            let cleanTitle = raw.title || "";
+            const datePrefixMatch = cleanTitle.match(/^\d{4}-\d{2}-\d{2}_(.+)$/);
+            if (datePrefixMatch && datePrefixMatch[1]) {
+                cleanTitle = datePrefixMatch[1];
+            }
+
             // 既存ドキュメントをチェックして日付変更を検知
             const existingDoc = await castyDb
                 .collection("shootings")
@@ -179,7 +187,7 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
 
             // shootings ドキュメント形式に変換
             const shootingData: Record<string, unknown> = {
-                title: raw.title || "",
+                title: cleanTitle,
                 shootDate: incomingDate,
                 team: raw.team || "",
                 notionPageId: raw.notionPageId,
