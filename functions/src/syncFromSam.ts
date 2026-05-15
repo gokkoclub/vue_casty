@@ -251,13 +251,14 @@ async function performSync(): Promise<{ synced: number; added: number; updated: 
     // gokko-sam 由来の shootings のうち、Notion 側に notionPageId が無いものを deleted:true に
     let deletedMarked = 0;
     try {
-        const samSnap = await castyDb
-            .collection("shootings")
-            .where("syncSource", "==", "gokko-sam")
-            .get();
+        // notionPageId を持つ shooting は全て Notion 同期由来とみなす。
+        // syncSource フィルタを掛けると古い同期で syncSource=undefined のドキュメントを取りこぼし、
+        // 件数差が解消されないため、ここでは notionPageId の有無で判定する。
+        // 手動作成の shooting は notionPageId を持たないので影響なし。
+        const allShootSnap = await castyDb.collection("shootings").get();
 
         const toMark: FirebaseFirestore.DocumentReference[] = [];
-        for (const s of samSnap.docs) {
+        for (const s of allShootSnap.docs) {
             const sd = s.data();
             const pageId = sd.notionPageId as string | undefined;
             if (!pageId) continue;
