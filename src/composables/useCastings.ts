@@ -712,17 +712,21 @@ export function useCastings() {
         tab: TabType
         showPast: boolean
         orderWaitOnly: boolean
+        hideNg?: boolean
         shootingTeamByProjectId?: Map<string, string>
     }): DateGroup[] {
-        const { month, tab, showPast, orderWaitOnly, shootingTeamByProjectId } = options
+        const { month, tab, showPast, orderWaitOnly, hideNg, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
 
         // accountName を「最新の shooting.team」優先で解決。空なら casting.accountName, それも空なら "未設定"
         const resolveAccount = (c: Casting): string => {
-            if (shootingTeamByProjectId && c.projectId) {
-                const team = shootingTeamByProjectId.get(c.projectId)
-                if (team) return team
+            // 撮影モード (projectId あり) は shooting.team が「正」。
+            // team が無い場合 casting.accountName には監督名が焼き込まれている古いデータがあるため信用しない。
+            if (c.projectId) {
+                const team = shootingTeamByProjectId?.get(c.projectId)
+                return team || '未設定'
             }
+            // external/internal モードは projectId が無いので accountName を使う
             if (c.accountName) return c.accountName
             if (c.mode === 'external') return '外部案件'
             if (c.mode === 'internal') return '社内イベント'
@@ -743,6 +747,9 @@ export function useCastings() {
 
             // Tab filtering
             if (!matchesTab(casting, tab)) return
+
+            // NG 非表示
+            if (hideNg && casting.status === 'NG') return
 
             const startDate = casting.startDate.toDate()
             const endDate = casting.endDate.toDate()
@@ -853,16 +860,20 @@ export function useCastings() {
         month: Date
         showPast: boolean
         orderWaitOnly: boolean
+        hideNg?: boolean
         shootingTeamByProjectId?: Map<string, string>
     }): FeatureCastingGroup[] {
-        const { month, showPast, orderWaitOnly, shootingTeamByProjectId } = options
+        const { month, showPast, orderWaitOnly, hideNg, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
 
         const resolveAccount = (c: Casting): string => {
-            if (shootingTeamByProjectId && c.projectId) {
-                const team = shootingTeamByProjectId.get(c.projectId)
-                if (team) return team
+            // 撮影モード (projectId あり) は shooting.team が「正」。
+            // team が無い場合 casting.accountName には監督名が焼き込まれている古いデータがあるため信用しない。
+            if (c.projectId) {
+                const team = shootingTeamByProjectId?.get(c.projectId)
+                return team || '未設定'
             }
+            // external/internal モードは projectId が無いので accountName を使う
             if (c.accountName) return c.accountName
             if (c.mode === 'external') return '外部案件'
             if (c.mode === 'internal') return '社内イベント'
@@ -892,6 +903,7 @@ export function useCastings() {
         castings.value.forEach(casting => {
             if (!casting.startDate) return
             if (isSpecialAccount(casting)) return
+            if (hideNg && casting.status === 'NG') return
 
             const startDate = casting.startDate.toDate()
             const endDate = casting.endDate ? casting.endDate.toDate() : startDate
@@ -994,16 +1006,20 @@ export function useCastings() {
         tab: TabType
         showPast: boolean
         orderWaitOnly: boolean
+        hideNg?: boolean
         shootingTeamByProjectId?: Map<string, string>
     }): ProjectViewGroup[] {
-        const { month, tab, showPast, orderWaitOnly, shootingTeamByProjectId } = options
+        const { month, tab, showPast, orderWaitOnly, hideNg, shootingTeamByProjectId } = options
         const ORDER_WAIT_STATUSES = ['オーダー待ち', 'オーダー待ち（仮キャスティング）']
 
         const resolveAccount = (c: Casting): string => {
-            if (shootingTeamByProjectId && c.projectId) {
-                const team = shootingTeamByProjectId.get(c.projectId)
-                if (team) return team
+            // 撮影モード (projectId あり) は shooting.team が「正」。
+            // team が無い場合 casting.accountName には監督名が焼き込まれている古いデータがあるため信用しない。
+            if (c.projectId) {
+                const team = shootingTeamByProjectId?.get(c.projectId)
+                return team || '未設定'
             }
+            // external/internal モードは projectId が無いので accountName を使う
             if (c.accountName) return c.accountName
             if (c.mode === 'external') return '外部案件'
             if (c.mode === 'internal') return '社内イベント'
@@ -1024,6 +1040,7 @@ export function useCastings() {
         castings.value.forEach(casting => {
             if (!casting.startDate || !casting.endDate) return
             if (!matchesTab(casting, tab)) return
+            if (hideNg && casting.status === 'NG') return
 
             const startDate = casting.startDate.toDate()
             startDate.setHours(0, 0, 0, 0)

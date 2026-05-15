@@ -58,6 +58,7 @@ const currentTab = computed<TabType>(() => TAB_MAP[activeTab.value] || 'all')
 
 const showPast = ref(false)
 const orderWaitOnly = ref(false)
+const hideNg = ref(false)
 const viewMode = ref<'date' | 'project'>('date')
 
 // Notion 同期由来の shooting.team を projectId（=notionPageId） で引けるマップ。
@@ -96,6 +97,7 @@ const hierarchicalData = computed(() => {
     tab: currentTab.value,
     showPast: showPast.value,
     orderWaitOnly: orderWaitOnly.value,
+    hideNg: hideNg.value,
     shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
@@ -106,6 +108,7 @@ const featureData = computed(() => {
     month: currentMonth.value,
     showPast: showPast.value,
     orderWaitOnly: orderWaitOnly.value,
+    hideNg: hideNg.value,
     shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
@@ -117,6 +120,7 @@ const projectData = computed(() => {
     tab: currentTab.value,
     showPast: showPast.value,
     orderWaitOnly: orderWaitOnly.value,
+    hideNg: hideNg.value,
     shootingTeamByProjectId: shootingTeamByProjectId.value
   })
 })
@@ -535,6 +539,10 @@ const countCastings = (dateGroup: any) => {
           <label class="filter-check">
             <Checkbox v-model="orderWaitOnly" inputId="ow" binary />
             <span>オーダー待ち</span>
+          </label>
+          <label class="filter-check">
+            <Checkbox v-model="hideNg" inputId="hng" binary />
+            <span>NG非表示</span>
           </label>
           <label class="filter-check">
             <Checkbox v-model="showPast" inputId="sp" binary />
