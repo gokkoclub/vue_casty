@@ -11,6 +11,7 @@ const emit = defineEmits<{
   (e: 'selectAll'): void
   (e: 'clearSelection'): void
   (e: 'regenerateCalendar'): void
+  (e: 'reassignThread'): void
 }>()
 </script>
 
@@ -43,6 +44,14 @@ const emit = defineEmits<{
         :disabled="selectedCount === 0"
         @click="emit('regenerateCalendar')"
         v-tooltip.bottom="'選択した内部キャストのカレンダーを生成（calendarEventIdが空のものだけ）'"
+      />
+      <Button
+        label="スレッド差し替え"
+        icon="pi pi-link"
+        severity="secondary"
+        :disabled="selectedCount === 0"
+        @click="emit('reassignThread')"
+        v-tooltip.bottom="'選択した casting の Slack スレッド紐付けを別スレッドに変更'"
       />
       <Button
         label="全選択"

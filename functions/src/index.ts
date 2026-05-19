@@ -26,6 +26,7 @@ import { syncCastToNotion, createNotionCastPage } from "./notion";
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, scheduledSyncFromSam, consolidateShootingDuplicates, backfillCastingProjectName } from "./syncFromSam";
+export { reassignCastingThread } from "./reassignCastingThread";
 export { handleSlackInteraction } from "./slackInteraction";
 
 // Automation (香盤SS submissions → 各種ディスパッチ)

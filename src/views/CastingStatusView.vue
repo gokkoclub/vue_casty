@@ -20,6 +20,7 @@ import StatusChangeModal from '@/components/status/StatusChangeModal.vue'
 import OrderWaitEmailModal from '@/components/status/OrderWaitEmailModal.vue'
 import BulkActionBar from '@/components/status/BulkActionBar.vue'
 import BulkStatusModal from '@/components/status/BulkStatusModal.vue'
+import ThreadReassignModal from '@/components/status/ThreadReassignModal.vue'
 import SummaryModal from '@/components/common/SummaryModal.vue'
 import type { Casting, CastingStatus } from '@/types'
 
@@ -318,6 +319,28 @@ const handleBulkUpdateStatus = () => {
   showBulkStatusModal.value = true
 }
 
+// スレッド差し替え
+const showReassignThread = ref(false)
+const reassignTargetCastings = ref<Casting[]>([])
+
+const handleBulkReassignThread = () => {
+  const ids = getSelectedIds()
+  if (ids.length === 0) return
+  const targets: Casting[] = []
+  for (const id of ids) {
+    const c = getCastingById(id)
+    if (c) targets.push(c)
+  }
+  reassignTargetCastings.value = targets
+  showReassignThread.value = true
+}
+
+const handleReassignDone = async () => {
+  clearSelection()
+  toggleBulkMode()
+  await fetchCastings()
+}
+
 const executeBulkStatusUpdate = async (newStatus: CastingStatus) => {
   await withLoading('一括ステータス更新中...', async () => {
     const ids = getSelectedIds()
@@ -481,6 +504,13 @@ const countCastings = (dateGroup: any) => {
       @select-all="handleSelectAll"
       @clear-selection="clearSelection"
       @regenerate-calendar="handleBulkRegenerateCalendar"
+      @reassign-thread="handleBulkReassignThread"
+    />
+
+    <ThreadReassignModal
+      v-model:visible="showReassignThread"
+      :castings="reassignTargetCastings"
+      @done="handleReassignDone"
     />
 
     <!-- Controls Bar -->
