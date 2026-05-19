@@ -16,7 +16,8 @@ export const reassignCastingThread = onCall(
         region: "asia-northeast1",
         secrets: ["SLACK_BOT_TOKEN"],
         maxInstances: 5,
-        cors: true,
+        memory: "512MiB",
+        timeoutSeconds: 120,
     },
     async (request) => {
         const data = request.data as {
