@@ -69,7 +69,8 @@ async function loadAppearanceData() {
         const endTs = endD ? new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59, 999).getTime() : null
         snap.forEach(d => {
             const data = d.data() as Casting & { isDecided?: boolean; deleted?: boolean; createdAt?: Timestamp; updatedAt?: Timestamp }
-            if (data.isDecided !== true) return
+            // 「決定済み」を出演実績の定義とする（外部案件・社内イベントも含めるため status==='決定' で判定）
+            if (data.status !== '決定') return
             if (data.deleted === true) return
             const sd = data.startDate?.toDate?.()?.getTime?.() || data.endDate?.toDate?.()?.getTime?.() || 0
             if (startTs !== null && sd && sd < startTs) return
@@ -1112,8 +1113,8 @@ function setAllNewDate(date: Date | null) {
                     <div class="appearance-help">
                         <i class="pi pi-info-circle"></i>
                         <span>
-                            決定済みキャスティング（isDecided=true）を集計。各キャストの内部 / 外部出演回数と作品一覧。
-                            期間未指定で全期間。
+                            ステータスが「決定」のキャスティングを集計（撮影 / 外部案件 / 社内イベント全て対象）。
+                            各キャストの内部 / 外部出演回数と作品一覧。期間未指定で全期間。
                         </span>
                     </div>
 
