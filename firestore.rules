@@ -52,5 +52,10 @@ service cloud.firestore {
     match /offshotDrive/{docId} {
       allow read, write: if request.auth != null;
     }
+
+    // staffMentions: 認証済みユーザーは読み書き可能（管理画面のみ操作）
+    match /staffMentions/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }
