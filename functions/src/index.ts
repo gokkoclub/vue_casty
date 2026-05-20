@@ -25,7 +25,8 @@ import { syncCastToNotion, createNotionCastPage } from "./notion";
 // Re-export new Cloud Functions
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
 export { syncDriveLinksToContacts } from "./driveSync";
-export { syncScheduleFromSam, scheduledSyncFromSam, consolidateShootingDuplicates, backfillCastingProjectName } from "./syncFromSam";
+// Sam 経由の同期は Notion 直接同期 (syncFromNotion) に移行済み。手動 onCall と移行ユーティリティは残し、cron は廃止。
+export { syncScheduleFromSam, consolidateShootingDuplicates, backfillCastingProjectName } from "./syncFromSam";
 export { reassignCastingThread } from "./reassignCastingThread";
 export { syncFromNotion, scheduledSyncFromNotion } from "./syncFromNotion";
 export { handleSlackInteraction } from "./slackInteraction";

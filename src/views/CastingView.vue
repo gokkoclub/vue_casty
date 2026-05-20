@@ -383,19 +383,20 @@ const handleOpenCart = () => {
 }
 
 
-// 撮影日手動同期（Cloud Function: syncScheduleFromSam）
+// 撮影日手動同期（Cloud Function: syncFromNotion - Notion 直接同期）
 const handleSyncShootings = async () => {
   syncingShootings.value = true
-  toast.add({ severity: 'info', summary: '同期中...', detail: 'gokko-sam から撮影データを取得しています', life: 3000 })
+  toast.add({ severity: 'info', summary: '同期中...', detail: 'Notion から撮影データを取得しています', life: 3000 })
   try {
-    const syncFn = httpsCallable(functions!, 'syncScheduleFromSam')
+    const syncFn = httpsCallable(functions!, 'syncFromNotion')
     const result = await syncFn({})
-    const data = result.data as { success?: boolean; synced?: number; added?: number; updated?: number; errors?: number; dateChanges?: number }
+    const data = result.data as { success?: boolean; synced?: number; added?: number; updated?: number; errors?: number; deletedMarked?: number; restored?: number }
     if (data.success) {
       const parts = []
       if (data.added) parts.push(`追加 ${data.added}件`)
       if (data.updated) parts.push(`更新 ${data.updated}件`)
-      if (data.dateChanges) parts.push(`日付変更 ${data.dateChanges}件`)
+      if (data.deletedMarked) parts.push(`削除 ${data.deletedMarked}件`)
+      if (data.restored) parts.push(`復活 ${data.restored}件`)
       if (parts.length === 0) parts.push('変更なし')
       toast.add({ severity: 'success', summary: '同期完了', detail: parts.join(' / '), life: 5000 })
       // Firestoreのshootingsを再取得
