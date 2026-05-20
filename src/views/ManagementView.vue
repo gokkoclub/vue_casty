@@ -223,7 +223,7 @@ function rangeLabel(): string {
     return ''
 }
 
-function exportAppearanceCsv() {
+async function exportAppearanceCsv() {
     const rows = filteredAppearanceRows.value
     if (rows.length === 0) {
         toast.add({ severity: 'warn', summary: 'データなし', detail: 'エクスポート対象がありません', life: 3000 })
@@ -234,6 +234,8 @@ function exportAppearanceCsv() {
     const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計']
     const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount])
     downloadCsv(`出演ダッシュボード_サマリ${range}.csv`, summaryHeader, summaryRows)
+    // ブラウザの連続ダウンロード抑制を回避するため少し待つ
+    await new Promise(resolve => setTimeout(resolve, 400))
     // 明細 CSV
     const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ']
     const detailRows: Array<Array<string | number>> = []
