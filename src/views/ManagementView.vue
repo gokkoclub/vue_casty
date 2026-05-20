@@ -190,6 +190,76 @@ function formatAppearanceDate(ts?: Timestamp): string {
     return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 }
 
+function csvEscape(v: string | number | undefined | null): string {
+    const s = v === undefined || v === null ? '' : String(v)
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+        return `"${s.replace(/"/g, '""')}"`
+    }
+    return s
+}
+
+function downloadCsv(filename: string, header: string[], rows: Array<Array<string | number | undefined | null>>) {
+    const lines = [header.join(',')]
+    for (const r of rows) {
+        lines.push(r.map(csvEscape).join(','))
+    }
+    // BOM 付きで Excel が UTF-8 を認識できるように
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+}
+
+function rangeLabel(): string {
+    const [s, e] = appearanceDateRange.value || []
+    const fmt = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+    if (s && e) return `_${fmt(s)}-${fmt(e)}`
+    if (s) return `_${fmt(s)}-`
+    return ''
+}
+
+function exportAppearanceCsv() {
+    const rows = filteredAppearanceRows.value
+    if (rows.length === 0) {
+        toast.add({ severity: 'warn', summary: 'データなし', detail: 'エクスポート対象がありません', life: 3000 })
+        return
+    }
+    const range = rangeLabel()
+    // サマリ CSV
+    const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計']
+    const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount])
+    downloadCsv(`出演ダッシュボード_サマリ${range}.csv`, summaryHeader, summaryRows)
+    // 明細 CSV
+    const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ']
+    const detailRows: Array<Array<string | number>> = []
+    for (const r of rows) {
+        for (const it of r.items) {
+            detailRows.push([
+                r.castName,
+                r.castType,
+                formatAppearanceDate(it.shootDate),
+                it.category,
+                it.accountName || '',
+                it.projectName || '',
+                it.roleName || '',
+                it.mainSub || '',
+            ])
+        }
+    }
+    downloadCsv(`出演ダッシュボード_明細${range}.csv`, detailHeader, detailRows)
+    toast.add({
+        severity: 'success',
+        summary: 'CSV エクスポート完了',
+        detail: `サマリ ${summaryRows.length} 件 / 明細 ${detailRows.length} 件`,
+        life: 3000,
+    })
+}
+
 // ========= Tab 1: Email Templates =========
 const emailSettings = useEmailSettings()
 const editingTemplateId = ref<string | null>(null)
@@ -1203,6 +1273,14 @@ function setAllNewDate(date: Date | null) {
                             icon="pi pi-refresh"
                             :loading="appearanceLoading"
                             @click="loadAppearanceData"
+                        />
+                        <Button
+                            label="CSV"
+                            icon="pi pi-download"
+                            severity="secondary"
+                            :disabled="appearanceLoading || filteredAppearanceRows.length === 0"
+                            @click="exportAppearanceCsv"
+                            v-tooltip.bottom="'現在のフィルタ条件でサマリ + 明細の2ファイルをダウンロード'"
                         />
                     </div>
 
