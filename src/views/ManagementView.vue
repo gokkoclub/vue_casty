@@ -29,12 +29,17 @@ const activeTab = ref(0)
 type AppearanceRow = {
     castId: string
     castName: string
-    internalCount: number
-    externalCount: number
+    castType: '内部' | '外部' // キャスト本人の所属（最新出演から推定）
+    // 出演単位の集計: 案件の種類で分類
+    // mode==='external' → 外部案件、それ以外 (shooting / internal) → 内部
+    internalCount: number  // = 撮影 + 社内イベント の出演数
+    externalCount: number  // = 外部案件 の出演数
     totalCount: number
     items: Array<{
         id: string
-        castType: '内部' | '外部'
+        castType: '内部' | '外部'      // この出演時の castType（キャスト本人の所属）
+        appearanceType: '内部' | '外部' // この案件の種類 (mode 由来)
+        mode: string
         projectName: string
         accountName: string
         roleName: string
@@ -42,6 +47,8 @@ type AppearanceRow = {
         mainSub: string
     }>
 }
+
+const appearanceFilter = ref<'all' | 'internal' | 'external'>('all')
 
 const appearanceLoading = ref(false)
 const appearanceRows = ref<AppearanceRow[]>([])
@@ -78,10 +85,14 @@ async function loadAppearanceData() {
             const castId = (data.castId as string) || d.id
             const castName = (data.castName as string) || '(unknown)'
             const castType = (data.castType as '内部' | '外部') || '外部'
+            const mode = (data.mode as string) || 'shooting'
+            // 案件タイプ: external のみ「外部」、shooting / internal は「内部」
+            const appearanceType: '内部' | '外部' = mode === 'external' ? '外部' : '内部'
             if (!grouped.has(castId)) {
                 grouped.set(castId, {
                     castId,
                     castName,
+                    castType,
                     internalCount: 0,
                     externalCount: 0,
                     totalCount: 0,
@@ -90,12 +101,15 @@ async function loadAppearanceData() {
             }
             const row = grouped.get(castId)!
             row.castName = castName // 最新で上書き
-            if (castType === '内部') row.internalCount++
+            row.castType = castType // 最新で上書き
+            if (appearanceType === '内部') row.internalCount++
             else row.externalCount++
             row.totalCount++
             row.items.push({
                 id: d.id,
                 castType,
+                appearanceType,
+                mode,
                 projectName: (data.projectName as string) || '',
                 accountName: (data.accountName as string) || '',
                 roleName: (data.roleName as string) || '',
@@ -121,9 +135,15 @@ async function loadAppearanceData() {
 }
 
 const filteredAppearanceRows = computed(() => {
+    let rows = appearanceRows.value
+    if (appearanceFilter.value === 'internal') {
+        rows = rows.filter(r => r.castType === '内部')
+    } else if (appearanceFilter.value === 'external') {
+        rows = rows.filter(r => r.castType === '外部')
+    }
     const q = appearanceSearch.value.trim().toLowerCase()
-    if (!q) return appearanceRows.value
-    return appearanceRows.value.filter(r =>
+    if (!q) return rows
+    return rows.filter(r =>
         r.castName.toLowerCase().includes(q) ||
         r.items.some(i =>
             i.projectName.toLowerCase().includes(q) ||
@@ -1113,12 +1133,35 @@ function setAllNewDate(date: Date | null) {
                     <div class="appearance-help">
                         <i class="pi pi-info-circle"></i>
                         <span>
-                            ステータスが「決定」のキャスティングを集計（撮影 / 外部案件 / 社内イベント全て対象）。
-                            各キャストの内部 / 外部出演回数と作品一覧。期間未指定で全期間。
+                            ステータスが「決定」のキャスティングを集計。
+                            <b>内部出演</b>＝撮影オーダー / 社内イベントの出演、<b>外部出演</b>＝外部案件の出演。
+                            キャスト名横のタグは「キャスト本人の所属」（内部/外部）。
                         </span>
                     </div>
 
                     <div class="appearance-toolbar">
+                        <div class="filter-buttons">
+                            <Button
+                                label="全て"
+                                size="small"
+                                :outlined="appearanceFilter !== 'all'"
+                                @click="appearanceFilter = 'all'"
+                            />
+                            <Button
+                                label="内部キャスト"
+                                size="small"
+                                severity="info"
+                                :outlined="appearanceFilter !== 'internal'"
+                                @click="appearanceFilter = 'internal'"
+                            />
+                            <Button
+                                label="外部キャスト"
+                                size="small"
+                                severity="warn"
+                                :outlined="appearanceFilter !== 'external'"
+                                @click="appearanceFilter = 'external'"
+                            />
+                        </div>
                         <InputText
                             v-model="appearanceSearch"
                             placeholder="キャスト名 / 作品名 / アカウント名 で絞り込み"
@@ -1183,7 +1226,14 @@ function setAllNewDate(date: Date | null) {
                                     <td>
                                         <i :class="expandedCastRows.has(row.castId) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i>
                                     </td>
-                                    <td class="cast-name">{{ row.castName }}</td>
+                                    <td class="cast-name">
+                                        <span>{{ row.castName }}</span>
+                                        <Tag
+                                            :value="row.castType"
+                                            :severity="row.castType === '内部' ? 'info' : 'warn'"
+                                            class="cast-type-tag"
+                                        />
+                                    </td>
                                     <td><Tag :value="row.internalCount" severity="info" /></td>
                                     <td><Tag :value="row.externalCount" severity="warn" /></td>
                                     <td><strong>{{ row.totalCount }}</strong></td>
@@ -1195,18 +1245,18 @@ function setAllNewDate(date: Date | null) {
                                             <thead>
                                                 <tr>
                                                     <th style="width: 110px;">撮影日</th>
-                                                    <th style="width: 70px;">区分</th>
+                                                    <th style="width: 70px;">案件区分</th>
                                                     <th>アカウント</th>
                                                     <th>作品名</th>
                                                     <th>役名</th>
-                                                    <th style="width: 70px;">区分</th>
+                                                    <th style="width: 70px;">メイン/サブ</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 <tr v-for="item in row.items" :key="item.id">
                                                     <td>{{ formatAppearanceDate(item.shootDate) }}</td>
                                                     <td>
-                                                        <Tag :value="item.castType" :severity="item.castType === '内部' ? 'info' : 'warn'" />
+                                                        <Tag :value="item.appearanceType" :severity="item.appearanceType === '内部' ? 'info' : 'warn'" />
                                                     </td>
                                                     <td>{{ item.accountName || '-' }}</td>
                                                     <td>{{ item.projectName || '-' }}</td>
@@ -1280,7 +1330,14 @@ function setAllNewDate(date: Date | null) {
 }
 .appearance-row { cursor: pointer; }
 .appearance-row:hover { background: var(--surface-100); }
-.cast-name { font-weight: 600; }
+.appearance-table .cast-name {
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.cast-type-tag { font-size: 0.7rem; }
+.filter-buttons { display: flex; gap: 0.5rem; }
 .appearance-detail-row > td { background: var(--surface-50); padding: 0.5rem 1rem; }
 .appearance-detail-table {
     width: 100%;
