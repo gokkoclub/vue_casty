@@ -26,19 +26,19 @@ const toast = useToast()
 const activeTab = ref(0)
 
 // ========= Tab 5: キャスト別出演ダッシュボード =========
+type AppearanceCategory = '撮影' | '社内イベント' | '外部案件'
 type AppearanceRow = {
     castId: string
     castName: string
     castType: '内部' | '外部' // キャスト本人の所属（最新出演から推定）
-    // 出演単位の集計: 案件の種類で分類
-    // mode==='external' → 外部案件、それ以外 (shooting / internal) → 内部
-    internalCount: number  // = 撮影 + 社内イベント の出演数
-    externalCount: number  // = 外部案件 の出演数
+    shootingCount: number   // = mode='shooting' の出演数
+    internalEventCount: number // = 社内イベント
+    externalCount: number   // = 外部案件
     totalCount: number
     items: Array<{
         id: string
-        castType: '内部' | '外部'      // この出演時の castType（キャスト本人の所属）
-        appearanceType: '内部' | '外部' // この案件の種類 (mode 由来)
+        castType: '内部' | '外部'           // キャスト本人の所属
+        category: AppearanceCategory        // 案件区分
         mode: string
         projectName: string
         accountName: string
@@ -49,6 +49,17 @@ type AppearanceRow = {
 }
 
 const appearanceFilter = ref<'all' | 'internal' | 'external'>('all')
+
+// accountName / roleName / mode から案件区分を判定
+// 優先順位: accountName / roleName のラベル文字列 > mode
+function classifyAppearance(data: { accountName?: string; roleName?: string; mode?: string }): AppearanceCategory {
+    const labels = [data.accountName, data.roleName]
+    if (labels.includes('外部案件')) return '外部案件'
+    if (labels.includes('社内イベント')) return '社内イベント'
+    if (data.mode === 'external') return '外部案件'
+    if (data.mode === 'internal') return '社内イベント'
+    return '撮影'
+}
 
 const appearanceLoading = ref(false)
 const appearanceRows = ref<AppearanceRow[]>([])
@@ -86,33 +97,36 @@ async function loadAppearanceData() {
             const castName = (data.castName as string) || '(unknown)'
             const castType = (data.castType as '内部' | '外部') || '外部'
             const mode = (data.mode as string) || 'shooting'
-            // 案件タイプ: external のみ「外部」、shooting / internal は「内部」
-            const appearanceType: '内部' | '外部' = mode === 'external' ? '外部' : '内部'
+            const accountName = (data.accountName as string) || ''
+            const roleName = (data.roleName as string) || ''
+            const category = classifyAppearance({ accountName, roleName, mode })
             if (!grouped.has(castId)) {
                 grouped.set(castId, {
                     castId,
                     castName,
                     castType,
-                    internalCount: 0,
+                    shootingCount: 0,
+                    internalEventCount: 0,
                     externalCount: 0,
                     totalCount: 0,
                     items: [],
                 })
             }
             const row = grouped.get(castId)!
-            row.castName = castName // 最新で上書き
-            row.castType = castType // 最新で上書き
-            if (appearanceType === '内部') row.internalCount++
+            row.castName = castName
+            row.castType = castType
+            if (category === '撮影') row.shootingCount++
+            else if (category === '社内イベント') row.internalEventCount++
             else row.externalCount++
             row.totalCount++
             row.items.push({
                 id: d.id,
                 castType,
-                appearanceType,
+                category,
                 mode,
                 projectName: (data.projectName as string) || '',
-                accountName: (data.accountName as string) || '',
-                roleName: (data.roleName as string) || '',
+                accountName,
+                roleName,
                 shootDate: data.startDate as Timestamp | undefined,
                 mainSub: (data.mainSub as string) || '',
             })
@@ -153,13 +167,21 @@ const filteredAppearanceRows = computed(() => {
 })
 
 const appearanceTotals = computed(() => {
-    let internal = 0
+    let shooting = 0
+    let internalEvent = 0
     let external = 0
     for (const r of filteredAppearanceRows.value) {
-        internal += r.internalCount
+        shooting += r.shootingCount
+        internalEvent += r.internalEventCount
         external += r.externalCount
     }
-    return { internal, external, total: internal + external, casts: filteredAppearanceRows.value.length }
+    return {
+        shooting,
+        internalEvent,
+        external,
+        total: shooting + internalEvent + external,
+        casts: filteredAppearanceRows.value.length,
+    }
 })
 
 function formatAppearanceDate(ts?: Timestamp): string {
@@ -1133,8 +1155,8 @@ function setAllNewDate(date: Date | null) {
                     <div class="appearance-help">
                         <i class="pi pi-info-circle"></i>
                         <span>
-                            ステータスが「決定」のキャスティングを集計。
-                            <b>内部出演</b>＝撮影オーダー / 社内イベントの出演、<b>外部出演</b>＝外部案件の出演。
+                            ステータスが「決定」のキャスティングを案件区分別に集計。
+                            <b>撮影 / 社内イベント / 外部案件</b>。1 回の撮影で 2 作品オーダーされた場合は 2 件としてカウント。
                             キャスト名横のタグは「キャスト本人の所属」（内部/外部）。
                         </span>
                     </div>
@@ -1193,12 +1215,16 @@ function setAllNewDate(date: Date | null) {
                             <div class="summary-label">合計出演</div>
                             <div class="summary-value">{{ appearanceTotals.total }}</div>
                         </div>
-                        <div class="summary-tile internal">
-                            <div class="summary-label">内部</div>
-                            <div class="summary-value">{{ appearanceTotals.internal }}</div>
+                        <div class="summary-tile shooting">
+                            <div class="summary-label">撮影</div>
+                            <div class="summary-value">{{ appearanceTotals.shooting }}</div>
+                        </div>
+                        <div class="summary-tile internal-event">
+                            <div class="summary-label">社内イベント</div>
+                            <div class="summary-value">{{ appearanceTotals.internalEvent }}</div>
                         </div>
                         <div class="summary-tile external">
-                            <div class="summary-label">外部</div>
+                            <div class="summary-label">外部案件</div>
                             <div class="summary-value">{{ appearanceTotals.external }}</div>
                         </div>
                     </div>
@@ -1215,9 +1241,10 @@ function setAllNewDate(date: Date | null) {
                             <tr>
                                 <th style="width: 36px;"></th>
                                 <th>キャスト名</th>
-                                <th style="width: 100px;">内部</th>
-                                <th style="width: 100px;">外部</th>
-                                <th style="width: 100px;">合計</th>
+                                <th style="width: 80px;">撮影</th>
+                                <th style="width: 110px;">社内イベント</th>
+                                <th style="width: 90px;">外部案件</th>
+                                <th style="width: 80px;">合計</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1234,18 +1261,19 @@ function setAllNewDate(date: Date | null) {
                                             class="cast-type-tag"
                                         />
                                     </td>
-                                    <td><Tag :value="row.internalCount" severity="info" /></td>
+                                    <td><Tag :value="row.shootingCount" severity="success" /></td>
+                                    <td><Tag :value="row.internalEventCount" severity="info" /></td>
                                     <td><Tag :value="row.externalCount" severity="warn" /></td>
                                     <td><strong>{{ row.totalCount }}</strong></td>
                                 </tr>
                                 <tr v-if="expandedCastRows.has(row.castId)" class="appearance-detail-row">
                                     <td></td>
-                                    <td colspan="4">
+                                    <td colspan="5">
                                         <table class="appearance-detail-table">
                                             <thead>
                                                 <tr>
                                                     <th style="width: 110px;">撮影日</th>
-                                                    <th style="width: 70px;">案件区分</th>
+                                                    <th style="width: 100px;">案件区分</th>
                                                     <th>アカウント</th>
                                                     <th>作品名</th>
                                                     <th>役名</th>
@@ -1256,7 +1284,10 @@ function setAllNewDate(date: Date | null) {
                                                 <tr v-for="item in row.items" :key="item.id">
                                                     <td>{{ formatAppearanceDate(item.shootDate) }}</td>
                                                     <td>
-                                                        <Tag :value="item.appearanceType" :severity="item.appearanceType === '内部' ? 'info' : 'warn'" />
+                                                        <Tag
+                                                            :value="item.category"
+                                                            :severity="item.category === '撮影' ? 'success' : item.category === '社内イベント' ? 'info' : 'warn'"
+                                                        />
                                                     </td>
                                                     <td>{{ item.accountName || '-' }}</td>
                                                     <td>{{ item.projectName || '-' }}</td>
@@ -1307,7 +1338,7 @@ function setAllNewDate(date: Date | null) {
 .appearance-daterange { min-width: 240px; }
 .appearance-summary {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0.75rem;
     margin-bottom: 1rem;
 }
@@ -1317,7 +1348,8 @@ function setAllNewDate(date: Date | null) {
     border-radius: 8px;
     padding: 0.75rem 1rem;
 }
-.summary-tile.internal { border-left: 4px solid var(--blue-500); }
+.summary-tile.shooting { border-left: 4px solid var(--green-500); }
+.summary-tile.internal-event { border-left: 4px solid var(--blue-500); }
 .summary-tile.external { border-left: 4px solid var(--orange-500); }
 .summary-label {
     font-size: 0.75rem;
