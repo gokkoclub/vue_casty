@@ -25,6 +25,128 @@ import { useToast } from 'primevue/usetoast'
 const toast = useToast()
 const activeTab = ref(0)
 
+// ========= Tab 5: キャスト別出演ダッシュボード =========
+type AppearanceRow = {
+    castId: string
+    castName: string
+    internalCount: number
+    externalCount: number
+    totalCount: number
+    items: Array<{
+        id: string
+        castType: '内部' | '外部'
+        projectName: string
+        accountName: string
+        roleName: string
+        shootDate?: Timestamp
+        mainSub: string
+    }>
+}
+
+const appearanceLoading = ref(false)
+const appearanceRows = ref<AppearanceRow[]>([])
+const appearanceDateRange = ref<Date[]>([])
+const appearanceSearch = ref('')
+const expandedCastRows = ref<Set<string>>(new Set())
+
+function toggleCastExpand(castId: string) {
+    if (expandedCastRows.value.has(castId)) {
+        expandedCastRows.value.delete(castId)
+    } else {
+        expandedCastRows.value.add(castId)
+    }
+    expandedCastRows.value = new Set(expandedCastRows.value)
+}
+
+async function loadAppearanceData() {
+    if (!db) return
+    appearanceLoading.value = true
+    try {
+        const snap = await getDocs(query(collection(db, 'castings')))
+        const grouped = new Map<string, AppearanceRow>()
+        const [startD, endD] = appearanceDateRange.value || []
+        const startTs = startD ? new Date(startD.getFullYear(), startD.getMonth(), startD.getDate(), 0, 0, 0).getTime() : null
+        const endTs = endD ? new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59, 999).getTime() : null
+        snap.forEach(d => {
+            const data = d.data() as Casting & { isDecided?: boolean; deleted?: boolean; createdAt?: Timestamp; updatedAt?: Timestamp }
+            if (data.isDecided !== true) return
+            if (data.deleted === true) return
+            const sd = data.startDate?.toDate?.()?.getTime?.() || data.endDate?.toDate?.()?.getTime?.() || 0
+            if (startTs !== null && sd && sd < startTs) return
+            if (endTs !== null && sd && sd > endTs) return
+            const castId = (data.castId as string) || d.id
+            const castName = (data.castName as string) || '(unknown)'
+            const castType = (data.castType as '内部' | '外部') || '外部'
+            if (!grouped.has(castId)) {
+                grouped.set(castId, {
+                    castId,
+                    castName,
+                    internalCount: 0,
+                    externalCount: 0,
+                    totalCount: 0,
+                    items: [],
+                })
+            }
+            const row = grouped.get(castId)!
+            row.castName = castName // 最新で上書き
+            if (castType === '内部') row.internalCount++
+            else row.externalCount++
+            row.totalCount++
+            row.items.push({
+                id: d.id,
+                castType,
+                projectName: (data.projectName as string) || '',
+                accountName: (data.accountName as string) || '',
+                roleName: (data.roleName as string) || '',
+                shootDate: data.startDate as Timestamp | undefined,
+                mainSub: (data.mainSub as string) || '',
+            })
+        })
+        // 各 row の items を日付降順
+        for (const r of grouped.values()) {
+            r.items.sort((a, b) => {
+                const at = a.shootDate?.toDate?.()?.getTime?.() || 0
+                const bt = b.shootDate?.toDate?.()?.getTime?.() || 0
+                return bt - at
+            })
+        }
+        appearanceRows.value = [...grouped.values()].sort((a, b) => b.totalCount - a.totalCount)
+    } catch (e) {
+        console.error('Failed to load appearance dashboard:', e)
+        toast.add({ severity: 'error', summary: 'エラー', detail: '出演履歴の取得に失敗しました', life: 3000 })
+    } finally {
+        appearanceLoading.value = false
+    }
+}
+
+const filteredAppearanceRows = computed(() => {
+    const q = appearanceSearch.value.trim().toLowerCase()
+    if (!q) return appearanceRows.value
+    return appearanceRows.value.filter(r =>
+        r.castName.toLowerCase().includes(q) ||
+        r.items.some(i =>
+            i.projectName.toLowerCase().includes(q) ||
+            i.accountName.toLowerCase().includes(q)
+        )
+    )
+})
+
+const appearanceTotals = computed(() => {
+    let internal = 0
+    let external = 0
+    for (const r of filteredAppearanceRows.value) {
+        internal += r.internalCount
+        external += r.externalCount
+    }
+    return { internal, external, total: internal + external, casts: filteredAppearanceRows.value.length }
+})
+
+function formatAppearanceDate(ts?: Timestamp): string {
+    if (!ts?.toDate) return '-'
+    const d = ts.toDate()
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+}
+
 // ========= Tab 1: Email Templates =========
 const emailSettings = useEmailSettings()
 const editingTemplateId = ref<string | null>(null)
@@ -144,6 +266,7 @@ onMounted(() => {
     castMaster.fetchHistory()
     admins.fetchAdmins()
     staffMentions.fetchAll()
+    loadAppearanceData()
 })
 
 function startEditTemplate(t: EmailTemplateSetting) {
@@ -974,6 +1097,130 @@ function setAllNewDate(date: Date | null) {
                     </table>
                 </div>
             </TabPanel>
+
+            <!-- Tab 6: キャスト別出演ダッシュボード -->
+            <TabPanel value="5">
+                <template #header>
+                    <div class="tab-header">
+                        <i class="pi pi-chart-bar"></i>
+                        <span>出演ダッシュボード</span>
+                        <Badge :value="appearanceTotals.casts" severity="secondary" />
+                    </div>
+                </template>
+
+                <div class="tab-content">
+                    <div class="appearance-help">
+                        <i class="pi pi-info-circle"></i>
+                        <span>
+                            決定済みキャスティング（isDecided=true）を集計。各キャストの内部 / 外部出演回数と作品一覧。
+                            期間未指定で全期間。
+                        </span>
+                    </div>
+
+                    <div class="appearance-toolbar">
+                        <InputText
+                            v-model="appearanceSearch"
+                            placeholder="キャスト名 / 作品名 / アカウント名 で絞り込み"
+                            class="appearance-search"
+                        />
+                        <DatePicker
+                            v-model="appearanceDateRange"
+                            selectionMode="range"
+                            dateFormat="yy/mm/dd"
+                            placeholder="期間 (任意)"
+                            showButtonBar
+                            class="appearance-daterange"
+                            @update:modelValue="loadAppearanceData"
+                        />
+                        <Button
+                            label="更新"
+                            icon="pi pi-refresh"
+                            :loading="appearanceLoading"
+                            @click="loadAppearanceData"
+                        />
+                    </div>
+
+                    <div class="appearance-summary">
+                        <div class="summary-tile">
+                            <div class="summary-label">対象キャスト</div>
+                            <div class="summary-value">{{ appearanceTotals.casts }} 人</div>
+                        </div>
+                        <div class="summary-tile">
+                            <div class="summary-label">合計出演</div>
+                            <div class="summary-value">{{ appearanceTotals.total }}</div>
+                        </div>
+                        <div class="summary-tile internal">
+                            <div class="summary-label">内部</div>
+                            <div class="summary-value">{{ appearanceTotals.internal }}</div>
+                        </div>
+                        <div class="summary-tile external">
+                            <div class="summary-label">外部</div>
+                            <div class="summary-value">{{ appearanceTotals.external }}</div>
+                        </div>
+                    </div>
+
+                    <div v-if="appearanceLoading" class="loading-spinner">
+                        <ProgressSpinner style="width: 32px; height: 32px" />
+                    </div>
+                    <div v-else-if="filteredAppearanceRows.length === 0" class="empty-state">
+                        <i class="pi pi-info-circle"></i>
+                        <span>該当するキャストがいません</span>
+                    </div>
+                    <table v-else class="master-table appearance-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 36px;"></th>
+                                <th>キャスト名</th>
+                                <th style="width: 100px;">内部</th>
+                                <th style="width: 100px;">外部</th>
+                                <th style="width: 100px;">合計</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template v-for="row in filteredAppearanceRows" :key="row.castId">
+                                <tr class="appearance-row" @click="toggleCastExpand(row.castId)">
+                                    <td>
+                                        <i :class="expandedCastRows.has(row.castId) ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"></i>
+                                    </td>
+                                    <td class="cast-name">{{ row.castName }}</td>
+                                    <td><Tag :value="row.internalCount" severity="info" /></td>
+                                    <td><Tag :value="row.externalCount" severity="warn" /></td>
+                                    <td><strong>{{ row.totalCount }}</strong></td>
+                                </tr>
+                                <tr v-if="expandedCastRows.has(row.castId)" class="appearance-detail-row">
+                                    <td></td>
+                                    <td colspan="4">
+                                        <table class="appearance-detail-table">
+                                            <thead>
+                                                <tr>
+                                                    <th style="width: 110px;">撮影日</th>
+                                                    <th style="width: 70px;">区分</th>
+                                                    <th>アカウント</th>
+                                                    <th>作品名</th>
+                                                    <th>役名</th>
+                                                    <th style="width: 70px;">区分</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="item in row.items" :key="item.id">
+                                                    <td>{{ formatAppearanceDate(item.shootDate) }}</td>
+                                                    <td>
+                                                        <Tag :value="item.castType" :severity="item.castType === '内部' ? 'info' : 'warn'" />
+                                                    </td>
+                                                    <td>{{ item.accountName || '-' }}</td>
+                                                    <td>{{ item.projectName || '-' }}</td>
+                                                    <td>{{ item.roleName || '-' }}</td>
+                                                    <td>{{ item.mainSub || '-' }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </TabPanel>
         </TabView>
     </div>
 </template>
@@ -983,6 +1230,81 @@ function setAllNewDate(date: Date | null) {
     padding: 1.5rem;
     max-width: 1400px;
     margin: 0 auto;
+}
+
+/* === キャスト別出演ダッシュボード === */
+.appearance-help {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-start;
+    background: var(--surface-50);
+    border-left: 3px solid var(--primary-color);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    color: var(--text-color-secondary);
+}
+.appearance-toolbar {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+.appearance-search { flex: 1; min-width: 240px; }
+.appearance-daterange { min-width: 240px; }
+.appearance-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+}
+.summary-tile {
+    background: var(--surface-50);
+    border: 1px solid var(--surface-200);
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+}
+.summary-tile.internal { border-left: 4px solid var(--blue-500); }
+.summary-tile.external { border-left: 4px solid var(--orange-500); }
+.summary-label {
+    font-size: 0.75rem;
+    color: var(--text-color-secondary);
+    margin-bottom: 0.25rem;
+}
+.summary-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+.appearance-row { cursor: pointer; }
+.appearance-row:hover { background: var(--surface-100); }
+.cast-name { font-weight: 600; }
+.appearance-detail-row > td { background: var(--surface-50); padding: 0.5rem 1rem; }
+.appearance-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.appearance-detail-table th,
+.appearance-detail-table td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--surface-200);
+    font-size: 0.85rem;
+    text-align: left;
+}
+.appearance-detail-table thead th {
+    background: var(--surface-100);
+    font-weight: 600;
+    color: var(--text-color-secondary);
+}
+.loading-spinner { display: flex; justify-content: center; padding: 2rem 0; }
+.empty-state {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 0;
+    color: var(--text-color-secondary);
 }
 
 .page-header {
