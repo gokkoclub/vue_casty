@@ -70,6 +70,7 @@ Object.defineProperty(exports, "reassignCastingThread", { enumerable: true, get:
 var syncFromNotion_1 = require("./syncFromNotion");
 Object.defineProperty(exports, "syncFromNotion", { enumerable: true, get: function () { return syncFromNotion_1.syncFromNotion; } });
 Object.defineProperty(exports, "scheduledSyncFromNotion", { enumerable: true, get: function () { return syncFromNotion_1.scheduledSyncFromNotion; } });
+// CF 直接同期に統一済み。GAS の syncCasts は停止する想定。
 var syncCastsFromNotion_1 = require("./syncCastsFromNotion");
 Object.defineProperty(exports, "syncCastsFromNotion", { enumerable: true, get: function () { return syncCastsFromNotion_1.syncCastsFromNotion; } });
 Object.defineProperty(exports, "scheduledSyncCastsFromNotion", { enumerable: true, get: function () { return syncCastsFromNotion_1.scheduledSyncCastsFromNotion; } });
