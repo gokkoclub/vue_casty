@@ -29,7 +29,10 @@ export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, consolidateShootingDuplicates, backfillCastingProjectName } from "./syncFromSam";
 export { reassignCastingThread } from "./reassignCastingThread";
 export { syncFromNotion, scheduledSyncFromNotion } from "./syncFromNotion";
-export { syncCastsFromNotion, scheduledSyncCastsFromNotion } from "./syncCastsFromNotion";
+// scheduledSyncCastsFromNotion は GAS の syncCasts と二重実行になるため廃止済み。
+// 手動 onCall (syncCastsFromNotion) は緊急用に残置（特記事項のみ取得し直したい時用）。
+// 通常運用ではキャスト同期は GAS 経由（特記事項=memo は別途仕組み検討中）。
+export { syncCastsFromNotion } from "./syncCastsFromNotion";
 export { handleSlackInteraction } from "./slackInteraction";
 
 // Automation (香盤SS submissions → 各種ディスパッチ)
