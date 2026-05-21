@@ -20,7 +20,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import { Client } from "@notionhq/client";
 
-const PROP_TITLE_CANDIDATES = ["タイトル", "Title", "名前", "Name", "作品名"];
+const PROP_TITLE_CANDIDATES = ["仮台本名", "タイトル", "Title", "名前", "Name", "作品名"];
 const PROP_ACCOUNT_CANDIDATES = ["アカウント", "Account"];
 const PROP_DATE_CANDIDATES = ["撮影日", "日付", "Date"];
 const PROP_TEAM_CANDIDATES = ["撮影チーム", "チーム", "Team"];
