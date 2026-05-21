@@ -74,6 +74,22 @@ const saveProjectNameEdit = () => {
   editingProjectName.value = false
 }
 
+// 作品ごと一括選択
+const allSelectedInProject = computed(() => {
+  if (!props.isSelected || props.castings.length === 0) return false
+  return props.castings.every(c => props.isSelected!(c.id))
+})
+
+const toggleSelectAllInProject = () => {
+  const targetState = !allSelectedInProject.value
+  for (const c of props.castings) {
+    const current = props.isSelected?.(c.id) ?? false
+    if (current !== targetState) {
+      emit('toggle-select', c.id)
+    }
+  }
+}
+
 // Role name editing state
 const editingRoleId = ref<string | null>(null)
 const editRoleNameValue = ref('')
@@ -333,6 +349,16 @@ const sortLabel = computed(() => {
         <span v-if="updaters && updaters.length" class="csl-updater">
           {{ updaters.join(', ') }}
         </span>
+        <Button
+          v-if="bulkSelectMode"
+          :label="allSelectedInProject ? '作品の選択解除' : '作品を全選択'"
+          :icon="allSelectedInProject ? 'pi pi-times-circle' : 'pi pi-check-square'"
+          text
+          size="small"
+          :severity="allSelectedInProject ? 'secondary' : 'info'"
+          @click="toggleSelectAllInProject"
+          v-tooltip.bottom="'この作品内の casting を一括選択 / 解除'"
+        />
         <Button
           :label="sortLabel"
           icon="pi pi-sort-alt"

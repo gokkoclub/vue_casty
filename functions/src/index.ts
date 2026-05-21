@@ -29,6 +29,7 @@ export { syncDriveLinksToContacts } from "./driveSync";
 export { syncScheduleFromSam, consolidateShootingDuplicates, backfillCastingProjectName } from "./syncFromSam";
 export { reassignCastingThread } from "./reassignCastingThread";
 export { syncFromNotion, scheduledSyncFromNotion } from "./syncFromNotion";
+export { syncCastsFromNotion, scheduledSyncCastsFromNotion } from "./syncCastsFromNotion";
 export { handleSlackInteraction } from "./slackInteraction";
 
 // Automation (香盤SS submissions → 各種ディスパッチ)

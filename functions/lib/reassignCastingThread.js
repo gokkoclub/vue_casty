@@ -1,0 +1,138 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.reassignCastingThread = void 0;
+/**
+ * 指定された castings の Slack スレッド紐付けを別スレッドに差し替える onCall.
+ *
+ * 入力: { castingIds: string[], slackThreadUrl: string, slackThreadTs: string, slackChannel: string }
+ *
+ * 処理:
+ *  - castings.slackThreadTs / slackChannel / slackPermalink を更新
+ *  - 各 casting が紐づく shooting（撮影モードで projectId 経由）にも反映（dual write）
+ *  - chat.getPermalink で permalink を確定（取れなければ入力 URL をそのまま保存）
+ */
+const https_1 = require("firebase-functions/v2/https");
+const admin = __importStar(require("firebase-admin"));
+exports.reassignCastingThread = (0, https_1.onCall)({
+    region: "asia-northeast1",
+    secrets: ["SLACK_BOT_TOKEN"],
+    maxInstances: 5,
+    memory: "512MiB",
+    timeoutSeconds: 120,
+}, async (request) => {
+    const data = request.data;
+    const castingIds = Array.isArray(data?.castingIds) ? data.castingIds : [];
+    const slackThreadTs = (data?.slackThreadTs || "").trim();
+    const slackChannel = (data?.slackChannel || "").trim();
+    if (castingIds.length === 0) {
+        throw new https_1.HttpsError("invalid-argument", "castingIds is empty");
+    }
+    if (!slackThreadTs || !slackChannel) {
+        throw new https_1.HttpsError("invalid-argument", "slackThreadTs / slackChannel が必要です");
+    }
+    const db = admin.firestore();
+    const token = process.env.SLACK_BOT_TOKEN;
+    // permalink 取得（失敗しても継続）
+    let permalink = (data?.slackThreadUrl || "").trim();
+    if (token) {
+        try {
+            const r = await fetch("https://slack.com/api/chat.getPermalink", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ channel: slackChannel, message_ts: slackThreadTs }),
+            });
+            const j = await r.json();
+            if (j.ok && j.permalink)
+                permalink = j.permalink;
+        }
+        catch (e) {
+            console.warn("[reassignCastingThread] getPermalink failed:", e);
+        }
+    }
+    // castings update
+    const updateFields = {
+        slackThreadTs,
+        slackChannel,
+        slackPermalink: permalink,
+        slackThreadReassignedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    let castingUpdated = 0;
+    const projectIds = new Set();
+    for (let i = 0; i < castingIds.length; i += 500) {
+        const chunk = castingIds.slice(i, i + 500);
+        const batch = db.batch();
+        const refs = chunk.map(id => db.collection("castings").doc(id));
+        const snaps = await db.getAll(...refs);
+        for (const s of snaps) {
+            if (!s.exists)
+                continue;
+            const sd = s.data();
+            const pid = sd?.projectId || "";
+            if (pid)
+                projectIds.add(pid);
+            batch.update(s.ref, updateFields);
+            castingUpdated++;
+        }
+        await batch.commit();
+    }
+    // shootings dual write（撮影モードで projectId が引ける場合のみ）
+    let shootingsUpdated = 0;
+    for (const pid of projectIds) {
+        try {
+            const sh = await db.collection("shootings").where("notionPageId", "==", pid).get();
+            const targets = sh.docs.filter(d => d.data().deleted !== true);
+            if (targets.length === 0)
+                continue;
+            const batch = db.batch();
+            for (const t of targets) {
+                batch.update(t.ref, {
+                    slackThreadTs,
+                    slackChannel,
+                    slackPermalink: permalink,
+                    slackUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                shootingsUpdated++;
+            }
+            await batch.commit();
+        }
+        catch (e) {
+            console.warn("[reassignCastingThread] shooting update failed:", e);
+        }
+    }
+    console.log(`[reassignCastingThread] castings=${castingUpdated} shootings=${shootingsUpdated} ts=${slackThreadTs} chan=${slackChannel}`);
+    return { updated: castingUpdated, shootingsUpdated, permalink };
+});
+//# sourceMappingURL=reassignCastingThread.js.map

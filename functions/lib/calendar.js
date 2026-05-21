@@ -10,6 +10,41 @@ exports.handleCalendarStatusChange = handleCalendarStatusChange;
  * サービスアカウントを使用してカレンダーイベントを操作
  */
 const googleapis_1 = require("googleapis");
+// "0700" / "7:00" / "07:00" などの表記ゆれを RFC3339 dateTime で使える "HH:MM" に正規化する。
+// 既存データ（SAM / Notion 由来）はコロンなしで保存されているものがあり、そのままだと
+// Calendar API が 400 Bad Request を返す。正規化できない値は null（= 時間指定なし扱い）。
+function normalizeTimeToHHMM(input) {
+    if (!input)
+        return null;
+    const trimmed = String(input).trim();
+    if (!trimmed)
+        return null;
+    const colonMatch = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+    if (colonMatch) {
+        const h = Number(colonMatch[1]);
+        const m = Number(colonMatch[2]);
+        if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+            return `${String(h).padStart(2, "0")}:${colonMatch[2]}`;
+        }
+        return null;
+    }
+    const digitsOnly = trimmed.replace(/\D/g, "");
+    if (digitsOnly.length === 4) {
+        const h = Number(digitsOnly.slice(0, 2));
+        const m = Number(digitsOnly.slice(2, 4));
+        if (h >= 0 && h <= 23 && m >= 0 && m <= 59) {
+            return `${digitsOnly.slice(0, 2)}:${digitsOnly.slice(2, 4)}`;
+        }
+    }
+    if (digitsOnly.length === 3) {
+        const h = Number(digitsOnly.slice(0, 1));
+        const m = Number(digitsOnly.slice(1, 3));
+        if (h >= 0 && h <= 9 && m >= 0 && m <= 59) {
+            return `0${digitsOnly.slice(0, 1)}:${digitsOnly.slice(1, 3)}`;
+        }
+    }
+    return null;
+}
 /**
  * Calendar APIクライアントを取得
  */
@@ -73,15 +108,20 @@ async function createCalendarEvent(params) {
         ].filter(Boolean).join("\n");
         let startObj;
         let endObj;
-        if (params.startTime && params.endTime) {
+        const normalizedStart = normalizeTimeToHHMM(params.startTime);
+        const normalizedEnd = normalizeTimeToHHMM(params.endTime);
+        if (params.startTime && params.endTime && (!normalizedStart || !normalizedEnd)) {
+            console.warn(`[createCalendarEvent] time normalization failed: startTime="${params.startTime}" endTime="${params.endTime}" → fallback to all-day`);
+        }
+        if (normalizedStart && normalizedEnd) {
             // 時間指定あり → dateTime形式
             startObj = {
-                dateTime: `${params.startDate}T${params.startTime}:00`,
+                dateTime: `${params.startDate}T${normalizedStart}:00`,
                 timeZone: "Asia/Tokyo",
             };
             const endDateStr = params.endDate || params.startDate;
             endObj = {
-                dateTime: `${endDateStr}T${params.endTime}:00`,
+                dateTime: `${endDateStr}T${normalizedEnd}:00`,
                 timeZone: "Asia/Tokyo",
             };
         }
@@ -171,14 +211,16 @@ async function updateCalendarEventTime(params) {
     try {
         const calendar = getCalendarClient(params.serviceAccountKey);
         const requestBody = {};
-        if (params.startTime && params.endTime) {
+        const normalizedStart = normalizeTimeToHHMM(params.startTime);
+        const normalizedEnd = normalizeTimeToHHMM(params.endTime);
+        if (normalizedStart && normalizedEnd) {
             // 時間指定あり → dateTime形式
             requestBody.start = {
-                dateTime: `${params.startDate}T${params.startTime}:00`,
+                dateTime: `${params.startDate}T${normalizedStart}:00`,
                 timeZone: "Asia/Tokyo",
             };
             requestBody.end = {
-                dateTime: `${params.startDate}T${params.endTime}:00`,
+                dateTime: `${params.startDate}T${normalizedEnd}:00`,
                 timeZone: "Asia/Tokyo",
             };
         }

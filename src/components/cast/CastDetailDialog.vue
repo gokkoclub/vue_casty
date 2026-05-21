@@ -139,6 +139,15 @@ const openSns = (url: string) => {
               <th>備考</th>
               <td>{{ cast.notes || '-' }}</td>
             </tr>
+            <tr v-if="cast.hasMemo && cast.memo">
+              <th>
+                <i class="pi pi-exclamation-triangle" style="color: #f59e0b; margin-right: 4px;"></i>
+                特記事項
+              </th>
+              <td>
+                <pre class="cast-memo">{{ cast.memo }}</pre>
+              </td>
+            </tr>
             <tr v-if="competitionInfo">
               <th>競合</th>
               <td class="comp-cell">
@@ -164,6 +173,19 @@ const openSns = (url: string) => {
 </template>
 
 <style scoped>
+.cast-memo {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: inherit;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    background: var(--surface-50);
+    border-left: 3px solid var(--orange-500);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    color: var(--text-color);
+}
 .cast-popup :deep(.p-dialog-content) {
   padding: 2.5rem 3rem;
 }

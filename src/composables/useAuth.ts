@@ -13,6 +13,9 @@ const user = ref<User | null>(null)
 const loading = ref(true)
 const isAdminChecked = ref(false)
 const isAdminValue = ref(false)
+
+// スーパー管理者（NG / キャンセルからの巻き戻し等、通常 admin でも不可な操作を許可）
+const SUPER_ADMIN_EMAILS = ['kunihito.miura@gokkoclub.jp']
 const googleAccessToken = ref<string | null>(
     sessionStorage.getItem('googleAccessToken')
 )
@@ -64,6 +67,14 @@ export function useAuth() {
 
     // 管理者判定（Firestoreから取得）
     const isAdmin = computed(() => isAdminValue.value)
+
+    // スーパー管理者判定（email が SUPER_ADMIN_EMAILS に含まれる場合のみ true）
+    // NG / キャンセルからの復帰など、通常 admin でも不可な操作を許可する
+    const isSuperAdmin = computed(() => {
+        const email = user.value?.email?.toLowerCase().trim()
+        if (!email) return false
+        return SUPER_ADMIN_EMAILS.includes(email)
+    })
 
     const signIn = async () => {
         if (!auth) {
@@ -141,6 +152,7 @@ export function useAuth() {
         userName,
         userPhotoURL,
         isAdmin,
+        isSuperAdmin,
         isAdminChecked,
         googleAccessToken,
         getAccessToken,

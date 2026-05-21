@@ -18,11 +18,15 @@ const emit = defineEmits<{
   'delete': [castingId: string]
 }>()
 
-const { isAdmin } = useAuth()
+const { isAdmin, isSuperAdmin } = useAuth()
 
 // Available status options based on current status and permissions
 const availableStatusOptions = computed(() => {
-  const available = Permissions.getAvailableStatusTransitions(props.casting.status, isAdmin.value)
+  const available = Permissions.getAvailableStatusTransitions(
+    props.casting.status,
+    isAdmin.value,
+    isSuperAdmin.value
+  )
   return available.map(status => ({
     label: status,
     value: status

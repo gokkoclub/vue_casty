@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.handleSlackInteraction = exports.scheduledSyncFromSam = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.resendCalendarInvite = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.retryCalendarAttendee = exports.retrySlackThreadLink = exports.sendSlackOffshot = exports.onShootingEventCreate = exports.dispatchShootingSubmission = exports.handleSlackInteraction = exports.scheduledSyncCastsFromNotion = exports.syncCastsFromNotion = exports.scheduledSyncFromNotion = exports.syncFromNotion = exports.reassignCastingThread = exports.backfillCastingProjectName = exports.consolidateShootingDuplicates = exports.syncScheduleFromSam = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -52,6 +52,7 @@ const options_1 = require("firebase-functions/v2/options");
 const admin = __importStar(require("firebase-admin"));
 const slack_1 = require("./slack");
 const calendar_1 = require("./calendar");
+const gasCalendar_1 = require("./gasCalendar");
 const notion_1 = require("./notion");
 // Re-export new Cloud Functions
 var shootingDetails_1 = require("./shootingDetails");
@@ -59,11 +60,33 @@ Object.defineProperty(exports, "getShootingDetails", { enumerable: true, get: fu
 Object.defineProperty(exports, "syncShootingDetailsToContacts", { enumerable: true, get: function () { return shootingDetails_1.syncShootingDetailsToContacts; } });
 var driveSync_1 = require("./driveSync");
 Object.defineProperty(exports, "syncDriveLinksToContacts", { enumerable: true, get: function () { return driveSync_1.syncDriveLinksToContacts; } });
+// Sam 経由の同期は Notion 直接同期 (syncFromNotion) に移行済み。手動 onCall と移行ユーティリティは残し、cron は廃止。
 var syncFromSam_1 = require("./syncFromSam");
 Object.defineProperty(exports, "syncScheduleFromSam", { enumerable: true, get: function () { return syncFromSam_1.syncScheduleFromSam; } });
-Object.defineProperty(exports, "scheduledSyncFromSam", { enumerable: true, get: function () { return syncFromSam_1.scheduledSyncFromSam; } });
+Object.defineProperty(exports, "consolidateShootingDuplicates", { enumerable: true, get: function () { return syncFromSam_1.consolidateShootingDuplicates; } });
+Object.defineProperty(exports, "backfillCastingProjectName", { enumerable: true, get: function () { return syncFromSam_1.backfillCastingProjectName; } });
+var reassignCastingThread_1 = require("./reassignCastingThread");
+Object.defineProperty(exports, "reassignCastingThread", { enumerable: true, get: function () { return reassignCastingThread_1.reassignCastingThread; } });
+var syncFromNotion_1 = require("./syncFromNotion");
+Object.defineProperty(exports, "syncFromNotion", { enumerable: true, get: function () { return syncFromNotion_1.syncFromNotion; } });
+Object.defineProperty(exports, "scheduledSyncFromNotion", { enumerable: true, get: function () { return syncFromNotion_1.scheduledSyncFromNotion; } });
+var syncCastsFromNotion_1 = require("./syncCastsFromNotion");
+Object.defineProperty(exports, "syncCastsFromNotion", { enumerable: true, get: function () { return syncCastsFromNotion_1.syncCastsFromNotion; } });
+Object.defineProperty(exports, "scheduledSyncCastsFromNotion", { enumerable: true, get: function () { return syncCastsFromNotion_1.scheduledSyncCastsFromNotion; } });
 var slackInteraction_1 = require("./slackInteraction");
 Object.defineProperty(exports, "handleSlackInteraction", { enumerable: true, get: function () { return slackInteraction_1.handleSlackInteraction; } });
+// Automation (香盤SS submissions → 各種ディスパッチ)
+var dispatchShootingSubmission_1 = require("./automation/dispatchShootingSubmission");
+Object.defineProperty(exports, "dispatchShootingSubmission", { enumerable: true, get: function () { return dispatchShootingSubmission_1.dispatchShootingSubmission; } });
+var onShootingEventCreate_1 = require("./automation/onShootingEventCreate");
+Object.defineProperty(exports, "onShootingEventCreate", { enumerable: true, get: function () { return onShootingEventCreate_1.onShootingEventCreate; } });
+var sendSlackOffshot_1 = require("./automation/sendSlackOffshot");
+Object.defineProperty(exports, "sendSlackOffshot", { enumerable: true, get: function () { return sendSlackOffshot_1.sendSlackOffshot; } });
+var retrySlackThreadLink_1 = require("./automation/retrySlackThreadLink");
+Object.defineProperty(exports, "retrySlackThreadLink", { enumerable: true, get: function () { return retrySlackThreadLink_1.retrySlackThreadLink; } });
+const retrySlackThreadLink_2 = require("./automation/retrySlackThreadLink");
+var retryCalendarAttendee_1 = require("./automation/retryCalendarAttendee");
+Object.defineProperty(exports, "retryCalendarAttendee", { enumerable: true, get: function () { return retryCalendarAttendee_1.retryCalendarAttendee; } });
 // ─────────────────────────────────────────────
 // createNotionCast: Vue から新規キャストを Notion に登録
 // ─────────────────────────────────────────────
@@ -339,6 +362,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
         "SLACK_MENTION_GROUP_ID",
         "GOOGLE_SERVICE_ACCOUNT_KEY",
         "GOOGLE_CALENDAR_ID",
+        "GAS_INVITE_WEBHOOK_URL",
+        "GAS_INVITE_SHARED_SECRET",
     ],
 }, async (request) => {
     const data = request.data;
@@ -385,113 +410,137 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
         }
     }
     else if (data.projectId && !data.forceNewThread) {
-        // Firestore から slackThreadTs を探す
+        // 撮影モードは shooting.slackThreadTs を最優先（撮影単位の正）
+        if (orderMode === "shooting") {
+            try {
+                const shootSnap = await db.collection("shootings")
+                    .where("notionPageId", "==", data.projectId)
+                    .get();
+                const active = shootSnap.docs.find(d => {
+                    const sd = d.data();
+                    return sd.deleted !== true && sd.slackThreadTs;
+                });
+                if (active) {
+                    const sd = active.data();
+                    existingThreadTs = sd.slackThreadTs;
+                    existingPermalink = sd.slackPermalink || "";
+                    resolvedThreadChannel = sd.slackChannel || "";
+                    console.log("[Additional order] using shooting.slackThreadTs:", existingThreadTs);
+                }
+            }
+            catch (e) {
+                console.warn("[Additional order] shooting lookup failed:", e);
+            }
+        }
+        // shooting で見つからなかった場合のみ casting 検索（fallback）
         // ⚠️ キャンセル/NG/削除済みのキャスティングは別スレッドへ誤投稿の原因になるため除外
         //    （旧スレッドが残ったまま再キャスティングするケースで、新オーダーが旧スレッドに飛ぶバグ対策）
-        const existingSnap = await db.collection("castings")
-            .where("projectId", "==", data.projectId)
-            .get();
-        // 有効なキャスティング（NG・キャンセル・削除済み・削除フラグ以外）に絞って slackThreadTs を採用
-        const isActive = (d) => {
-            if (d.deleted === true)
-                return false;
-            if (d.status === "キャンセル" || d.status === "NG" || d.status === "削除済み")
-                return false;
-            return true;
-        };
-        const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs);
-        if (docWithThread) {
-            const existingData = docWithThread.data();
-            existingThreadTs = existingData.slackThreadTs || "";
-            existingPermalink = existingData.slackPermalink || "";
-            resolvedThreadChannel = resolveSlackChannel(existingData);
-        }
-        else if (existingSnap.docs.some(d => isActive(d.data()))) {
-            // 有効なキャスティングは存在するが slackThreadTs が空 → ts 保存失敗
-            // → Slack チャンネル履歴から Notion URL で元スレッドを検索してリカバリ
-            // ⚠️ ただし、削除/キャンセル済みキャスティングに紐づいたスレッドはブラックリスト化（誤投稿防止）
-            const blacklistedTs = new Set(existingSnap.docs
-                .filter(d => !isActive(d.data()))
-                .map(d => d.data().slackThreadTs)
-                .filter((ts) => !!ts));
-            console.log("[Recovery] slackThreadTs empty for projectId:", data.projectId, "— searching Slack channel...", "blacklist:", Array.from(blacklistedTs));
-            const notionUrl = `notion.so/${data.projectId.replace(/-/g, "")}`;
-            try {
-                let cursor;
-                let found = false;
-                // 最大200件（2ページ）まで遡って検索
-                for (let page = 0; page < 2 && !found; page++) {
-                    const historyResult = await fetch("https://slack.com/api/conversations.history", {
-                        method: "POST",
-                        headers: {
-                            "Authorization": `Bearer ${slackToken}`,
-                            "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                            channel: slackChannel,
-                            limit: 100,
-                            ...(cursor ? { cursor } : {}),
-                        }),
-                    });
-                    const historyData = await historyResult.json();
-                    if (!historyData.ok || !historyData.messages)
-                        break;
-                    for (const msg of historyData.messages) {
-                        if (msg.text && msg.text.includes(notionUrl)) {
-                            // 削除/キャンセル済みキャスティングと紐づいた古いスレッドはスキップ
-                            if (blacklistedTs.has(msg.ts)) {
-                                console.log("[Recovery] Skipping blacklisted (deleted casting) thread ts:", msg.ts);
-                                continue;
-                            }
-                            // 親メッセージ（スレッドの最初のメッセージ）のみ対象
-                            existingThreadTs = msg.ts;
-                            console.log("[Recovery] Found thread ts from Slack:", existingThreadTs);
-                            found = true;
-                            // permalink 取得
-                            try {
-                                const plResp = await fetch("https://slack.com/api/chat.getPermalink", {
-                                    method: "POST",
-                                    headers: {
-                                        "Authorization": `Bearer ${slackToken}`,
-                                        "Content-Type": "application/json",
-                                    },
-                                    body: JSON.stringify({ channel: slackChannel, message_ts: existingThreadTs }),
-                                });
-                                const plData = await plResp.json();
-                                if (plData.ok && plData.permalink) {
-                                    existingPermalink = plData.permalink;
-                                }
-                            }
-                            catch { /* ignore */ }
-                            // Firestore の該当キャスティング（有効なもののみ）に書き戻し
-                            // 削除/キャンセル済みには書き戻さない（誤投稿防止）
-                            const batch = db.batch();
-                            for (const d of existingSnap.docs) {
-                                if (!d.data().slackThreadTs && isActive(d.data())) {
-                                    batch.update(d.ref, {
-                                        slackThreadTs: existingThreadTs,
-                                        slackPermalink: existingPermalink,
-                                        slackChannel: slackChannel,
-                                    });
-                                }
-                            }
-                            await batch.commit();
-                            console.log("[Recovery] Updated", existingSnap.docs.length, "casting docs with recovered ts");
+        if (!existingThreadTs) {
+            const existingSnap = await db.collection("castings")
+                .where("projectId", "==", data.projectId)
+                .get();
+            // 有効なキャスティング（NG・キャンセル・削除済み・削除フラグ以外）に絞って slackThreadTs を採用
+            const isActive = (d) => {
+                if (d.deleted === true)
+                    return false;
+                if (d.status === "キャンセル" || d.status === "NG" || d.status === "削除済み")
+                    return false;
+                return true;
+            };
+            const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs);
+            if (docWithThread) {
+                const existingData = docWithThread.data();
+                existingThreadTs = existingData.slackThreadTs || "";
+                existingPermalink = existingData.slackPermalink || "";
+                resolvedThreadChannel = resolveSlackChannel(existingData);
+            }
+            else if (existingSnap.docs.some(d => isActive(d.data()))) {
+                // 有効なキャスティングは存在するが slackThreadTs が空 → ts 保存失敗
+                // → Slack チャンネル履歴から Notion URL で元スレッドを検索してリカバリ
+                // ⚠️ ただし、削除/キャンセル済みキャスティングに紐づいたスレッドはブラックリスト化（誤投稿防止）
+                const blacklistedTs = new Set(existingSnap.docs
+                    .filter(d => !isActive(d.data()))
+                    .map(d => d.data().slackThreadTs)
+                    .filter((ts) => !!ts));
+                console.log("[Recovery] slackThreadTs empty for projectId:", data.projectId, "— searching Slack channel...", "blacklist:", Array.from(blacklistedTs));
+                const notionUrl = `notion.so/${data.projectId.replace(/-/g, "")}`;
+                try {
+                    let cursor;
+                    let found = false;
+                    // 最大200件（2ページ）まで遡って検索
+                    for (let page = 0; page < 2 && !found; page++) {
+                        const historyResult = await fetch("https://slack.com/api/conversations.history", {
+                            method: "POST",
+                            headers: {
+                                "Authorization": `Bearer ${slackToken}`,
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                channel: slackChannel,
+                                limit: 100,
+                                ...(cursor ? { cursor } : {}),
+                            }),
+                        });
+                        const historyData = await historyResult.json();
+                        if (!historyData.ok || !historyData.messages)
                             break;
+                        for (const msg of historyData.messages) {
+                            if (msg.text && msg.text.includes(notionUrl)) {
+                                // 削除/キャンセル済みキャスティングと紐づいた古いスレッドはスキップ
+                                if (blacklistedTs.has(msg.ts)) {
+                                    console.log("[Recovery] Skipping blacklisted (deleted casting) thread ts:", msg.ts);
+                                    continue;
+                                }
+                                // 親メッセージ（スレッドの最初のメッセージ）のみ対象
+                                existingThreadTs = msg.ts;
+                                console.log("[Recovery] Found thread ts from Slack:", existingThreadTs);
+                                found = true;
+                                // permalink 取得
+                                try {
+                                    const plResp = await fetch("https://slack.com/api/chat.getPermalink", {
+                                        method: "POST",
+                                        headers: {
+                                            "Authorization": `Bearer ${slackToken}`,
+                                            "Content-Type": "application/json",
+                                        },
+                                        body: JSON.stringify({ channel: slackChannel, message_ts: existingThreadTs }),
+                                    });
+                                    const plData = await plResp.json();
+                                    if (plData.ok && plData.permalink) {
+                                        existingPermalink = plData.permalink;
+                                    }
+                                }
+                                catch { /* ignore */ }
+                                // Firestore の該当キャスティング（有効なもののみ）に書き戻し
+                                // 削除/キャンセル済みには書き戻さない（誤投稿防止）
+                                const batch = db.batch();
+                                for (const d of existingSnap.docs) {
+                                    if (!d.data().slackThreadTs && isActive(d.data())) {
+                                        batch.update(d.ref, {
+                                            slackThreadTs: existingThreadTs,
+                                            slackPermalink: existingPermalink,
+                                            slackChannel: slackChannel,
+                                        });
+                                    }
+                                }
+                                await batch.commit();
+                                console.log("[Recovery] Updated", existingSnap.docs.length, "casting docs with recovered ts");
+                                break;
+                            }
                         }
+                        cursor = historyData.response_metadata?.next_cursor || undefined;
+                        if (!cursor)
+                            break;
                     }
-                    cursor = historyData.response_metadata?.next_cursor || undefined;
-                    if (!cursor)
-                        break;
+                    if (!found) {
+                        console.warn("[Recovery] Could not find thread in Slack for projectId:", data.projectId);
+                    }
                 }
-                if (!found) {
-                    console.warn("[Recovery] Could not find thread in Slack for projectId:", data.projectId);
+                catch (recoverErr) {
+                    console.error("[Recovery] Slack channel search failed:", recoverErr);
                 }
             }
-            catch (recoverErr) {
-                console.error("[Recovery] Slack channel search failed:", recoverErr);
-            }
-        }
+        } // end if (!existingThreadTs)
     }
     const isAdditional = !!existingThreadTs;
     if (isAdditional && resolvedThreadChannel) {
@@ -708,6 +757,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     const serviceAccountKey = getEnv("GOOGLE_SERVICE_ACCOUNT_KEY");
     const calendarId = getEnv("GOOGLE_CALENDAR_ID");
     const calendarResults = {};
+    const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+    const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
     const calendarDebug = {
         hasServiceAccountKey: !!serviceAccountKey,
         serviceAccountKeyLength: serviceAccountKey?.length || 0,
@@ -732,35 +783,51 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     console.log("Calendar check: serviceAccountKey exists:", !!serviceAccountKey, "length:", serviceAccountKey?.length, "calendarId exists:", !!calendarId, "calendarId:", calendarId);
     if (serviceAccountKey && calendarId) {
         try {
-            const internalItems = data.items.filter((item) => item.castType === "内部");
-            console.log("Calendar: internalItems count:", internalItems.length);
+            // data.castingIds はフロントで items × itemDates の順に生成されているため、
+            // ここでも同じ順序で回して global index から対応する castings ドキュメントIDを引く。
+            // （内部キャストのみカレンダーを作るが、index は全アイテム分進めないと castingIds と揃わない）
+            const itemsAll = (data.items || []);
+            const castingIdsForCalendar = data.castingIds || [];
+            const internalCount = itemsAll.filter(it => it.castType === "内部").length;
+            console.log("Calendar: internalItems count:", internalCount);
             console.log("Calendar: dateRanges:", data.dateRanges);
-            calendarDebug.internalItemsCount = internalItems.length;
-            for (const item of internalItems) {
-                // キャストのメールアドレスを取得（カレンダー招待用）
-                let castEmail = "";
-                try {
-                    const castDoc = await db.collection("casts").doc(item.castId).get();
-                    if (castDoc.exists) {
-                        castEmail = castDoc.data()?.email || "";
-                    }
-                    console.log(`Calendar: castEmail for ${item.castName}:`, castEmail || "(none)");
-                }
-                catch (e) {
-                    console.warn(`Failed to get email for cast ${item.castId}:`, e);
-                }
-                // per-item selectedDates があればそれを使用、なければ全日程
+            calendarDebug.internalItemsCount = internalCount;
+            // castId -> email キャッシュ
+            const emailCache = new Map();
+            let calGlobalIdx = 0;
+            for (const item of itemsAll) {
                 const itemDates = item.selectedDates && item.selectedDates.length > 0
                     ? item.selectedDates
                     : (data.dateRanges || []);
+                // 内部キャスト以外も globalIdx は進める必要がある
+                if (item.castType !== "内部") {
+                    calGlobalIdx += itemDates.length;
+                    continue;
+                }
+                // キャストのメールアドレス（per-cast キャッシュ）
+                let castEmail = emailCache.get(item.castId) || "";
+                if (!emailCache.has(item.castId)) {
+                    try {
+                        const castDoc = await db.collection("casts").doc(item.castId).get();
+                        if (castDoc.exists)
+                            castEmail = castDoc.data()?.email || "";
+                    }
+                    catch (e) {
+                        console.warn(`Failed to get email for cast ${item.castId}:`, e);
+                    }
+                    emailCache.set(item.castId, castEmail);
+                    console.log(`Calendar: castEmail for ${item.castName}:`, castEmail || "(none)");
+                }
                 for (const dateRange of itemDates) {
+                    const castingDocId = castingIdsForCalendar[calGlobalIdx] || "";
+                    calGlobalIdx++;
                     const [startDate] = dateRange.includes("~")
                         ? dateRange.split("~").map((s) => s.trim())
                         : [dateRange];
                     // Calendar API requires YYYY-MM-DD format
                     const rawDate = startDate || dateRange;
                     const calendarDate = rawDate.replace(/\//g, "-");
-                    console.log("Calendar date:", rawDate, "→", calendarDate);
+                    console.log("Calendar date:", rawDate, "→", calendarDate, "castingId:", castingDocId);
                     try {
                         const eventId = await (0, calendar_1.createCalendarEvent)({
                             serviceAccountKey,
@@ -771,7 +838,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                             roleName: item.roleName || "出演",
                             rank: item.rank || "",
                             mainSub: item.mainSub || "その他",
-                            castingId: item.castId || "",
+                            castingId: castingDocId,
                             castEmail: castEmail || undefined,
                             status: "仮キャスティング",
                             startDate: calendarDate,
@@ -779,9 +846,36 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                             endTime: data.endTime || undefined,
                             isProvisional: true,
                         });
-                        if (eventId) {
-                            const key = `${item.castName}_${startDate || dateRange}`;
-                            calendarResults[key] = { eventId, castEmail: castEmail || "" };
+                        if (eventId && castingDocId) {
+                            // GAS 経由で attendee 追加（フロント OAuth PATCH の置き換え）
+                            let attendeePending = false;
+                            let attendeeError;
+                            if (castEmail) {
+                                const gasRes = await (0, gasCalendar_1.addAttendeeViaGas)({
+                                    webhookUrl: gasWebhookUrl,
+                                    secret: gasSharedSecret,
+                                    calendarId,
+                                    eventId,
+                                    attendeeEmail: castEmail,
+                                });
+                                if (!gasRes.ok) {
+                                    attendeePending = true;
+                                    attendeeError = gasRes.error || "unknown";
+                                    console.warn(`[GAS invite] failed for ${item.castName} (${castEmail}): ${attendeeError}`);
+                                }
+                                else {
+                                    console.log(`[GAS invite] ok for ${item.castName} (${castEmail})${gasRes.skipped ? " skipped=" + gasRes.skipped : ""}`);
+                                }
+                            }
+                            else {
+                                console.log(`[GAS invite] skipped: no castEmail for ${item.castName}`);
+                            }
+                            calendarResults[castingDocId] = {
+                                eventId,
+                                castEmail: castEmail || "",
+                                attendeePending,
+                                ...(attendeeError ? { attendeeError } : {}),
+                            };
                         }
                     }
                     catch (eventError) {
@@ -816,9 +910,9 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             console.warn("[Writeback] threadTs is empty — slack fields will not be written, but calendar/etc. will still be saved");
         }
         const batch = db.batch();
-        const items = data.items;
         let updateCount = 0;
         for (let i = 0; i < castingIds.length; i++) {
+            const cid = castingIds[i];
             const updateData = {};
             // Slack 情報は ts が取れた時のみ書き戻す
             if (threadTs) {
@@ -826,31 +920,65 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                 updateData.slackPermalink = permalink;
                 updateData.slackChannel = postChannel;
             }
-            // カレンダーイベントIDをマッチして書き戻す（ts の有無に依存しない）
-            const item = items[i];
-            if (item && item.castType === "内部") {
-                const itemDates = item.selectedDates && item.selectedDates.length > 0
-                    ? item.selectedDates
-                    : (data.dateRanges || []);
-                for (const dateRange of itemDates) {
-                    const startDate = dateRange.includes("~")
-                        ? dateRange.split("~")[0].trim()
-                        : dateRange;
-                    const key = `${item.castName}_${startDate}`;
-                    if (calendarResults[key]) {
-                        updateData.calendarEventId = calendarResults[key].eventId;
-                        break;
+            // calendarResults は castingId で直接引ける（内部キャストの分だけ存在）
+            if (calendarResults[cid]) {
+                const r = calendarResults[cid];
+                updateData.calendarEventId = r.eventId;
+                if (r.attendeePending) {
+                    // スケジューラで後追いリトライさせる
+                    updateData.calendarAttendeePending = true;
+                    updateData.calendarAttendeeRetryCount = 0;
+                    if (r.attendeeError) {
+                        updateData.calendarAttendeeLastError = r.attendeeError;
                     }
                 }
             }
             if (Object.keys(updateData).length > 0) {
-                batch.update(db.collection("castings").doc(castingIds[i]), updateData);
+                batch.update(db.collection("castings").doc(cid), updateData);
                 updateCount++;
             }
         }
         if (updateCount > 0) {
             await batch.commit();
             console.log(`[Writeback] Updated ${updateCount} castings (slackTs=${threadTs ? "yes" : "NO"})`);
+        }
+        // ── shooting への dual write（撮影モードのみ）──
+        // 同 NotionID = 1 shooting に集約済みのため、shooting.slackThreadTs を「正」とする運用に寄せる。
+        // 過去データ互換のため casting 側にも書く（dual write）。読み取り側は shooting 優先で見る。
+        if (threadTs && orderMode === "shooting" && data.projectId) {
+            try {
+                const shootSnap = await db.collection("shootings")
+                    .where("notionPageId", "==", data.projectId)
+                    .get();
+                const activeShoots = shootSnap.docs.filter(d => d.data().deleted !== true);
+                if (activeShoots.length > 0) {
+                    const shBatch = db.batch();
+                    for (const sdoc of activeShoots) {
+                        shBatch.update(sdoc.ref, {
+                            slackThreadTs: threadTs,
+                            slackPermalink: permalink,
+                            slackChannel: postChannel,
+                            slackUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        });
+                    }
+                    await shBatch.commit();
+                    console.log(`[Writeback] shooting slackThreadTs updated: ${activeShoots.length}`);
+                }
+            }
+            catch (e) {
+                console.warn("[Writeback] shooting slackThreadTs update failed:", e);
+            }
+        }
+        // ── slackThreadTs が空のまま残った場合、3分後に自動再同期を予約 ──
+        // Slack 投稿は成功していてもフロント→CF のパスで ts/permalink が取れないケースがある。
+        // 3分待ってから conversations.history を引き直して復旧を試みる。
+        if (!threadTs) {
+            try {
+                await (0, retrySlackThreadLink_2.scheduleSlackThreadLinkRetry)(castingIds, 180);
+            }
+            catch (schedErr) {
+                console.error("[notifyOrderCreated] Failed to schedule slack thread retry:", schedErr);
+            }
         }
     }
     // ── 内部キャストへ Slack DM 送信 ──
@@ -1124,6 +1252,8 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     secrets: [
         "GOOGLE_SERVICE_ACCOUNT_KEY",
         "GOOGLE_CALENDAR_ID",
+        "GAS_INVITE_WEBHOOK_URL",
+        "GAS_INVITE_SHARED_SECRET",
     ],
 }, async (request) => {
     const data = request.data;
@@ -1181,10 +1311,11 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
         try {
             const shootSnap = await db.collection("shootings")
                 .where("notionPageId", "==", casting.projectId)
-                .limit(1)
                 .get();
-            if (!shootSnap.empty) {
-                const sd = shootSnap.docs[0].data();
+            // deleted を除外（同 NotionID = 1 件前提だが安全のため filter）
+            const activeShoot = shootSnap.docs.find(d => d.data().deleted !== true);
+            if (activeShoot) {
+                const sd = activeShoot.data();
                 startTime = startTime || sd.startTime || undefined;
                 endTime = endTime || sd.endTime || undefined;
             }
@@ -1219,7 +1350,7 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
             roleName: casting.roleName || "出演",
             rank: String(casting.rank || ""),
             mainSub: casting.mainSub || "その他",
-            castingId: casting.castId || "",
+            castingId: data.castingId,
             castEmail: castEmail || undefined,
             status,
             startDate: startDateStr,
@@ -1236,11 +1367,104 @@ exports.regenerateCalendarEvent = (0, https_1.onCall)({
     if (!eventId) {
         throw new https_1.HttpsError("internal", "Calendar creation returned no eventId");
     }
-    await castingDoc.ref.update({ calendarEventId: eventId });
-    console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId}`);
-    // フロント側で attendees 追加 (Domain-Wide Delegation 不要、ユーザーOAuth経由) するため
-    // castEmail を返す。通常オーダー時の calendarResults と同じ仕組みで再利用される。
-    return { success: true, eventId, castEmail };
+    // attendee 追加は GAS 経由で CF 内完結させる。失敗時は pending フラグで後追いリトライ。
+    const update = { calendarEventId: eventId };
+    let attendeeStatus = "skipped";
+    let attendeeError;
+    if (castEmail) {
+        const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+        const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
+        const gasRes = await (0, gasCalendar_1.addAttendeeViaGas)({
+            webhookUrl: gasWebhookUrl,
+            secret: gasSharedSecret,
+            calendarId,
+            eventId,
+            attendeeEmail: castEmail,
+        });
+        if (gasRes.ok) {
+            attendeeStatus = "ok";
+            update.calendarAttendeePending = admin.firestore.FieldValue.delete();
+            update.calendarAttendeeLastError = admin.firestore.FieldValue.delete();
+            update.calendarAttendeeRetryCount = admin.firestore.FieldValue.delete();
+        }
+        else {
+            attendeeStatus = "pending";
+            attendeeError = gasRes.error || "unknown";
+            update.calendarAttendeePending = true;
+            update.calendarAttendeeRetryCount = 0;
+            update.calendarAttendeeLastError = attendeeError;
+        }
+    }
+    await castingDoc.ref.update(update);
+    console.log(`[regenerateCalendar] Created event ${eventId} for casting ${data.castingId} attendee=${attendeeStatus}`);
+    return {
+        success: true,
+        eventId,
+        attendeeStatus,
+        ...(attendeeError ? { attendeeError } : {}),
+    };
+});
+// ──────────────────────────────────────
+// 2c-2. 既存イベントへの招待再送 (eventId あり前提)
+// ──────────────────────────────────────
+// 「イベントはあるけど招待が飛んでない」状態の救済。regenerate と違い eventId は作り直さない。
+exports.resendCalendarInvite = (0, https_1.onCall)({
+    maxInstances: 10,
+    secrets: [
+        "GOOGLE_CALENDAR_ID",
+        "GAS_INVITE_WEBHOOK_URL",
+        "GAS_INVITE_SHARED_SECRET",
+    ],
+}, async (request) => {
+    const data = request.data;
+    if (!data || !data.castingId) {
+        throw new https_1.HttpsError("invalid-argument", "castingId is required");
+    }
+    const db = admin.firestore();
+    const castingDoc = await db.collection("castings").doc(data.castingId).get();
+    if (!castingDoc.exists) {
+        throw new https_1.HttpsError("not-found", "Casting not found");
+    }
+    const casting = castingDoc.data();
+    if (!casting.calendarEventId) {
+        throw new https_1.HttpsError("failed-precondition", "calendarEventId が無いので先に再生成してください");
+    }
+    let castEmail = "";
+    if (casting.castId) {
+        const castDoc = await db.collection("casts").doc(casting.castId).get();
+        if (castDoc.exists)
+            castEmail = castDoc.data()?.email || "";
+    }
+    if (!castEmail) {
+        throw new https_1.HttpsError("failed-precondition", "cast の email が登録されていません");
+    }
+    const calendarId = getEnv("GOOGLE_CALENDAR_ID");
+    const gasWebhookUrl = getEnv("GAS_INVITE_WEBHOOK_URL");
+    const gasSharedSecret = getEnv("GAS_INVITE_SHARED_SECRET");
+    const gasRes = await (0, gasCalendar_1.addAttendeeViaGas)({
+        webhookUrl: gasWebhookUrl,
+        secret: gasSharedSecret,
+        calendarId,
+        eventId: casting.calendarEventId,
+        attendeeEmail: castEmail,
+    });
+    if (gasRes.ok) {
+        await castingDoc.ref.update({
+            calendarAttendeePending: admin.firestore.FieldValue.delete(),
+            calendarAttendeeLastError: admin.firestore.FieldValue.delete(),
+            calendarAttendeeRetryCount: admin.firestore.FieldValue.delete(),
+        });
+        return { success: true, skipped: gasRes.skipped };
+    }
+    else {
+        const prev = casting.calendarAttendeeRetryCount || 0;
+        await castingDoc.ref.update({
+            calendarAttendeePending: true,
+            calendarAttendeeRetryCount: prev + 1,
+            calendarAttendeeLastError: gasRes.error || "unknown",
+        });
+        throw new https_1.HttpsError("internal", `GAS invite failed: ${gasRes.error}`);
+    }
 });
 // ──────────────────────────────────────
 // 2d. キャスティングの slackThreadTs 修復

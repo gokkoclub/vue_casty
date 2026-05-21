@@ -19,6 +19,22 @@ const STATUS_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
     'キャンセル': []
 }
 
+// スーパー管理者用の遷移許可マップ
+// 通常 admin でも NG / キャンセル からは戻せないが、スーパー管理者のみ巻き戻しを許可する
+// （誤 NG の救済・運用上の例外対応のため）
+const SUPER_ADMIN_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
+    '仮押さえ': ['打診中', 'オーダー待ち', 'OK', '決定', 'NG', 'キャンセル'],
+    '仮キャスティング': ['打診中', 'OK', '条件つきOK', 'NG', 'キャンセル'],
+    '打診中': ['オーダー待ち', 'OK', '条件つきOK', 'NG'],
+    'オーダー待ち': ['OK', '条件つきOK', '決定', 'NG'],
+    'オーダー待ち（仮キャスティング）': ['OK', '条件つきOK', '決定', 'NG'],
+    'OK': ['決定', 'NG'],
+    '条件つきOK': ['OK', '決定', 'NG'],
+    '決定': ['キャンセル', 'NG', 'OK', '条件つきOK'],
+    'NG': ['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', 'オーダー待ち（仮キャスティング）', 'OK', '条件つきOK', '決定'],
+    'キャンセル': ['仮押さえ', '仮キャスティング', '打診中', 'オーダー待ち', 'オーダー待ち（仮キャスティング）', 'OK', '条件つきOK', '決定']
+}
+
 // 一般ユーザーが変更可能なステータス（業務フローに必要な遷移をカバー）
 const USER_ALLOWED_TRANSITIONS: Record<CastingStatus, CastingStatus[]> = {
     '仮押さえ': ['打診中', 'オーダー待ち', 'NG', 'キャンセル'],
@@ -38,9 +54,17 @@ export const Permissions = {
      * 現在のステータスから遷移可能なステータス一覧を取得
      * @param currentStatus 現在のステータス
      * @param isAdmin 管理者かどうか
+     * @param isSuperAdmin スーパー管理者かどうか（指定時は admin より広い遷移を許可）
      * @returns 遷移可能なステータス配列
      */
-    getAvailableStatusTransitions(currentStatus: CastingStatus, isAdmin: boolean): CastingStatus[] {
+    getAvailableStatusTransitions(
+        currentStatus: CastingStatus,
+        isAdmin: boolean,
+        isSuperAdmin = false
+    ): CastingStatus[] {
+        if (isSuperAdmin) {
+            return SUPER_ADMIN_TRANSITIONS[currentStatus] || []
+        }
         if (isAdmin) {
             return STATUS_TRANSITIONS[currentStatus] || []
         }
@@ -49,12 +73,18 @@ export const Permissions = {
 
     /**
      * ステータス変更が可能かどうかをチェック
-     * @param currentStatus 現在のステータス  
+     * @param currentStatus 現在のステータス
      * @param newStatus 新しいステータス
      * @param isAdmin 管理者かどうか
+     * @param isSuperAdmin スーパー管理者かどうか
      */
-    canChangeStatus(currentStatus: CastingStatus, newStatus: CastingStatus, isAdmin: boolean): boolean {
-        const allowed = this.getAvailableStatusTransitions(currentStatus, isAdmin)
+    canChangeStatus(
+        currentStatus: CastingStatus,
+        newStatus: CastingStatus,
+        isAdmin: boolean,
+        isSuperAdmin = false
+    ): boolean {
+        const allowed = this.getAvailableStatusTransitions(currentStatus, isAdmin, isSuperAdmin)
         return allowed.includes(newStatus)
     },
 

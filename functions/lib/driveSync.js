@@ -46,7 +46,7 @@ const admin = __importStar(require("firebase-admin"));
  * offshotDrive コレクションから NotionPageID でDriveリンクを取得し、
  * 対応する shootingContacts の makingUrl を更新する
  */
-exports.syncDriveLinksToContacts = (0, https_1.onCall)({ maxInstances: 10, cors: true, region: "asia-northeast1" }, async (request) => {
+exports.syncDriveLinksToContacts = (0, https_1.onCall)({ maxInstances: 10, region: "asia-northeast1", memory: "512MiB", timeoutSeconds: 120 }, async (request) => {
     const data = request.data;
     if (!data) {
         throw new https_1.HttpsError("invalid-argument", "Request data is required");

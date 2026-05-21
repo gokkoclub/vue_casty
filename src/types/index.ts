@@ -16,6 +16,9 @@ export interface Cast {
     snsX?: string
     snsInstagram?: string
     snsTikTok?: string
+    // Notion キャスト DB の特記事項4フィールド (NG・制限事項 / アレルギー / 金額_特記事項 / 備考欄) を集約したもの
+    memo?: string
+    hasMemo?: boolean
     createdAt: Timestamp
     updatedAt: Timestamp
 }

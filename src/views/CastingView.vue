@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue'
 import Card from 'primevue/card'
+import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import SelectButton from 'primevue/selectbutton'
 import ProgressSpinner from 'primevue/progressspinner'
@@ -268,15 +269,34 @@ const handleCastClick = (cast: Cast) => {
   showDetailDialog.value = true
 }
 
+// 特記事項警告ダイアログ
+const memoWarning = ref<{ visible: boolean; cast: Cast | null }>({ visible: false, cast: null })
+
 const handleAddToCart = (cast: Cast) => {
   if (selectedDates.value.length === 0) {
     toast.add({ severity: 'warn', summary: '手順エラー', detail: '先にカレンダーで日程と案件を選択してください', life: 3000 })
     return
   }
-  
+  if (cast.hasMemo && cast.memo) {
+    // 特記事項あり → ダイアログで一旦止める
+    memoWarning.value = { visible: true, cast }
+    return
+  }
+  doAddToCart(cast)
+}
+
+const doAddToCart = (cast: Cast) => {
   store.addItem(cast)
-  // No longer auto-opening cart
   toast.add({ severity: 'success', summary: 'カートに追加', detail: cast.name, life: 2000 })
+}
+
+const handleMemoConfirm = () => {
+  if (memoWarning.value.cast) doAddToCart(memoWarning.value.cast)
+  memoWarning.value = { visible: false, cast: null }
+}
+
+const handleMemoCancel = () => {
+  memoWarning.value = { visible: false, cast: null }
 }
 
 const handleNewCastSaved = (cast: Cast) => {
@@ -752,10 +772,44 @@ onUnmounted(() => {
       v-model:visible="showNewCastModal"
       @saved="handleNewCastSaved"
     />
+
+    <!-- 特記事項警告ダイアログ -->
+    <Dialog
+      v-model:visible="memoWarning.visible"
+      modal
+      :header="`⚠️ ${memoWarning.cast?.name ?? ''} に特記事項があります`"
+      :style="{ width: '520px' }"
+      :closable="false"
+    >
+      <div class="memo-warning-body">
+        <pre class="memo-text">{{ memoWarning.cast?.memo }}</pre>
+      </div>
+      <template #footer>
+        <Button label="キャンセル" text @click="handleMemoCancel" />
+        <Button label="確認した上でカートに追加" severity="warn" icon="pi pi-check" @click="handleMemoConfirm" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <style scoped>
+.memo-warning-body {
+    background: var(--surface-50);
+    border-left: 4px solid var(--orange-500);
+    padding: 0.75rem 1rem;
+    border-radius: 4px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+.memo-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: inherit;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    color: var(--text-color);
+}
 .casting-view {
   padding: 1rem;
 }

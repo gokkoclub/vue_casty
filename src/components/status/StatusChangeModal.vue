@@ -19,7 +19,7 @@ const emit = defineEmits<{
     'confirm': [castingId: string, newStatus: CastingStatus, extraMessage?: string]
 }>()
 
-const { isAdmin } = useAuth()
+const { isAdmin, isSuperAdmin } = useAuth()
 
 // Local state
 const selectedStatus = ref<CastingStatus | null>(null)
@@ -30,7 +30,11 @@ const loading = ref(false)
 const availableStatuses = computed(() => {
     if (!props.casting) return []
     
-    const transitions = Permissions.getAvailableStatusTransitions(props.casting.status, isAdmin.value)
+    const transitions = Permissions.getAvailableStatusTransitions(
+        props.casting.status,
+        isAdmin.value,
+        isSuperAdmin.value
+    )
     return transitions.map(status => ({
         label: status,
         value: status,

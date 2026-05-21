@@ -67,6 +67,10 @@ const handleImageError = (event: Event) => {
           @error="handleImageError"
           loading="lazy"
         />
+        <!-- 特記事項マーク -->
+        <div v-if="cast.hasMemo" class="memo-mark" v-tooltip.top="'特記事項あり'">
+          <i class="pi pi-exclamation-triangle"></i>
+        </div>
         <!-- Booking badges overlaid on image -->
         <div v-if="bookings && bookings.length > 0" class="booking-badges">
           <Tag
@@ -118,6 +122,23 @@ const handleImageError = (event: Event) => {
   box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
   outline: 2px solid var(--p-primary-color);
   outline-offset: 0px;
+}
+
+.memo-mark {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #f59e0b;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .booking-badges {
