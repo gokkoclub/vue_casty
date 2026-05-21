@@ -9,7 +9,6 @@ export interface Cast {
     agency: string
     imageUrl: string
     email: string
-    notes: string
     castType: '内部' | '外部'
     slackMentionId: string
     appearanceCount: number

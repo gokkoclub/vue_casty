@@ -135,10 +135,6 @@ const openSns = (url: string) => {
               <th>連絡先</th>
               <td>{{ cast.email || '-' }}</td>
             </tr>
-            <tr>
-              <th>備考</th>
-              <td>{{ cast.notes || '-' }}</td>
-            </tr>
             <tr v-if="cast.hasMemo && cast.memo">
               <th>
                 <i class="pi pi-exclamation-triangle" style="color: #f59e0b; margin-right: 4px;"></i>

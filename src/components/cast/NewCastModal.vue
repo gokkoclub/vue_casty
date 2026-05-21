@@ -2,7 +2,6 @@
 import { ref, reactive } from 'vue'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
-import Textarea from 'primevue/textarea'
 import Select from 'primevue/select'
 import Button from 'primevue/button'
 import { useCasts } from '@/composables/useCasts'
@@ -28,7 +27,6 @@ const form = reactive({
     gender: '' as '' | '男性' | '女性',
     agency: '',
     email: '',
-    notes: '',
 })
 
 const genderOptions = [
@@ -42,7 +40,6 @@ function resetForm() {
     form.gender = ''
     form.agency = ''
     form.email = ''
-    form.notes = ''
     nameError.value = false
 }
 
@@ -61,7 +58,6 @@ async function handleSave() {
             gender: form.gender || '',
             agency: form.agency.trim() || '外部',
             email: form.email.trim(),
-            notes: form.notes.trim(),
             castType: '外部',
             imageUrl: '',
             slackMentionId: '',
@@ -170,21 +166,12 @@ function handleClose() {
                 />
             </div>
 
-            <!-- 備考 -->
-            <div class="form-field">
-                <label for="new-cast-notes">備考</label>
-                <Textarea
-                    id="new-cast-notes"
-                    v-model="form.notes"
-                    rows="3"
-                    placeholder="メモなど"
-                    class="w-full"
-                />
-            </div>
-
             <div class="form-info">
                 <i class="pi pi-info-circle"></i>
-                <span>外部キャストとして登録されます。画像やSNSは登録後に管理画面から編集できます。</span>
+                <span>
+                    外部キャストとして登録されます。画像 / SNS / 特記事項 (NG・アレルギー・金額・備考) は
+                    Notion 側で追加してください。次回同期で反映されます。
+                </span>
             </div>
         </div>
 

@@ -217,12 +217,12 @@ const handleOrderTypeSelect = (mode: 'external' | 'internal' | 'cancel') => {
 // Cast Selection
 const filteredCasts = computed(() => {
   let result = casts.value.filter(cast => {
-    // Text search: name, agency, notes, furigana
+    // Text search: name, agency, memo (特記事項), furigana
     const searchLower = searchQuery.value.toLowerCase()
-    const matchesSearch = !searchQuery.value || 
+    const matchesSearch = !searchQuery.value ||
       cast.name.toLowerCase().includes(searchLower) ||
       cast.agency?.toLowerCase().includes(searchLower) ||
-      cast.notes?.toLowerCase().includes(searchLower) ||
+      cast.memo?.toLowerCase().includes(searchLower) ||
       (cast as any).furigana?.toLowerCase().includes(searchLower)
     
     // Type filter
