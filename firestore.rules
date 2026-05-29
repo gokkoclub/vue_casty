@@ -32,9 +32,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
-    // shootings: 認証済みユーザーは読み書き可能
+    // shootings: 読み取りのみ。書き込みは Admin SDK (CF / Service Account) 経由のみ
+    // → gokko-sam リポジトリ等の外部 GAS からの直接書き込みをブロックする目的
+    //   (CF / admin スクリプトはルールをバイパスして動作するので影響なし)
     match /shootings/{docId} {
-      allow read, write: if request.auth != null;
+      allow read: if request.auth != null;
+      allow write: if false;
     }
 
     // shootingDetails: 認証済みユーザーは読み書き可能
