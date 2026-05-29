@@ -32,12 +32,12 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
-    // shootings: 読み取りのみ。書き込みは Admin SDK (CF / Service Account) 経由のみ
-    // → gokko-sam リポジトリ等の外部 GAS からの直接書き込みをブロックする目的
-    //   (CF / admin スクリプトはルールをバイパスして動作するので影響なし)
+    // shootings: 認証済みユーザーは読み書き可能
+    // NOTE: GAS (gokko-sam) もメイキング URL / Drive リンク / 香盤シートリンクの更新で書き込む。
+    //       ハイフン無し ID で書き込まれると重複の原因になるので、
+    //       GAS 側を「ハイフン付き notionPageId をそのまま docId に」修正してもらう必要あり。
     match /shootings/{docId} {
-      allow read: if request.auth != null;
-      allow write: if false;
+      allow read, write: if request.auth != null;
     }
 
     // shootingDetails: 認証済みユーザーは読み書き可能
