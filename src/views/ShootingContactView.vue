@@ -22,6 +22,11 @@ const {
     syncSchedule, syncMaking
 } = useShootingContact()
 
+// ステータス選択肢（一括変更用）
+const CONTACT_STATUSES: ShootingContactStatus[] = [
+    '香盤連絡待ち', '発注書送信待ち', 'メイキング共有待ち', '投稿日連絡待ち', '完了'
+]
+
 type TabDef = { label: string; status: ShootingContactStatus; icon: string; syncLabel?: string }
 
 const tabs: TabDef[] = [
@@ -133,19 +138,76 @@ function openPdf(contact: ShootingContact) {
     showPdfModal.value = true
 }
 
-// -- Selection / Bulk Delete
-const selectedIds = ref<string[]>([])
+// -- Bulk Select Mode (キャスティング状況と同じ UI)
+const bulkSelectMode = ref(false)
+const selectedIdSet = ref<Set<string>>(new Set())
+const selectedCount = computed(() => selectedIdSet.value.size)
 const showDeleteConfirm = ref(false)
+const showStatusModal = ref(false)
+const newStatus = ref<ShootingContactStatus>('香盤連絡待ち')
 
-function handleSelectionChange(ids: string[]) {
-    selectedIds.value = ids
+function toggleBulkMode() {
+    bulkSelectMode.value = !bulkSelectMode.value
+    if (!bulkSelectMode.value) selectedIdSet.value = new Set()
+}
+
+function isContactSelected(id: string): boolean {
+    return selectedIdSet.value.has(id)
+}
+
+function toggleContactSelect(id: string) {
+    const s = new Set(selectedIdSet.value)
+    if (s.has(id)) s.delete(id)
+    else s.add(id)
+    selectedIdSet.value = s
+}
+
+function clearSelection() {
+    selectedIdSet.value = new Set()
+}
+
+// 作品グループ単位の「全選択 / 全解除」
+function isProjectAllSelected(contacts: ShootingContact[]): boolean {
+    return contacts.length > 0 && contacts.every(c => selectedIdSet.value.has(c.id))
+}
+function toggleProjectSelect(contacts: ShootingContact[]) {
+    const target = !isProjectAllSelected(contacts)
+    const s = new Set(selectedIdSet.value)
+    for (const c of contacts) {
+        if (target) s.add(c.id)
+        else s.delete(c.id)
+    }
+    selectedIdSet.value = s
+}
+
+// 全選択（現在のタブ全体）
+function selectAllInTab() {
+    const allContacts: ShootingContact[] = []
+    for (const dg of dateGroups.value) {
+        for (const pg of dg.projects) {
+            allContacts.push(...pg.contacts)
+        }
+    }
+    selectedIdSet.value = new Set(allContacts.map(c => c.id))
 }
 
 async function handleBulkDelete() {
-    if (selectedIds.value.length === 0) return
-    await deleteContacts(selectedIds.value)
-    selectedIds.value = []
+    if (selectedIdSet.value.size === 0) return
+    await deleteContacts([...selectedIdSet.value])
+    selectedIdSet.value = new Set()
     showDeleteConfirm.value = false
+    bulkSelectMode.value = false
+}
+
+async function handleBulkStatusChange() {
+    if (selectedIdSet.value.size === 0) return
+    const ids = [...selectedIdSet.value]
+    for (const id of ids) {
+        await updateContact(id, { status: newStatus.value })
+    }
+    selectedIdSet.value = new Set()
+    showStatusModal.value = false
+    bulkSelectMode.value = false
 }
 </script>
 
@@ -168,6 +230,13 @@ async function handleBulkDelete() {
                     />
                 </div>
                 <Button
+                    :label="bulkSelectMode ? '選択中' : '一括選択'"
+                    :icon="bulkSelectMode ? 'pi pi-check-square' : 'pi pi-th-large'"
+                    :severity="bulkSelectMode ? 'info' : 'secondary'"
+                    size="small"
+                    @click="toggleBulkMode"
+                />
+                <Button
                     label="再読み込み"
                     icon="pi pi-refresh"
                     size="small"
@@ -187,28 +256,48 @@ async function handleBulkDelete() {
             <p>データを読み込み中...</p>
         </div>
 
-        <!-- Selection Action Bar -->
-        <div v-if="selectedIds.length > 0" class="selection-bar">
-            <span>✅ {{ selectedIds.length }}件選択中</span>
-            <Button
-                label="削除"
-                icon="pi pi-trash"
-                size="small"
-                severity="danger"
-                @click="showDeleteConfirm = true"
-            />
-            <Button
-                label="選択解除"
-                icon="pi pi-times"
-                size="small"
-                severity="secondary"
-                outlined
-                @click="selectedIds = []"
-            />
+        <!-- Bulk Action Bar -->
+        <div v-if="bulkSelectMode" class="bulk-action-bar">
+            <span class="selection-count">
+                <i class="pi pi-check-square"></i>
+                {{ selectedCount }}件選択中
+            </span>
+            <div class="bulk-actions">
+                <Button
+                    label="一括削除"
+                    icon="pi pi-trash"
+                    size="small"
+                    severity="danger"
+                    :disabled="selectedCount === 0"
+                    @click="showDeleteConfirm = true"
+                />
+                <Button
+                    label="一括ステータス更新"
+                    icon="pi pi-pencil"
+                    size="small"
+                    severity="info"
+                    :disabled="selectedCount === 0"
+                    @click="showStatusModal = true"
+                />
+                <Button
+                    label="全選択"
+                    icon="pi pi-check-circle"
+                    size="small"
+                    text
+                    @click="selectAllInTab"
+                />
+                <Button
+                    label="選択解除"
+                    icon="pi pi-times-circle"
+                    size="small"
+                    text
+                    @click="clearSelection"
+                />
+            </div>
         </div>
 
         <!-- Tabs -->
-        <TabView v-else-if="!loading" v-model:activeIndex="activeTab">
+        <TabView v-if="!loading" v-model:activeIndex="activeTab">
             <TabPanel
                 v-for="(tab, index) in tabs"
                 :key="tab.status"
@@ -290,16 +379,28 @@ async function handleBulkDelete() {
                                             <span class="separator">/</span>
                                             <span class="project-name-label">🎬 {{ pg.projectName }}</span>
                                             <Badge :value="pg.contacts.length" severity="info" class="count-badge" />
+                                            <Button
+                                                v-if="bulkSelectMode"
+                                                :label="isProjectAllSelected(pg.contacts) ? '作品の選択解除' : '作品を全選択'"
+                                                :icon="isProjectAllSelected(pg.contacts) ? 'pi pi-times-circle' : 'pi pi-check-square'"
+                                                size="small"
+                                                text
+                                                :severity="isProjectAllSelected(pg.contacts) ? 'secondary' : 'info'"
+                                                class="ml-auto"
+                                                @click="toggleProjectSelect(pg.contacts)"
+                                            />
                                         </div>
                                         <ShootingContactTable
                                             :contacts="pg.contacts"
                                             :status="tab.status"
+                                            :bulkSelectMode="bulkSelectMode"
+                                            :isSelected="isContactSelected"
                                             @save="handleSave"
                                             @advance-status="handleAdvance"
                                             @revert-status="handleRevert"
                                             @open-mail="openMail"
                                             @open-pdf="openPdf"
-                                            @selection-change="handleSelectionChange"
+                                            @toggle-select="toggleContactSelect"
                                         />
                                     </div>
                                 </div>
@@ -320,16 +421,28 @@ async function handleBulkDelete() {
                                     <span class="separator">/</span>
                                     <span class="project-name-label">🎬 {{ pg.projectName }}</span>
                                     <Badge :value="pg.contacts.length" severity="info" class="count-badge" />
+                                    <Button
+                                        v-if="bulkSelectMode"
+                                        :label="isProjectAllSelected(pg.contacts) ? '作品の選択解除' : '作品を全選択'"
+                                        :icon="isProjectAllSelected(pg.contacts) ? 'pi pi-times-circle' : 'pi pi-check-square'"
+                                        size="small"
+                                        text
+                                        :severity="isProjectAllSelected(pg.contacts) ? 'secondary' : 'info'"
+                                        class="ml-auto"
+                                        @click="toggleProjectSelect(pg.contacts)"
+                                    />
                                 </div>
                                 <ShootingContactTable
                                     :contacts="pg.contacts"
                                     :status="tab.status"
+                                    :bulkSelectMode="bulkSelectMode"
+                                    :isSelected="isContactSelected"
                                     @save="handleSave"
                                     @advance-status="handleAdvance"
                                     @revert-status="handleRevert"
                                     @open-mail="openMail"
                                     @open-pdf="openPdf"
-                                    @selection-change="handleSelectionChange"
+                                    @toggle-select="toggleContactSelect"
                                 />
                             </div>
                         </div>
@@ -366,12 +479,40 @@ async function handleBulkDelete() {
             :style="{ width: '400px' }"
         >
             <p style="margin: 0; text-align: center; font-size: 1rem;">
-                <strong>{{ selectedIds.length }}件</strong>のデータを削除します。<br>
+                <strong>{{ selectedCount }}件</strong>のデータを削除します。<br>
                 この操作は元に戻せません。
             </p>
             <template #footer>
                 <Button label="キャンセル" severity="secondary" outlined @click="showDeleteConfirm = false" />
                 <Button label="削除する" severity="danger" icon="pi pi-trash" @click="handleBulkDelete" />
+            </template>
+        </Dialog>
+
+        <!-- Bulk Status Change Dialog -->
+        <Dialog
+            :visible="showStatusModal"
+            @update:visible="showStatusModal = $event"
+            modal
+            header="一括ステータス更新"
+            :style="{ width: '420px' }"
+        >
+            <p class="status-modal-help">
+                選択中の <strong>{{ selectedCount }}件</strong> のステータスを変更します。
+            </p>
+            <div class="status-options">
+                <label
+                    v-for="s in CONTACT_STATUSES"
+                    :key="s"
+                    class="status-option"
+                    :class="{ 'selected': newStatus === s }"
+                >
+                    <input type="radio" :value="s" v-model="newStatus" />
+                    <span>{{ s }}</span>
+                </label>
+            </div>
+            <template #footer>
+                <Button label="キャンセル" severity="secondary" outlined @click="showStatusModal = false" />
+                <Button label="更新する" severity="info" icon="pi pi-check" @click="handleBulkStatusChange" />
             </template>
         </Dialog>
     </div>
@@ -537,6 +678,53 @@ async function handleBulkDelete() {
     padding: 0.75rem;
     margin-bottom: 0.75rem;
 }
+
+.bulk-action-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1rem;
+    background: var(--blue-50);
+    border: 1px solid var(--blue-200);
+    border-radius: 8px;
+    margin-bottom: 1rem;
+}
+.selection-count {
+    font-weight: 600;
+    color: var(--blue-800);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.bulk-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.status-modal-help {
+    margin: 0 0 1rem 0;
+    color: var(--text-color-secondary);
+    font-size: 0.9rem;
+}
+.status-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.status-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--surface-200);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.status-option.selected {
+    background: var(--blue-50);
+    border-color: var(--blue-400);
+}
+.ml-auto { margin-left: auto; }
 
 .selection-bar {
     display: flex;

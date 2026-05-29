@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import InputText from 'primevue/inputtext'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
@@ -10,6 +10,8 @@ import type { ShootingContact, ShootingContactStatus } from '@/types'
 const props = defineProps<{
     contacts: ShootingContact[]
     status: ShootingContactStatus
+    bulkSelectMode?: boolean
+    isSelected?: (id: string) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -18,39 +20,12 @@ const emit = defineEmits<{
     revertStatus: [id: string]
     openMail: [contact: ShootingContact]
     openPdf: [contact: ShootingContact]
-    selectionChange: [ids: string[]]
+    toggleSelect: [id: string]
 }>()
 
-// Selection state
-const selectedIds = ref<Set<string>>(new Set())
-
-const allSelected = computed(() =>
-    props.contacts.length > 0 && selectedIds.value.size === props.contacts.length
-)
-
-function toggleAll() {
-    if (allSelected.value) {
-        selectedIds.value.clear()
-    } else {
-        selectedIds.value = new Set(props.contacts.map(c => c.id))
-    }
-    emit('selectionChange', [...selectedIds.value])
-}
-
 function toggleSelect(id: string) {
-    if (selectedIds.value.has(id)) {
-        selectedIds.value.delete(id)
-    } else {
-        selectedIds.value.add(id)
-    }
-    emit('selectionChange', [...selectedIds.value])
+    emit('toggleSelect', id)
 }
-
-// Reset selection when contacts change
-watch(() => props.contacts, () => {
-    selectedIds.value.clear()
-    emit('selectionChange', [])
-})
 
 // In-line editing state per row
 const editing = ref<Record<string, boolean>>({})
@@ -127,9 +102,7 @@ function cancelConfirm() {
     <table class="sc-table">
         <thead>
             <tr>
-                <th class="col-select">
-                    <Checkbox :modelValue="allSelected" :binary="true" @update:modelValue="toggleAll" />
-                </th>
+                <th v-if="bulkSelectMode" class="col-select"></th>
                 <th class="col-cast">キャスト</th>
                 <th class="col-ms">M/S</th>
                 <th class="col-project">案件 / 役名</th>
@@ -152,9 +125,15 @@ function cancelConfirm() {
             </tr>
         </thead>
         <tbody>
-            <tr v-for="contact in contacts" :key="contact.id" class="contact-row" :class="{ 'selected-row': selectedIds.has(contact.id) }">
-                <td class="col-select">
-                    <Checkbox :modelValue="selectedIds.has(contact.id)" :binary="true" @update:modelValue="toggleSelect(contact.id)" />
+            <tr
+                v-for="contact in contacts"
+                :key="contact.id"
+                class="contact-row"
+                :class="{ 'selected-row': bulkSelectMode && isSelected?.(contact.id) }"
+                @click="bulkSelectMode && toggleSelect(contact.id)"
+            >
+                <td v-if="bulkSelectMode" class="col-select" @click.stop="toggleSelect(contact.id)">
+                    <Checkbox :modelValue="isSelected?.(contact.id) ?? false" :binary="true" @update:modelValue="toggleSelect(contact.id)" />
                 </td>
                 <td class="col-cast">
                     <span class="cast-name">{{ contact.castName }}</span>
