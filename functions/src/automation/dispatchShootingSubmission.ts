@@ -49,24 +49,30 @@ export const dispatchShootingSubmission = onDocumentWritten(
             return;
         }
 
-        // 冪等性: processed / processing / failed は再処理しない
-        if (after.status !== "submitted") {
+        // 状態遷移: pending (GAS から決定香盤として送信) → submitted → processing → processed
+        //   GAS は status を "pending" のまま書き込んでくるため、ここで submitted に正規化してから processing に進める。
+        //   processed / failed / processing は再処理しない (冪等性)
+        const PROCESSABLE_STATUSES = new Set(["submitted", "pending"]);
+        if (!PROCESSABLE_STATUSES.has(after.status)) {
             console.log(`[dispatch] Skip: status=${after.status}, pageId=${pageId}`);
             return;
         }
 
         const db = admin.firestore();
 
-        // 排他取得(トランザクションで status を processing に)
+        // 排他取得(トランザクションで pending → submitted → processing を 1 回で記録)
         try {
             await db.runTransaction(async (tx) => {
                 const snap = await tx.get(docRef);
                 const data = snap.data();
-                if (!data || data.status !== "submitted") {
+                if (!data || !PROCESSABLE_STATUSES.has(data.status)) {
                     throw new Error(`status changed: ${data?.status}`);
                 }
+                const wasPending = data.status === "pending";
                 tx.update(docRef, {
                     status: "processing",
+                    // pending から拾った場合は「submitted を経由した」記録を残す
+                    ...(wasPending ? { submittedAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
                     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 });
             });
@@ -121,6 +127,27 @@ async function processSubmission(
 
     await db.doc(`shootings/${pageId}`).set(shootingsUpdates, { merge: true });
     console.log(`[dispatch] shootings updated: ${pageId}`);
+
+    // ── 1b. projects/{hyphenless} にも title を伝搬 (GAS の Drive リネームトリガー) ──
+    // projects コレクションは GAS が「ハイフン無し pageId」で管理しており、
+    // titleFromNotion=true && title が来たら GAS の syncPureFromNotion が
+    // Drive フォルダ名を "YYYY-MM-DD_作品名" にリネームする設計。
+    // 香盤シートから title が確定したら projects 側にも反映してリネームを誘発する。
+    if (title) {
+        const docIdHyphenless = pageId.replace(/-/g, "");
+        try {
+            await db.doc(`projects/${docIdHyphenless}`).set({
+                title,
+                titleFromNotion: true,
+                titleFromKouban: true,
+                normalizedTitle: title.toLowerCase().replace(/\s+/g, ""),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            console.log(`[dispatch] projects.title updated: ${docIdHyphenless}`);
+        } catch (e) {
+            console.warn(`[dispatch] projects title update failed for ${docIdHyphenless}:`, e);
+        }
+    }
 
     // ── 2. shootingEvents を rows から生成 ──
     let eventCount = 0;
