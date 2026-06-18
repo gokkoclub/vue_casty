@@ -1,12 +1,24 @@
 /**
  * Cloud Functions - オフショットDriveリンクの同期
  *
- * GASがオフショットDriveスプレッドシートから offshotDrive コレクションに同期したデータを
- * shootingContacts の makingUrl に反映する
+ * 参照元: projects.driveFolderUrl（Notion 直接同期 CF が更新する稼働中のソース）を
+ * castings.makingUrl に反映する。
+ * ※ 旧 offshotDrive (GAS スプレッドシート同期) は 2026-05 に停止したため使用しない。
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+
+/**
+ * projects ドキュメントからオフショットフォルダ URL を取り出す。
+ * makingUrl は「オフショットフォルダ」を指すべきなので offshotUrl を使う
+ * （driveFolderUrl は案件ルートフォルダなので使わない）。
+ * offshotUrl は syncOffshotFileCounts が空のとき自動補完する。
+ */
+function projectDriveLink(data: admin.firestore.DocumentData | undefined): string | undefined {
+    if (!data) return undefined;
+    return (data.offshotUrl as string) || undefined;
+}
 
 /**
  * offshotDrive コレクションから NotionPageID でDriveリンクを取得し、
@@ -30,18 +42,13 @@ export const syncDriveLinksToContacts = onCall(
             if (shootingContactId && notionPageId) {
                 const normalizedId = notionPageId.replace(/-/g, "").toLowerCase();
 
-                // Look up drive link
-                const driveSnap = await db
-                    .collection("offshotDrive")
-                    .where("notionPageId", "==", normalizedId)
-                    .limit(1)
-                    .get();
+                // projects の doc id はハイフン無し notion page id
+                const projDoc = await db.collection("projects").doc(normalizedId).get();
+                const driveLink = projectDriveLink(projDoc.data());
 
-                if (driveSnap.empty) {
+                if (!driveLink) {
                     return { success: false, message: "No drive link found" };
                 }
-
-                const driveLink = driveSnap.docs[0]!.data().driveLink;
 
                 // Update shooting contact
                 await db
@@ -59,18 +66,13 @@ export const syncDriveLinksToContacts = onCall(
             if (notionPageId) {
                 const normalizedId = notionPageId.replace(/-/g, "").toLowerCase();
 
-                // Get drive link
-                const driveSnap = await db
-                    .collection("offshotDrive")
-                    .where("notionPageId", "==", normalizedId)
-                    .limit(1)
-                    .get();
+                // projects から drive link を取得
+                const projDoc = await db.collection("projects").doc(normalizedId).get();
+                const driveLink = projectDriveLink(projDoc.data());
 
-                if (driveSnap.empty) {
+                if (!driveLink) {
                     return { success: false, message: "No drive link found" };
                 }
-
-                const driveLink = driveSnap.docs[0]!.data().driveLink;
 
                 // Find matching shooting contacts
                 let contactsQuery: admin.firestore.Query = db.collection("castings");
@@ -102,22 +104,19 @@ export const syncDriveLinksToContacts = onCall(
             }
 
             // === Mode 3: Sync ALL drive links ===
-            // Process all offshotDrive entries and update matching contacts
-            const allDriveSnap = await db.collection("offshotDrive").get();
-            if (allDriveSnap.empty) {
-                return { success: true, updated: 0, message: "No drive links in Firestore" };
+            // Process all projects entries and update matching contacts
+            const allProjectsSnap = await db.collection("projects").get();
+            if (allProjectsSnap.empty) {
+                return { success: true, updated: 0, message: "No projects in Firestore" };
             }
 
-            // Build notionPageId -> driveLink map
-            // 複数の正規化形式でマッチできるよう、元のID・ハイフン除去・小文字の全パターンを登録
+            // Build normalized projectId -> driveLink map
+            // projects の doc id はハイフン無し notion page id
             const driveLinkMap = new Map<string, string>();
-            allDriveSnap.docs.forEach((doc) => {
-                const d = doc.data();
-                if (d.notionPageId && d.driveLink) {
-                    const raw = d.notionPageId;
-                    driveLinkMap.set(raw, d.driveLink);
-                    driveLinkMap.set(raw.replace(/-/g, "").toLowerCase(), d.driveLink);
-                    driveLinkMap.set(raw.toLowerCase(), d.driveLink);
+            allProjectsSnap.docs.forEach((doc) => {
+                const driveLink = projectDriveLink(doc.data());
+                if (driveLink) {
+                    driveLinkMap.set(doc.id.replace(/-/g, "").toLowerCase(), driveLink);
                 }
             });
 

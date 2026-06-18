@@ -2,14 +2,15 @@
 /**
  * Cloud Functions - オフショットDriveのファイル数同期
  *
- * オフショットの大元フォルダ配下にある各案件フォルダ（offshotDrive.driveLink）を
- * Drive API で覗き、中のファイル数を数える。
+ * 各案件フォルダ（projects.driveFolderUrl）を Drive API で覗き、中のファイル数を数える。
+ * ※ 旧 offshotDrive (GAS スプレッドシート同期) は 2026-05 に停止したため、稼働中の
+ *    projects.driveFolderUrl（Notion 直接同期 CF が更新）を参照元にしている。
  *
  * フロー:
- *   1. offshotDrive コレクション全件取得
- *   2. driveLink から folderId を抽出し、folder 直下のファイル数をカウント
- *   3. offshotDrive ドキュメントに fileCount / fileCountCheckedAt を保存
- *   4. projectId が一致する castings に makingFileCount を伝搬
+ *   1. projects コレクション全件取得（driveFolderUrl = 案件ルートフォルダ）
+ *   2. ルートから 02_広報/01_撮影オフショット を辿りオフショットフォルダを解決、直下のファイル数をカウント
+ *   3. projects に offshotFileCount / offshotFileCountCheckedAt（+ 空なら offshotUrl）を保存
+ *   4. projectId が一致する castings に makingFileCount / makingUrl を伝搬
  *
  * 認証: GOOGLE_SERVICE_ACCOUNT_KEY（Calendar と共用）を drive.readonly スコープで使用。
  *       サービスアカウント firebase-adminsdk-fbsvc@gokko-casty.iam.gserviceaccount.com を
@@ -110,47 +111,88 @@ async function countFilesInFolder(drive, folderId) {
     return count;
 }
 /**
+ * 親フォルダ直下のサブフォルダから、名前が regex にマッチする最初のフォルダ ID を返す。
+ */
+async function findChildFolder(drive, parentId, regex) {
+    const res = await drive.files.list({
+        q: `'${parentId}' in parents and trashed = false and mimeType = '${FOLDER_MIME}'`,
+        fields: "files(id, name)",
+        pageSize: 200,
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+        corpora: "allDrives",
+    });
+    const hit = (res.data.files || []).find((f) => regex.test(f.name || ""));
+    return hit?.id ?? null;
+}
+/**
+ * 案件ルートフォルダ配下の「02_広報（…）/01_撮影オフショット（…）」を辿って
+ * オフショットフォルダの ID を返す。テンプレ構造に依存（全角/半角カッコ揺れは正規表現で吸収）。
+ * GAS の extractOffshotToFirestore と同等の解決を CF 内でリアルタイムに行う。
+ */
+async function resolveOffshotFolderId(drive, rootFolderId) {
+    const kouhouId = await findChildFolder(drive, rootFolderId, /広報/);
+    if (!kouhouId)
+        return null;
+    return await findChildFolder(drive, kouhouId, /撮影オフショット|オフショット/);
+}
+/**
  * 本体処理。scheduled / onCall の両方から呼ぶ。
  */
 async function performOffshotFileCountSync(serviceAccountKey) {
     const db = admin.firestore();
     const drive = getDriveClient(serviceAccountKey);
-    const driveSnap = await db.collection("offshotDrive").get();
-    if (driveSnap.empty) {
+    // 参照元: projects.driveFolderUrl（Notion 直接同期 CF が更新する稼働中の案件ルートフォルダ）。
+    // ルートから 02_広報/01_撮影オフショット を辿ってオフショットフォルダを解決する。
+    // 旧 offshotDrive (GAS スプレッドシート同期) は 2026-05 に停止したため使用しない。
+    const projectsSnap = await db.collection("projects").get();
+    if (projectsSnap.empty) {
         return { drivesProcessed: 0, drivesFailed: 0, castingsUpdated: 0 };
     }
-    // notionPageId（複数正規化形式）-> fileCount のマップ
-    const countByProjectId = new Map();
+    // projectId（ハイフン除去・小文字）-> { fileCount, offshotUrl } のマップ
+    const infoByProjectId = new Map();
     let drivesProcessed = 0;
     let drivesFailed = 0;
-    for (const doc of driveSnap.docs) {
+    for (const doc of projectsSnap.docs) {
         const data = doc.data();
-        const driveLink = data.driveLink;
-        const notionPageId = data.notionPageId;
-        const folderId = driveLink ? extractFolderId(driveLink) : null;
-        if (!folderId) {
+        const rootLink = data.driveFolderUrl;
+        if (!rootLink)
+            continue;
+        const rootId = extractFolderId(rootLink);
+        if (!rootId) {
             drivesFailed++;
-            console.warn(`[offshotFileCounts] folderId 抽出失敗: doc=${doc.id} link=${driveLink}`);
+            console.warn(`[offshotFileCounts] folderId 抽出失敗: project=${doc.id} link=${rootLink}`);
             continue;
         }
         try {
-            const fileCount = await countFilesInFolder(drive, folderId);
-            await doc.ref.update({
-                fileCount,
-                fileCountCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            drivesProcessed++;
-            if (notionPageId) {
-                const raw = String(notionPageId);
-                countByProjectId.set(raw, fileCount);
-                countByProjectId.set(raw.replace(/-/g, "").toLowerCase(), fileCount);
-                countByProjectId.set(raw.toLowerCase(), fileCount);
+            // 既に offshotUrl があればそのフォルダ、無ければルートから辿って解決
+            let offshotFolderId = data.offshotUrl ? extractFolderId(data.offshotUrl) : null;
+            if (!offshotFolderId) {
+                offshotFolderId = await resolveOffshotFolderId(drive, rootId);
             }
+            if (!offshotFolderId) {
+                drivesFailed++;
+                console.warn(`[offshotFileCounts] オフショットフォルダ未検出: project=${doc.id}`);
+                continue;
+            }
+            const fileCount = await countFilesInFolder(drive, offshotFolderId);
+            const offshotUrl = data.offshotUrl || `https://drive.google.com/drive/folders/${offshotFolderId}`;
+            const projUpdate = {
+                offshotFileCount: fileCount,
+                offshotFileCountCheckedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+            // 日次 GAS を待たずに projects.offshotUrl を埋める（空のときのみ）
+            if (!data.offshotUrl)
+                projUpdate.offshotUrl = offshotUrl;
+            await doc.ref.update(projUpdate);
+            drivesProcessed++;
+            // projects の doc id はハイフン無し notion page id
+            infoByProjectId.set(doc.id.replace(/-/g, "").toLowerCase(), { fileCount, offshotUrl });
         }
         catch (e) {
             drivesFailed++;
             const msg = e instanceof Error ? e.message : String(e);
-            console.error(`[offshotFileCounts] カウント失敗: doc=${doc.id} folder=${folderId}: ${msg}`);
+            console.error(`[offshotFileCounts] カウント失敗: project=${doc.id} root=${rootId}: ${msg}`);
         }
     }
     // castings へ伝搬（contactStatus が設定済みのもののみ）
@@ -166,13 +208,18 @@ async function performOffshotFileCountSync(serviceAccountKey) {
         if (!contact.projectId)
             continue;
         const normalizedId = String(contact.projectId).replace(/-/g, "").toLowerCase();
-        const fileCount = countByProjectId.get(normalizedId);
-        if (fileCount === undefined)
+        const info = infoByProjectId.get(normalizedId);
+        if (!info)
             continue;
-        // 値が変わらないものは書き込まない
-        if (contact.makingFileCount === fileCount)
+        // makingFileCount は変化時のみ、makingUrl は未設定時のみ書き込む
+        const update = {};
+        if (contact.makingFileCount !== info.fileCount)
+            update.makingFileCount = info.fileCount;
+        if (!contact.makingUrl || String(contact.makingUrl).trim() === "")
+            update.makingUrl = info.offshotUrl;
+        if (Object.keys(update).length === 0)
             continue;
-        batch.update(contactDoc.ref, { makingFileCount: fileCount });
+        batch.update(contactDoc.ref, update);
         castingsUpdated++;
         batchOps++;
         // Firestore バッチは 500 件まで

@@ -2,8 +2,9 @@
 /**
  * Cloud Functions - オフショットDriveリンクの同期
  *
- * GASがオフショットDriveスプレッドシートから offshotDrive コレクションに同期したデータを
- * shootingContacts の makingUrl に反映する
+ * 参照元: projects.driveFolderUrl（Notion 直接同期 CF が更新する稼働中のソース）を
+ * castings.makingUrl に反映する。
+ * ※ 旧 offshotDrive (GAS スプレッドシート同期) は 2026-05 に停止したため使用しない。
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -43,6 +44,17 @@ exports.syncDriveLinksToContacts = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
 /**
+ * projects ドキュメントからオフショットフォルダ URL を取り出す。
+ * makingUrl は「オフショットフォルダ」を指すべきなので offshotUrl を使う
+ * （driveFolderUrl は案件ルートフォルダなので使わない）。
+ * offshotUrl は syncOffshotFileCounts が空のとき自動補完する。
+ */
+function projectDriveLink(data) {
+    if (!data)
+        return undefined;
+    return data.offshotUrl || undefined;
+}
+/**
  * offshotDrive コレクションから NotionPageID でDriveリンクを取得し、
  * 対応する shootingContacts の makingUrl を更新する
  */
@@ -57,16 +69,12 @@ exports.syncDriveLinksToContacts = (0, https_1.onCall)({ maxInstances: 10, regio
         // === Mode 1: Single contact update ===
         if (shootingContactId && notionPageId) {
             const normalizedId = notionPageId.replace(/-/g, "").toLowerCase();
-            // Look up drive link
-            const driveSnap = await db
-                .collection("offshotDrive")
-                .where("notionPageId", "==", normalizedId)
-                .limit(1)
-                .get();
-            if (driveSnap.empty) {
+            // projects の doc id はハイフン無し notion page id
+            const projDoc = await db.collection("projects").doc(normalizedId).get();
+            const driveLink = projectDriveLink(projDoc.data());
+            if (!driveLink) {
                 return { success: false, message: "No drive link found" };
             }
-            const driveLink = driveSnap.docs[0].data().driveLink;
             // Update shooting contact
             await db
                 .collection("castings")
@@ -80,16 +88,12 @@ exports.syncDriveLinksToContacts = (0, https_1.onCall)({ maxInstances: 10, regio
         // === Mode 2: Batch update by Notion Page ID ===
         if (notionPageId) {
             const normalizedId = notionPageId.replace(/-/g, "").toLowerCase();
-            // Get drive link
-            const driveSnap = await db
-                .collection("offshotDrive")
-                .where("notionPageId", "==", normalizedId)
-                .limit(1)
-                .get();
-            if (driveSnap.empty) {
+            // projects から drive link を取得
+            const projDoc = await db.collection("projects").doc(normalizedId).get();
+            const driveLink = projectDriveLink(projDoc.data());
+            if (!driveLink) {
                 return { success: false, message: "No drive link found" };
             }
-            const driveLink = driveSnap.docs[0].data().driveLink;
             // Find matching shooting contacts
             let contactsQuery = db.collection("castings");
             if (projectName) {
@@ -115,21 +119,18 @@ exports.syncDriveLinksToContacts = (0, https_1.onCall)({ maxInstances: 10, regio
             return { success: true, driveLink, updated: updateCount };
         }
         // === Mode 3: Sync ALL drive links ===
-        // Process all offshotDrive entries and update matching contacts
-        const allDriveSnap = await db.collection("offshotDrive").get();
-        if (allDriveSnap.empty) {
-            return { success: true, updated: 0, message: "No drive links in Firestore" };
+        // Process all projects entries and update matching contacts
+        const allProjectsSnap = await db.collection("projects").get();
+        if (allProjectsSnap.empty) {
+            return { success: true, updated: 0, message: "No projects in Firestore" };
         }
-        // Build notionPageId -> driveLink map
-        // 複数の正規化形式でマッチできるよう、元のID・ハイフン除去・小文字の全パターンを登録
+        // Build normalized projectId -> driveLink map
+        // projects の doc id はハイフン無し notion page id
         const driveLinkMap = new Map();
-        allDriveSnap.docs.forEach((doc) => {
-            const d = doc.data();
-            if (d.notionPageId && d.driveLink) {
-                const raw = d.notionPageId;
-                driveLinkMap.set(raw, d.driveLink);
-                driveLinkMap.set(raw.replace(/-/g, "").toLowerCase(), d.driveLink);
-                driveLinkMap.set(raw.toLowerCase(), d.driveLink);
+        allProjectsSnap.docs.forEach((doc) => {
+            const driveLink = projectDriveLink(doc.data());
+            if (driveLink) {
+                driveLinkMap.set(doc.id.replace(/-/g, "").toLowerCase(), driveLink);
             }
         });
         // DB統合済み: castings コレクションから contactStatus が設定済みのものを取得
