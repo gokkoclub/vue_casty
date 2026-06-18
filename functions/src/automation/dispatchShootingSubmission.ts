@@ -109,7 +109,22 @@ async function processSubmission(
     const rows: SubmissionRow[] = Array.isArray(data.rows) ? data.rows : [];
     const rowCount = rows.length;
 
-    console.log(`[dispatch] Processing ${pageId}: team=${team}, rows=${rowCount}, fd=${fdNames.length}`);
+    // 制作(SIX)スタッフ名を rows から抽出。香盤の group が「制作」「制作チーフ」等の行の staff を拾い、
+    // FD 同様に名前 → staffMentions で Slack メンションする（漏れ防止）。
+    const seisakuNames: string[] = [];
+    const seenSeisaku = new Set<string>();
+    for (const r of rows) {
+        const group = (r.group || "").trim();
+        const staff = (r.staff || "").trim();
+        if (staff && /制作/.test(group) && !seenSeisaku.has(staff)) {
+            seenSeisaku.add(staff);
+            seisakuNames.push(staff);
+        }
+    }
+    // メンション対象 = FD/SD + 制作（重複除外）
+    const mentionNames = Array.from(new Set([...fdNames, ...seisakuNames]));
+
+    console.log(`[dispatch] Processing ${pageId}: team=${team}, rows=${rowCount}, fd=${fdNames.length}, 制作=${seisakuNames.length}`);
 
     // ── 1. shootings/{pageId} を更新 ──
     const shootingsUpdates: Record<string, any> = {
@@ -169,7 +184,8 @@ async function processSubmission(
 
             if (group === "キャスト") {
                 // キャストは1人1イベント
-                const staffKey = staff.replace(/\s+/g, "");
+                // Firestore docId に使えない文字 (/ . # $ [ ] や空白) を全て _ に変換
+                const staffKey = staff.replace(/[\s/.#$\[\]]+/g, "_").replace(/^_+|_+$/g, "");
                 if (!staffKey) continue;
                 const docId = `${pageId}_cast_${staffKey}`;
                 eventBatch.set(db.doc(`shootingEvents/${docId}`), {
@@ -219,7 +235,8 @@ async function processSubmission(
         staffGroups.forEach((ev) => {
             const timeKey = `${ev.inTime}${ev.outTime}`.replace(/:/g, "");
             const locHash = simpleHash(ev.location || "");
-            const groupKey = ev.group.replace(/\s+/g, "");
+            // Firestore docId に使えない文字を _ に変換 (FD/SD 等の / 対策)
+            const groupKey = ev.group.replace(/[\s/.#$\[\]]+/g, "_").replace(/^_+|_+$/g, "");
             const eventDocId = `${pageId}_${groupKey}_${timeKey}_${locHash}`;
             eventBatch.set(db.doc(`shootingEvents/${eventDocId}`), ev);
             eventCount++;
@@ -232,14 +249,14 @@ async function processSubmission(
     }
 
     // ── 3. Slack通知を Cloud Tasks で予約 ──
-    if (fdNames.length > 0 && outDateTimeISO) {
+    if (mentionNames.length > 0 && outDateTimeISO) {
         try {
-            await scheduleOffshotSlack(pageId, team, shootingDate, fdNames, outDateTimeISO);
+            await scheduleOffshotSlack(pageId, team, shootingDate, fdNames, seisakuNames, outDateTimeISO);
         } catch (e) {
             console.error("[dispatch] Slack schedule failed (continue):", e);
         }
     } else {
-        console.log(`[dispatch] Slack skip: fd=${fdNames.length}, outISO=${outDateTimeISO}`);
+        console.log(`[dispatch] Slack skip: mentions=${mentionNames.length}, outISO=${outDateTimeISO}`);
     }
 
     // ── 4. 完了マーク + rows削除 ──
@@ -264,6 +281,7 @@ async function scheduleOffshotSlack(
     team: string,
     shootingDate: string,
     fdNames: string[],
+    seisakuNames: string[],
     outDateTimeISO: string,
 ) {
     const client = new CloudTasksClient();
@@ -274,6 +292,9 @@ async function scheduleOffshotSlack(
     const now = Date.now();
     const targetMs = Math.max(scheduleTime.getTime(), now + 30000); // 最低30秒後
 
+    // メンション対象 = FD/SD + 制作（重複除外）
+    const mentionNames = Array.from(new Set([...fdNames, ...seisakuNames]));
+
     // 予約前に offshotNotifications にレコードを作成
     const db = admin.firestore();
     await db.doc(`offshotNotifications/${pageId}`).set({
@@ -281,6 +302,8 @@ async function scheduleOffshotSlack(
         team,
         shootingDate,
         fdNames,
+        seisakuNames,
+        mentionNames,
         outDateTimeISO,
         scheduledAt: admin.firestore.Timestamp.fromMillis(targetMs),
         status: "scheduled",

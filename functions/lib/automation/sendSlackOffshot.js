@@ -93,10 +93,13 @@ exports.sendSlackOffshot = (0, https_1.onRequest)({
         const offshotUrl = shData.offshotUrl || shData.driveUrl || "";
         const team = notif.team || shData.team || "";
         const shootingDate = notif.shootingDate || shData.shootDate || "";
-        const fdNames = Array.isArray(notif.fdNames) ? notif.fdNames : [];
-        // FD名 → slackMentionId 解決
-        const mentionIds = await (0, _helpers_1.resolveSlackMentionsByNames)(fdNames);
-        console.log(`[sendSlackOffshot] Resolved mentions: ${mentionIds.length}/${fdNames.length}`);
+        // メンション対象 = FD/SD + 制作。新形式 mentionNames を優先、無ければ旧 fdNames にフォールバック。
+        const mentionNames = Array.isArray(notif.mentionNames)
+            ? notif.mentionNames
+            : (Array.isArray(notif.fdNames) ? notif.fdNames : []);
+        // 名前 → slackMentionId 解決（FD/SD・制作とも同じ経路）
+        const mentionIds = await (0, _helpers_1.resolveSlackMentionsByNames)(mentionNames);
+        console.log(`[sendSlackOffshot] Resolved mentions: ${mentionIds.length}/${mentionNames.length}`);
         // メッセージ組み立て
         const mentionStr = mentionIds.map(id => `<@${id}>`).join(" ");
         const dateStr = formatMD(shootingDate);

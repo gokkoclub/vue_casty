@@ -66,11 +66,14 @@ export const sendSlackOffshot = onRequest(
             const offshotUrl: string = shData.offshotUrl || shData.driveUrl || "";
             const team: string = notif.team || shData.team || "";
             const shootingDate: string = notif.shootingDate || shData.shootDate || "";
-            const fdNames: string[] = Array.isArray(notif.fdNames) ? notif.fdNames : [];
+            // メンション対象 = FD/SD + 制作。新形式 mentionNames を優先、無ければ旧 fdNames にフォールバック。
+            const mentionNames: string[] = Array.isArray(notif.mentionNames)
+                ? notif.mentionNames
+                : (Array.isArray(notif.fdNames) ? notif.fdNames : []);
 
-            // FD名 → slackMentionId 解決
-            const mentionIds = await resolveSlackMentionsByNames(fdNames);
-            console.log(`[sendSlackOffshot] Resolved mentions: ${mentionIds.length}/${fdNames.length}`);
+            // 名前 → slackMentionId 解決（FD/SD・制作とも同じ経路）
+            const mentionIds = await resolveSlackMentionsByNames(mentionNames);
+            console.log(`[sendSlackOffshot] Resolved mentions: ${mentionIds.length}/${mentionNames.length}`);
 
             // メッセージ組み立て
             const mentionStr = mentionIds.map(id => `<@${id}>`).join(" ");

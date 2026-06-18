@@ -66,22 +66,28 @@ exports.dispatchShootingSubmission = (0, firestore_1.onDocumentWritten)({
         console.log("No after data (deleted?), skip");
         return;
     }
-    // 冪等性: processed / processing / failed は再処理しない
-    if (after.status !== "submitted") {
+    // 状態遷移: pending (GAS から決定香盤として送信) → submitted → processing → processed
+    //   GAS は status を "pending" のまま書き込んでくるため、ここで submitted に正規化してから processing に進める。
+    //   processed / failed / processing は再処理しない (冪等性)
+    const PROCESSABLE_STATUSES = new Set(["submitted", "pending"]);
+    if (!PROCESSABLE_STATUSES.has(after.status)) {
         console.log(`[dispatch] Skip: status=${after.status}, pageId=${pageId}`);
         return;
     }
     const db = admin.firestore();
-    // 排他取得(トランザクションで status を processing に)
+    // 排他取得(トランザクションで pending → submitted → processing を 1 回で記録)
     try {
         await db.runTransaction(async (tx) => {
             const snap = await tx.get(docRef);
             const data = snap.data();
-            if (!data || data.status !== "submitted") {
+            if (!data || !PROCESSABLE_STATUSES.has(data.status)) {
                 throw new Error(`status changed: ${data?.status}`);
             }
+            const wasPending = data.status === "pending";
             tx.update(docRef, {
                 status: "processing",
+                // pending から拾った場合は「submitted を経由した」記録を残す
+                ...(wasPending ? { submittedAt: admin.firestore.FieldValue.serverTimestamp() } : {}),
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             });
         });
@@ -112,7 +118,21 @@ async function processSubmission(pageId, data, docRef) {
     const outDateTimeISO = data.outDateTimeISO || "";
     const rows = Array.isArray(data.rows) ? data.rows : [];
     const rowCount = rows.length;
-    console.log(`[dispatch] Processing ${pageId}: team=${team}, rows=${rowCount}, fd=${fdNames.length}`);
+    // 制作(SIX)スタッフ名を rows から抽出。香盤の group が「制作」「制作チーフ」等の行の staff を拾い、
+    // FD 同様に名前 → staffMentions で Slack メンションする（漏れ防止）。
+    const seisakuNames = [];
+    const seenSeisaku = new Set();
+    for (const r of rows) {
+        const group = (r.group || "").trim();
+        const staff = (r.staff || "").trim();
+        if (staff && /制作/.test(group) && !seenSeisaku.has(staff)) {
+            seenSeisaku.add(staff);
+            seisakuNames.push(staff);
+        }
+    }
+    // メンション対象 = FD/SD + 制作（重複除外）
+    const mentionNames = Array.from(new Set([...fdNames, ...seisakuNames]));
+    console.log(`[dispatch] Processing ${pageId}: team=${team}, rows=${rowCount}, fd=${fdNames.length}, 制作=${seisakuNames.length}`);
     // ── 1. shootings/{pageId} を更新 ──
     const shootingsUpdates = {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -130,6 +150,27 @@ async function processSubmission(pageId, data, docRef) {
     }
     await db.doc(`shootings/${pageId}`).set(shootingsUpdates, { merge: true });
     console.log(`[dispatch] shootings updated: ${pageId}`);
+    // ── 1b. projects/{hyphenless} にも title を伝搬 (GAS の Drive リネームトリガー) ──
+    // projects コレクションは GAS が「ハイフン無し pageId」で管理しており、
+    // titleFromNotion=true && title が来たら GAS の syncPureFromNotion が
+    // Drive フォルダ名を "YYYY-MM-DD_作品名" にリネームする設計。
+    // 香盤シートから title が確定したら projects 側にも反映してリネームを誘発する。
+    if (title) {
+        const docIdHyphenless = pageId.replace(/-/g, "");
+        try {
+            await db.doc(`projects/${docIdHyphenless}`).set({
+                title,
+                titleFromNotion: true,
+                titleFromKouban: true,
+                normalizedTitle: title.toLowerCase().replace(/\s+/g, ""),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            console.log(`[dispatch] projects.title updated: ${docIdHyphenless}`);
+        }
+        catch (e) {
+            console.warn(`[dispatch] projects title update failed for ${docIdHyphenless}:`, e);
+        }
+    }
     // ── 2. shootingEvents を rows から生成 ──
     let eventCount = 0;
     if (rows.length > 0) {
@@ -148,7 +189,8 @@ async function processSubmission(pageId, data, docRef) {
                 continue;
             if (group === "キャスト") {
                 // キャストは1人1イベント
-                const staffKey = staff.replace(/\s+/g, "");
+                // Firestore docId に使えない文字 (/ . # $ [ ] や空白) を全て _ に変換
+                const staffKey = staff.replace(/[\s/.#$\[\]]+/g, "_").replace(/^_+|_+$/g, "");
                 if (!staffKey)
                     continue;
                 const docId = `${pageId}_cast_${staffKey}`;
@@ -199,7 +241,8 @@ async function processSubmission(pageId, data, docRef) {
         staffGroups.forEach((ev) => {
             const timeKey = `${ev.inTime}${ev.outTime}`.replace(/:/g, "");
             const locHash = (0, _helpers_1.simpleHash)(ev.location || "");
-            const groupKey = ev.group.replace(/\s+/g, "");
+            // Firestore docId に使えない文字を _ に変換 (FD/SD 等の / 対策)
+            const groupKey = ev.group.replace(/[\s/.#$\[\]]+/g, "_").replace(/^_+|_+$/g, "");
             const eventDocId = `${pageId}_${groupKey}_${timeKey}_${locHash}`;
             eventBatch.set(db.doc(`shootingEvents/${eventDocId}`), ev);
             eventCount++;
@@ -210,16 +253,16 @@ async function processSubmission(pageId, data, docRef) {
         }
     }
     // ── 3. Slack通知を Cloud Tasks で予約 ──
-    if (fdNames.length > 0 && outDateTimeISO) {
+    if (mentionNames.length > 0 && outDateTimeISO) {
         try {
-            await scheduleOffshotSlack(pageId, team, shootingDate, fdNames, outDateTimeISO);
+            await scheduleOffshotSlack(pageId, team, shootingDate, fdNames, seisakuNames, outDateTimeISO);
         }
         catch (e) {
             console.error("[dispatch] Slack schedule failed (continue):", e);
         }
     }
     else {
-        console.log(`[dispatch] Slack skip: fd=${fdNames.length}, outISO=${outDateTimeISO}`);
+        console.log(`[dispatch] Slack skip: mentions=${mentionNames.length}, outISO=${outDateTimeISO}`);
     }
     // ── 4. 完了マーク + rows削除 ──
     await docRef.update({
@@ -236,13 +279,15 @@ async function processSubmission(pageId, data, docRef) {
 /**
  * Cloud Tasks で Slack通知を outDateTime+10分にスケジュール
  */
-async function scheduleOffshotSlack(pageId, team, shootingDate, fdNames, outDateTimeISO) {
+async function scheduleOffshotSlack(pageId, team, shootingDate, fdNames, seisakuNames, outDateTimeISO) {
     const client = new tasks_1.CloudTasksClient();
     const queuePath = client.queuePath(PROJECT_ID, LOCATION, TASKS_QUEUE);
     // OUT + 10分
     const scheduleTime = new Date(new Date(outDateTimeISO).getTime() + 10 * 60 * 1000);
     const now = Date.now();
     const targetMs = Math.max(scheduleTime.getTime(), now + 30000); // 最低30秒後
+    // メンション対象 = FD/SD + 制作（重複除外）
+    const mentionNames = Array.from(new Set([...fdNames, ...seisakuNames]));
     // 予約前に offshotNotifications にレコードを作成
     const db = admin.firestore();
     await db.doc(`offshotNotifications/${pageId}`).set({
@@ -250,6 +295,8 @@ async function scheduleOffshotSlack(pageId, team, shootingDate, fdNames, outDate
         team,
         shootingDate,
         fdNames,
+        seisakuNames,
+        mentionNames,
         outDateTimeISO,
         scheduledAt: admin.firestore.Timestamp.fromMillis(targetMs),
         status: "scheduled",
