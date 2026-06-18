@@ -320,16 +320,19 @@ function buildOrderMessage(params) {
     const isShooting = params.mode === "shooting" || !params.mode;
     const dateLabel = isShooting ? "撮影日" : "日程";
     const lines = [];
-    // グループメンション
-    if (params.mentionGroupId) {
-        lines.push(`<!subteam^${params.mentionGroupId}>`);
+    // グループメンション（既存グループ + タレマネ を併記）
+    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
+        .filter(Boolean)
+        .map((id) => `<!subteam^${id}>`);
+    if (groupMentions.length > 0) {
+        lines.push(groupMentions.join(" "));
     }
     // CC欄
     if (params.ccString) {
         lines.push(`cc: ${params.ccString}`);
     }
     // 空行
-    if (params.mentionGroupId || params.ccString) {
+    if (groupMentions.length > 0 || params.ccString) {
         lines.push("");
     }
     // ヘッダー（オーダー主名を含む）
@@ -455,8 +458,11 @@ function buildOrderMessage(params) {
  */
 function buildAdditionalOrderMessage(params) {
     const lines = [];
-    if (params.mentionGroupId) {
-        lines.push(`<!subteam^${params.mentionGroupId}>`);
+    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
+        .filter(Boolean)
+        .map((id) => `<!subteam^${id}>`);
+    if (groupMentions.length > 0) {
+        lines.push(groupMentions.join(" "));
         lines.push("");
     }
     lines.push("追加オーダーのお知らせ");

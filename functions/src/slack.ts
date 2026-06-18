@@ -389,6 +389,7 @@ export function buildOrderMessage(params: {
     hasInternal: boolean;
     mode?: string;
     mentionGroupId?: string;
+    taremaneGroupId?: string;
     ccString?: string;
     ordererName?: string;
     castingIds?: string[];
@@ -397,9 +398,12 @@ export function buildOrderMessage(params: {
     const dateLabel = isShooting ? "撮影日" : "日程";
     const lines: string[] = [];
 
-    // グループメンション
-    if (params.mentionGroupId) {
-        lines.push(`<!subteam^${params.mentionGroupId}>`);
+    // グループメンション（既存グループ + タレマネ を併記）
+    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
+        .filter(Boolean)
+        .map((id) => `<!subteam^${id}>`);
+    if (groupMentions.length > 0) {
+        lines.push(groupMentions.join(" "));
     }
 
     // CC欄
@@ -408,7 +412,7 @@ export function buildOrderMessage(params: {
     }
 
     // 空行
-    if (params.mentionGroupId || params.ccString) {
+    if (groupMentions.length > 0 || params.ccString) {
         lines.push("");
     }
 
@@ -558,12 +562,16 @@ export function buildAdditionalOrderMessage(params: {
     }>;
     hasInternal: boolean;
     mentionGroupId?: string;
+    taremaneGroupId?: string;
     castingIds?: string[];
 }): string {
     const lines: string[] = [];
 
-    if (params.mentionGroupId) {
-        lines.push(`<!subteam^${params.mentionGroupId}>`);
+    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
+        .filter(Boolean)
+        .map((id) => `<!subteam^${id}>`);
+    if (groupMentions.length > 0) {
+        lines.push(groupMentions.join(" "));
         lines.push("");
     }
 

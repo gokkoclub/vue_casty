@@ -364,6 +364,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
         "SLACK_CHANNEL_INTERNAL",
         "SLACK_CHANNEL_EXTERNAL",
         "SLACK_MENTION_GROUP_ID",
+        "SLACK_TAREMANE_GROUP_ID",
         "GOOGLE_SERVICE_ACCOUNT_KEY",
         "GOOGLE_CALENDAR_ID",
         "GAS_INVITE_WEBHOOK_URL",
@@ -380,6 +381,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     const slackChannelInternal = getEnv("SLACK_CHANNEL_INTERNAL");
     const slackChannelExternal = getEnv("SLACK_CHANNEL_EXTERNAL");
     const mentionGroupId = getEnv("SLACK_MENTION_GROUP_ID");
+    const taremaneGroupId = getEnv("SLACK_TAREMANE_GROUP_ID");
     // チャンネルルーティング: 外部案件 → EXTERNAL, それ以外 → INTERNAL
     const orderMode = data.mode || "shooting";
     const slackChannel = orderMode === "external" ? slackChannelExternal : slackChannelInternal;
@@ -701,6 +703,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             items: itemsWithConflict,
             hasInternal: data.hasInternal || false,
             mentionGroupId: mentionGroupId || undefined,
+            // @taremane は内部キャストがオーダーに含まれる時のみ
+            taremaneGroupId: (data.hasInternal && taremaneGroupId) ? taremaneGroupId : undefined,
             castingIds: data.castingIds || [],
         });
     }
@@ -729,6 +733,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             hasInternal: data.hasInternal || false,
             mode: orderMode,
             mentionGroupId: mentionGroupId || undefined,
+            // @taremane は内部キャストがオーダーに含まれる時のみ
+            taremaneGroupId: (data.hasInternal && taremaneGroupId) ? taremaneGroupId : undefined,
             ccString: ccString || undefined,
             ordererName: orderCreatorMention || orderCreatorName || undefined,
             castingIds: data.castingIds || [],
@@ -798,6 +804,21 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             calendarDebug.internalItemsCount = internalCount;
             // castId -> email キャッシュ
             const emailCache = new Map();
+            // 外部案件のときは config/externalEmails の連携メールも各イベントに招待する
+            let externalEmails = [];
+            if (orderMode === "external") {
+                try {
+                    const cfgDoc = await db.doc("config/externalEmails").get();
+                    const emails = cfgDoc.exists ? cfgDoc.data()?.emails : undefined;
+                    if (Array.isArray(emails)) {
+                        externalEmails = emails.filter((e) => typeof e === "string" && e.includes("@"));
+                    }
+                    console.log(`Calendar: externalEmails for 外部案件:`, externalEmails);
+                }
+                catch (e) {
+                    console.warn("Failed to load config/externalEmails:", e);
+                }
+            }
             let calGlobalIdx = 0;
             for (const item of itemsAll) {
                 const itemDates = item.selectedDates && item.selectedDates.length > 0
@@ -873,6 +894,24 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                             }
                             else {
                                 console.log(`[GAS invite] skipped: no castEmail for ${item.castName}`);
+                            }
+                            // 外部案件: 連携メール(externalEmails)も同じイベントに招待
+                            for (const extEmail of externalEmails) {
+                                if (extEmail.toLowerCase() === (castEmail || "").toLowerCase())
+                                    continue;
+                                const extRes = await (0, gasCalendar_1.addAttendeeViaGas)({
+                                    webhookUrl: gasWebhookUrl,
+                                    secret: gasSharedSecret,
+                                    calendarId,
+                                    eventId,
+                                    attendeeEmail: extEmail,
+                                });
+                                if (!extRes.ok) {
+                                    console.warn(`[GAS invite] external email failed (${extEmail}) for event ${eventId}: ${extRes.error || "unknown"}`);
+                                }
+                                else {
+                                    console.log(`[GAS invite] external email ok (${extEmail})${extRes.skipped ? " skipped=" + extRes.skipped : ""}`);
+                                }
                             }
                             calendarResults[castingDocId] = {
                                 eventId,
