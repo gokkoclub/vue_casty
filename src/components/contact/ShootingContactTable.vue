@@ -116,9 +116,14 @@ function cancelConfirm() {
                 </template>
                 <template v-else-if="status === 'メイキング共有待ち'">
                     <th class="col-url">メイキングURL</th>
+                    <th class="col-cost">金額</th>
                 </template>
                 <template v-else-if="status === '投稿日連絡待ち'">
                     <th class="col-postdate">投稿日</th>
+                    <th class="col-cost">金額</th>
+                </template>
+                <template v-else-if="status === '完了'">
+                    <th class="col-cost">金額</th>
                 </template>
 
                 <th class="col-actions">操作</th>
@@ -202,11 +207,22 @@ function cancelConfirm() {
                 <!-- Tab: メイキング共有待ち -->
                 <template v-else-if="status === 'メイキング共有待ち'">
                     <td class="col-url">
-                        <a v-if="contact.makingUrl" :href="contact.makingUrl" target="_blank" class="link">
-                            <i class="pi pi-external-link"></i>
-                            {{ contact.makingUrl.length > 40 ? contact.makingUrl.substring(0, 40) + '...' : contact.makingUrl }}
-                        </a>
-                        <span v-else class="no-data">-</span>
+                        <div class="url-cell">
+                            <a v-if="contact.makingUrl" :href="contact.makingUrl" target="_blank" class="link">
+                                <i class="pi pi-external-link"></i>
+                                {{ contact.makingUrl.length > 40 ? contact.makingUrl.substring(0, 40) + '...' : contact.makingUrl }}
+                            </a>
+                            <span v-else class="no-data">-</span>
+                            <Tag
+                                :value="`${contact.makingFileCount ?? 0}件`"
+                                :severity="(contact.makingFileCount ?? 0) > 0 ? 'success' : 'secondary'"
+                                class="file-count-tag"
+                                v-tooltip.top="'オフショットDrive内のファイル数'"
+                            />
+                        </div>
+                    </td>
+                    <td class="col-cost">
+                        {{ contact.cost || (contact.fee ? `¥${contact.fee.toLocaleString()}` : '-') }}
                     </td>
                 </template>
 
@@ -214,6 +230,16 @@ function cancelConfirm() {
                 <template v-else-if="status === '投稿日連絡待ち'">
                     <td class="col-postdate">
                         {{ contact.postDate?.toDate ? contact.postDate.toDate().toLocaleDateString('ja-JP') : '-' }}
+                    </td>
+                    <td class="col-cost">
+                        {{ contact.cost || (contact.fee ? `¥${contact.fee.toLocaleString()}` : '-') }}
+                    </td>
+                </template>
+
+                <!-- Tab: 完了 -->
+                <template v-else-if="status === '完了'">
+                    <td class="col-cost">
+                        {{ contact.cost || (contact.fee ? `¥${contact.fee.toLocaleString()}` : '-') }}
                     </td>
                 </template>
 
@@ -396,6 +422,17 @@ function cancelConfirm() {
     width: 80px;
     padding: 0.25rem 0.4rem;
     font-size: 0.8rem;
+}
+
+.url-cell {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.file-count-tag {
+    font-size: 0.7rem;
+    flex-shrink: 0;
 }
 
 .link {

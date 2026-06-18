@@ -60,6 +60,7 @@ function castingToContact(id: string, data: Record<string, unknown>): ShootingCo
         fee: (data.fee as number) ?? (data.cost as number) ?? undefined,
         cost: data.fee ? String(data.fee) : data.cost ? String(data.cost) : undefined,
         makingUrl: (data.makingUrl as string) || undefined,
+        makingFileCount: (data.makingFileCount as number) ?? undefined,
         postDate: (data.postDate as Timestamp) || undefined,
         mainSub: (data.mainSub as 'メイン' | 'サブ' | 'その他') || 'その他',
         status: (data.contactStatus as ShootingContactStatus) || '香盤連絡待ち',

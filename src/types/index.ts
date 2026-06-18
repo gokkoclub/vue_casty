@@ -57,6 +57,7 @@ export interface Casting {
     address?: string
     fee?: number            // 撮影連絡側の金額（= cost と同一にすることで同期不要に）
     makingUrl?: string
+    makingFileCount?: number // オフショットDrive内のファイル数（scheduledSyncOffshotFileCounts が更新）
     postDate?: Timestamp
     contactEmail?: string   // 撮影連絡用メールアドレス
     orderDocumentId?: string
@@ -95,6 +96,7 @@ export interface ShootingContact {
     fee?: number
     cost?: string
     makingUrl?: string
+    makingFileCount?: number    // オフショットDrive内のファイル数（scheduledSyncOffshotFileCounts が更新）
     postDate?: Timestamp
     mainSub: 'メイン' | 'サブ' | 'その他'
     status: ShootingContactStatus
