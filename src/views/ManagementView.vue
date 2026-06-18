@@ -35,6 +35,7 @@ type AppearanceRow = {
     internalEventCount: number // = 社内イベント
     externalCount: number   // = 外部案件
     totalCount: number
+    totalCost: number       // 金額合計（cost/fee の合算）
     items: Array<{
         id: string
         castType: '内部' | '外部'           // キャスト本人の所属
@@ -45,6 +46,7 @@ type AppearanceRow = {
         roleName: string
         shootDate?: Timestamp
         mainSub: string
+        cost: number
     }>
 }
 
@@ -100,6 +102,7 @@ async function loadAppearanceData() {
             const accountName = (data.accountName as string) || ''
             const roleName = (data.roleName as string) || ''
             const category = classifyAppearance({ accountName, roleName, mode })
+            const cost = Number((data.cost as number | string | undefined) ?? (data.fee as number | undefined) ?? 0) || 0
             if (!grouped.has(castId)) {
                 grouped.set(castId, {
                     castId,
@@ -109,6 +112,7 @@ async function loadAppearanceData() {
                     internalEventCount: 0,
                     externalCount: 0,
                     totalCount: 0,
+                    totalCost: 0,
                     items: [],
                 })
             }
@@ -119,6 +123,7 @@ async function loadAppearanceData() {
             else if (category === '社内イベント') row.internalEventCount++
             else row.externalCount++
             row.totalCount++
+            row.totalCost += cost
             row.items.push({
                 id: d.id,
                 castType,
@@ -129,6 +134,7 @@ async function loadAppearanceData() {
                 roleName,
                 shootDate: data.startDate as Timestamp | undefined,
                 mainSub: (data.mainSub as string) || '',
+                cost,
             })
         })
         // 各 row の items を日付降順
@@ -170,15 +176,18 @@ const appearanceTotals = computed(() => {
     let shooting = 0
     let internalEvent = 0
     let external = 0
+    let cost = 0
     for (const r of filteredAppearanceRows.value) {
         shooting += r.shootingCount
         internalEvent += r.internalEventCount
         external += r.externalCount
+        cost += r.totalCost
     }
     return {
         shooting,
         internalEvent,
         external,
+        cost,
         total: shooting + internalEvent + external,
         casts: filteredAppearanceRows.value.length,
     }
@@ -231,13 +240,13 @@ async function exportAppearanceCsv() {
     }
     const range = rangeLabel()
     // サマリ CSV
-    const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計']
-    const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount])
+    const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計', '金額合計']
+    const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount, r.totalCost])
     downloadCsv(`出演ダッシュボード_サマリ${range}.csv`, summaryHeader, summaryRows)
     // ブラウザの連続ダウンロード抑制を回避するため少し待つ
     await new Promise(resolve => setTimeout(resolve, 400))
     // 明細 CSV
-    const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ']
+    const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ', '金額']
     const detailRows: Array<Array<string | number>> = []
     for (const r of rows) {
         for (const it of r.items) {
@@ -250,6 +259,7 @@ async function exportAppearanceCsv() {
                 it.projectName || '',
                 it.roleName || '',
                 it.mainSub || '',
+                it.cost,
             ])
         }
     }
@@ -1307,6 +1317,10 @@ function setAllNewDate(date: Date | null) {
                             <div class="summary-label">外部案件</div>
                             <div class="summary-value">{{ appearanceTotals.external }}</div>
                         </div>
+                        <div class="summary-tile cost">
+                            <div class="summary-label">金額合計</div>
+                            <div class="summary-value">¥{{ appearanceTotals.cost.toLocaleString() }}</div>
+                        </div>
                     </div>
 
                     <div v-if="appearanceLoading" class="loading-spinner">
@@ -1325,6 +1339,7 @@ function setAllNewDate(date: Date | null) {
                                 <th style="width: 110px;">社内イベント</th>
                                 <th style="width: 90px;">外部案件</th>
                                 <th style="width: 80px;">合計</th>
+                                <th style="width: 110px;">金額合計</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1345,10 +1360,11 @@ function setAllNewDate(date: Date | null) {
                                     <td><Tag :value="row.internalEventCount" severity="info" /></td>
                                     <td><Tag :value="row.externalCount" severity="warn" /></td>
                                     <td><strong>{{ row.totalCount }}</strong></td>
+                                    <td><strong>¥{{ row.totalCost.toLocaleString() }}</strong></td>
                                 </tr>
                                 <tr v-if="expandedCastRows.has(row.castId)" class="appearance-detail-row">
                                     <td></td>
-                                    <td colspan="5">
+                                    <td colspan="6">
                                         <table class="appearance-detail-table">
                                             <thead>
                                                 <tr>
@@ -1358,6 +1374,7 @@ function setAllNewDate(date: Date | null) {
                                                     <th>作品名</th>
                                                     <th>役名</th>
                                                     <th style="width: 70px;">メイン/サブ</th>
+                                                    <th style="width: 90px;">金額</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -1373,6 +1390,7 @@ function setAllNewDate(date: Date | null) {
                                                     <td>{{ item.projectName || '-' }}</td>
                                                     <td>{{ item.roleName || '-' }}</td>
                                                     <td>{{ item.mainSub || '-' }}</td>
+                                                    <td>{{ item.cost ? `¥${item.cost.toLocaleString()}` : '-' }}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
