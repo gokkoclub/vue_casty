@@ -205,3 +205,19 @@ export interface CastMaster {
     decidedBy: string       // 決定したユーザー
     createdAt: Timestamp
 }
+
+// 俳優ギャラ換算表 — アカウント × 役割ランクごとの金額。
+// 出演ダッシュボードで金額未入力分をアカウント名から補完するのに使う。
+export interface GalaRate {
+    id: string
+    accountKey: string                  // 正規アカウント名（表示・主キー的）
+    aliases: string[]                    // 表記ゆれ吸収用の別名（accountKey 自身も含めてよい）
+    fees: {
+        メイン?: number
+        サブ?: number
+        キャスト?: number
+        エキストラ?: number
+    }
+    note?: string
+    updatedAt?: Timestamp
+}
