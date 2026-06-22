@@ -10,14 +10,15 @@ import Tag from 'primevue/tag'
 import Badge from 'primevue/badge'
 import DatePicker from 'primevue/datepicker'
 import ProgressSpinner from 'primevue/progressspinner'
+import Dialog from 'primevue/dialog'
 import { useEmailSettings } from '@/composables/useEmailSettings'
 import type { EmailTemplateSetting } from '@/composables/useEmailSettings'
 import { useCastMaster } from '@/composables/useCastMaster'
 import { useAdmins } from '@/composables/useAdmins'
 import { useStaffMentions } from '@/composables/useStaffMentions'
 import type { StaffMention } from '@/composables/useStaffMentions'
-import type { CastMaster, Casting } from '@/types'
-import { collection, query, getDocs, updateDoc, doc, Timestamp } from 'firebase/firestore'
+import type { CastMaster, Casting, GalaRate } from '@/types'
+import { collection, query, getDocs, updateDoc, setDoc, deleteDoc, doc, Timestamp, serverTimestamp } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import { useToast } from 'primevue/usetoast'
@@ -181,7 +182,7 @@ const appearanceTotals = computed(() => {
         shooting += r.shootingCount
         internalEvent += r.internalEventCount
         external += r.externalCount
-        cost += r.totalCost
+        cost += rowEffectiveCost(r)
     }
     return {
         shooting,
@@ -192,6 +193,153 @@ const appearanceTotals = computed(() => {
         casts: filteredAppearanceRows.value.length,
     }
 })
+
+// ========= ギャラ換算表（金額補完） =========
+// アカウント名を正規化（大小文字・空白・全半角を吸収）してマッチに使う
+function normAccount(s: string | undefined | null): string {
+    return String(s ?? '').normalize('NFKC').replace(/\s+/g, '').toLowerCase()
+}
+
+const galaRates = ref<GalaRate[]>([])
+// 金額表示モード: actual=現状のまま / estimated=換算表で未入力を補完
+const galaMode = ref<'actual' | 'estimated'>('actual')
+
+async function loadGalaRates() {
+    if (!db) return
+    try {
+        const snap = await getDocs(query(collection(db, 'galaRates')))
+        galaRates.value = snap.docs.map(d => ({ id: d.id, ...(d.data() as Omit<GalaRate, 'id'>) }))
+    } catch (e) {
+        console.error('Failed to load galaRates:', e)
+    }
+}
+
+// 正規化したエイリアス -> fees のマップ
+const galaMap = computed(() => {
+    const m = new Map<string, GalaRate['fees']>()
+    for (const r of galaRates.value) {
+        const keys = [r.accountKey, ...(r.aliases || [])]
+        for (const k of keys) {
+            const nk = normAccount(k)
+            if (nk) m.set(nk, r.fees)
+        }
+    }
+    return m
+})
+
+// アカウント名 + mainSub から換算表の金額を引く。メイン→メイン金額、それ以外→サブ金額。
+function lookupGala(accountName: string | undefined, mainSub: string | undefined): number | null {
+    const fees = galaMap.value.get(normAccount(accountName))
+    if (!fees) return null
+    const isMain = String(mainSub ?? '').includes('メイン')
+    const v = isMain ? fees.メイン : fees.サブ
+    return typeof v === 'number' ? v : null
+}
+
+// 1出演あたりの実効金額。実額があればそれ、無ければ補完モード時のみ換算表で補う。
+function itemEffectiveCost(item: { cost: number; accountName: string; mainSub: string }): number {
+    if (item.cost > 0) return item.cost
+    if (galaMode.value === 'estimated') return lookupGala(item.accountName, item.mainSub) ?? 0
+    return 0
+}
+// その出演が「補完で埋めた」ものか
+function itemIsEstimated(item: { cost: number; accountName: string; mainSub: string }): boolean {
+    return galaMode.value === 'estimated' && !(item.cost > 0) && lookupGala(item.accountName, item.mainSub) != null
+}
+function rowEffectiveCost(row: AppearanceRow): number {
+    return row.items.reduce((sum, it) => sum + itemEffectiveCost(it), 0)
+}
+
+// ===== ギャラ換算表 CRUD（管理画面タブ）=====
+const galaDialogVisible = ref(false)
+const galaIsNew = ref(false)
+const galaSaving = ref(false)
+const galaForm = ref({
+    origId: '',
+    accountKey: '',
+    aliasesText: '',
+    メイン: null as number | null,
+    サブ: null as number | null,
+    キャスト: null as number | null,
+    エキストラ: null as number | null,
+    note: '',
+})
+
+function openGalaNew() {
+    galaIsNew.value = true
+    galaForm.value = { origId: '', accountKey: '', aliasesText: '', メイン: null, サブ: null, キャスト: null, エキストラ: null, note: '' }
+    galaDialogVisible.value = true
+}
+
+function openGalaEdit(r: GalaRate) {
+    galaIsNew.value = false
+    galaForm.value = {
+        origId: r.id,
+        accountKey: r.accountKey,
+        aliasesText: (r.aliases || []).join(', '),
+        メイン: r.fees?.メイン ?? null,
+        サブ: r.fees?.サブ ?? null,
+        キャスト: r.fees?.キャスト ?? null,
+        エキストラ: r.fees?.エキストラ ?? null,
+        note: r.note || '',
+    }
+    galaDialogVisible.value = true
+}
+
+async function saveGala() {
+    if (!db) return
+    const accountKey = galaForm.value.accountKey.trim()
+    if (!accountKey) {
+        toast.add({ severity: 'warn', summary: '入力エラー', detail: 'アカウント名（accountKey）は必須です', life: 3000 })
+        return
+    }
+    galaSaving.value = true
+    try {
+        const aliases = galaForm.value.aliasesText
+            .split(/[、,\n|]/)
+            .map(s => s.trim())
+            .filter(Boolean)
+        const fees: GalaRate['fees'] = {}
+        for (const k of ['メイン', 'サブ', 'キャスト', 'エキストラ'] as const) {
+            const v = galaForm.value[k]
+            if (typeof v === 'number' && !Number.isNaN(v)) fees[k] = v
+        }
+        await setDoc(doc(db, 'galaRates', accountKey), {
+            accountKey,
+            aliases,
+            fees,
+            note: galaForm.value.note.trim(),
+            updatedAt: serverTimestamp(),
+        })
+        // accountKey を変更した場合は旧ドキュメントを削除
+        if (!galaIsNew.value && galaForm.value.origId && galaForm.value.origId !== accountKey) {
+            await deleteDoc(doc(db, 'galaRates', galaForm.value.origId))
+        }
+        await loadGalaRates()
+        galaDialogVisible.value = false
+        toast.add({ severity: 'success', summary: '保存しました', detail: accountKey, life: 2500 })
+    } catch (e) {
+        console.error('Failed to save galaRate:', e)
+        toast.add({ severity: 'error', summary: 'エラー', detail: '保存に失敗しました', life: 3000 })
+    } finally {
+        galaSaving.value = false
+    }
+}
+
+async function deleteGala(r: GalaRate) {
+    if (!db) return
+    if (!confirm(`「${r.accountKey}」を換算表から削除しますか？`)) return
+    try {
+        await deleteDoc(doc(db, 'galaRates', r.id))
+        await loadGalaRates()
+        toast.add({ severity: 'success', summary: '削除しました', detail: r.accountKey, life: 2500 })
+    } catch (e) {
+        console.error('Failed to delete galaRate:', e)
+        toast.add({ severity: 'error', summary: 'エラー', detail: '削除に失敗しました', life: 3000 })
+    }
+}
+
+const sortedGalaRates = computed(() => [...galaRates.value].sort((a, b) => a.accountKey.localeCompare(b.accountKey, 'ja')))
 
 function formatAppearanceDate(ts?: Timestamp): string {
     if (!ts?.toDate) return '-'
@@ -240,13 +388,14 @@ async function exportAppearanceCsv() {
     }
     const range = rangeLabel()
     // サマリ CSV
-    const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計', '金額合計']
-    const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount, r.totalCost])
+    const costLabel = galaMode.value === 'estimated' ? '金額合計(換算表補完)' : '金額合計'
+    const summaryHeader = ['キャスト名', 'キャスト所属', '撮影', '社内イベント', '外部案件', '合計', costLabel]
+    const summaryRows = rows.map(r => [r.castName, r.castType, r.shootingCount, r.internalEventCount, r.externalCount, r.totalCount, rowEffectiveCost(r)])
     downloadCsv(`出演ダッシュボード_サマリ${range}.csv`, summaryHeader, summaryRows)
     // ブラウザの連続ダウンロード抑制を回避するため少し待つ
     await new Promise(resolve => setTimeout(resolve, 400))
     // 明細 CSV
-    const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ', '金額']
+    const detailHeader = ['キャスト名', 'キャスト所属', '撮影日', '案件区分', 'アカウント', '作品名', '役名', 'メイン/サブ', '金額', '金額種別']
     const detailRows: Array<Array<string | number>> = []
     for (const r of rows) {
         for (const it of r.items) {
@@ -259,7 +408,8 @@ async function exportAppearanceCsv() {
                 it.projectName || '',
                 it.roleName || '',
                 it.mainSub || '',
-                it.cost,
+                itemEffectiveCost(it),
+                itemIsEstimated(it) ? '換算表補完' : (it.cost > 0 ? '実額' : '未入力'),
             ])
         }
     }
@@ -392,6 +542,7 @@ onMounted(() => {
     admins.fetchAdmins()
     staffMentions.fetchAll()
     loadAppearanceData()
+    loadGalaRates()
 })
 
 function startEditTemplate(t: EmailTemplateSetting) {
@@ -1266,6 +1417,24 @@ function setAllNewDate(date: Date | null) {
                                 @click="appearanceFilter = 'external'"
                             />
                         </div>
+                        <div class="filter-buttons gala-mode-buttons">
+                            <Button
+                                label="現状の金額"
+                                size="small"
+                                severity="secondary"
+                                :outlined="galaMode !== 'actual'"
+                                @click="galaMode = 'actual'"
+                                v-tooltip.bottom="'実際に入力済みの金額のみ'"
+                            />
+                            <Button
+                                label="換算表で補完"
+                                size="small"
+                                severity="help"
+                                :outlined="galaMode !== 'estimated'"
+                                @click="galaMode = 'estimated'"
+                                v-tooltip.bottom="'金額未入力の出演を、ギャラ換算表(アカウント×役割)で補完して表示'"
+                            />
+                        </div>
                         <InputText
                             v-model="appearanceSearch"
                             placeholder="キャスト名 / 作品名 / アカウント名 で絞り込み"
@@ -1318,7 +1487,10 @@ function setAllNewDate(date: Date | null) {
                             <div class="summary-value">{{ appearanceTotals.external }}</div>
                         </div>
                         <div class="summary-tile cost">
-                            <div class="summary-label">金額合計</div>
+                            <div class="summary-label">
+                                金額合計
+                                <span v-if="galaMode === 'estimated'" class="gala-badge">補完</span>
+                            </div>
                             <div class="summary-value">¥{{ appearanceTotals.cost.toLocaleString() }}</div>
                         </div>
                     </div>
@@ -1360,7 +1532,10 @@ function setAllNewDate(date: Date | null) {
                                     <td><Tag :value="row.internalEventCount" severity="info" /></td>
                                     <td><Tag :value="row.externalCount" severity="warn" /></td>
                                     <td><strong>{{ row.totalCount }}</strong></td>
-                                    <td><strong>¥{{ row.totalCost.toLocaleString() }}</strong></td>
+                                    <td>
+                                        <strong>¥{{ rowEffectiveCost(row).toLocaleString() }}</strong>
+                                        <span v-if="galaMode === 'estimated' && rowEffectiveCost(row) !== row.totalCost" class="gala-badge" v-tooltip.top="'換算表で補完した金額を含む'">補完</span>
+                                    </td>
                                 </tr>
                                 <tr v-if="expandedCastRows.has(row.castId)" class="appearance-detail-row">
                                     <td></td>
@@ -1390,7 +1565,13 @@ function setAllNewDate(date: Date | null) {
                                                     <td>{{ item.projectName || '-' }}</td>
                                                     <td>{{ item.roleName || '-' }}</td>
                                                     <td>{{ item.mainSub || '-' }}</td>
-                                                    <td>{{ item.cost ? `¥${item.cost.toLocaleString()}` : '-' }}</td>
+                                                    <td :class="{ 'gala-estimated': itemIsEstimated(item) }">
+                                                        <template v-if="itemEffectiveCost(item) > 0">
+                                                            ¥{{ itemEffectiveCost(item).toLocaleString() }}
+                                                            <span v-if="itemIsEstimated(item)" class="gala-badge" v-tooltip.top="'換算表で補完'">補完</span>
+                                                        </template>
+                                                        <template v-else>-</template>
+                                                    </td>
                                                 </tr>
                                             </tbody>
                                         </table>
@@ -1401,7 +1582,104 @@ function setAllNewDate(date: Date | null) {
                     </table>
                 </div>
             </TabPanel>
+
+            <!-- Tab 6: ギャラ換算表 -->
+            <TabPanel value="6">
+                <template #header>
+                    <div class="tab-header">
+                        <i class="pi pi-yen"></i>
+                        <span>ギャラ換算表</span>
+                        <Badge :value="galaRates.length" severity="secondary" />
+                    </div>
+                </template>
+
+                <div class="tab-content">
+                    <div class="appearance-help">
+                        <i class="pi pi-info-circle"></i>
+                        <span>
+                            アカウント × 役割ランクごとのギャラ。出演ダッシュボードの「換算表で補完」で、
+                            <b>金額未入力の出演</b>をアカウント名から補完するのに使います
+                            （メイン → メイン金額、それ以外 → サブ金額）。
+                            <b>aliases</b> に表記ゆれを登録するとマッチ精度が上がります。
+                        </span>
+                    </div>
+
+                    <div class="appearance-toolbar">
+                        <Button label="新規追加" icon="pi pi-plus" size="small" @click="openGalaNew" />
+                    </div>
+
+                    <table class="master-table">
+                        <thead>
+                            <tr>
+                                <th>アカウント (accountKey)</th>
+                                <th>aliases（表記ゆれ）</th>
+                                <th style="width: 90px;">メイン</th>
+                                <th style="width: 90px;">サブ</th>
+                                <th style="width: 90px;">キャスト</th>
+                                <th style="width: 90px;">エキストラ</th>
+                                <th>備考</th>
+                                <th style="width: 110px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="r in sortedGalaRates" :key="r.id">
+                                <td><strong>{{ r.accountKey }}</strong></td>
+                                <td class="gala-aliases">{{ (r.aliases || []).join(', ') || '-' }}</td>
+                                <td>{{ r.fees?.メイン != null ? `¥${r.fees.メイン.toLocaleString()}` : '-' }}</td>
+                                <td>{{ r.fees?.サブ != null ? `¥${r.fees.サブ.toLocaleString()}` : '-' }}</td>
+                                <td>{{ r.fees?.キャスト != null ? `¥${r.fees.キャスト.toLocaleString()}` : '-' }}</td>
+                                <td>{{ r.fees?.エキストラ != null ? `¥${r.fees.エキストラ.toLocaleString()}` : '-' }}</td>
+                                <td class="gala-note">{{ r.note || '-' }}</td>
+                                <td>
+                                    <Button icon="pi pi-pencil" size="small" text @click="openGalaEdit(r)" v-tooltip.top="'編集'" />
+                                    <Button icon="pi pi-trash" size="small" text severity="danger" @click="deleteGala(r)" v-tooltip.top="'削除'" />
+                                </td>
+                            </tr>
+                            <tr v-if="galaRates.length === 0">
+                                <td colspan="8" class="empty-state">換算表が空です。「新規追加」から登録してください。</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </TabPanel>
         </TabView>
+
+        <!-- ギャラ換算表 編集ダイアログ -->
+        <Dialog v-model:visible="galaDialogVisible" :header="galaIsNew ? 'ギャラ換算表 — 新規追加' : 'ギャラ換算表 — 編集'" modal :style="{ width: '32rem' }">
+            <div class="gala-form">
+                <label>アカウント名 (accountKey) <span class="req">*</span></label>
+                <InputText v-model="galaForm.accountKey" placeholder="例: ごっこ倶楽部" />
+
+                <label>aliases（表記ゆれ・カンマ/改行区切り）</label>
+                <Textarea v-model="galaForm.aliasesText" rows="2" placeholder="例: ごっこ, GOKKO" autoResize />
+
+                <div class="gala-fee-grid">
+                    <div>
+                        <label>メイン</label>
+                        <InputNumber v-model="galaForm.メイン" prefix="¥" :min="0" />
+                    </div>
+                    <div>
+                        <label>サブ</label>
+                        <InputNumber v-model="galaForm.サブ" prefix="¥" :min="0" />
+                    </div>
+                    <div>
+                        <label>キャスト</label>
+                        <InputNumber v-model="galaForm.キャスト" prefix="¥" :min="0" />
+                    </div>
+                    <div>
+                        <label>エキストラ</label>
+                        <InputNumber v-model="galaForm.エキストラ" prefix="¥" :min="0" />
+                    </div>
+                </div>
+
+                <label>備考</label>
+                <Textarea v-model="galaForm.note" rows="2" autoResize />
+            </div>
+            <template #footer>
+                <Button label="キャンセル" text @click="galaDialogVisible = false" />
+                <Button label="保存" icon="pi pi-check" :loading="galaSaving" @click="saveGala" />
+            </template>
+        </Dialog>
     </div>
 </template>
 
@@ -1468,6 +1746,26 @@ function setAllNewDate(date: Date | null) {
 }
 .cast-type-tag { font-size: 0.7rem; }
 .filter-buttons { display: flex; gap: 0.5rem; }
+.gala-mode-buttons { margin-left: 0.25rem; }
+.gala-badge {
+    display: inline-block;
+    margin-left: 0.3rem;
+    padding: 0 0.35rem;
+    font-size: 0.65rem;
+    line-height: 1.4;
+    border-radius: 4px;
+    background: var(--p-purple-100, #f3e8ff);
+    color: var(--p-purple-700, #7e22ce);
+    vertical-align: middle;
+}
+.gala-estimated { color: var(--p-purple-600, #9333ea); }
+.gala-aliases, .gala-note { color: var(--text-color-secondary); font-size: 0.85rem; }
+.gala-form { display: flex; flex-direction: column; gap: 0.4rem; }
+.gala-form label { font-size: 0.85rem; font-weight: 600; margin-top: 0.4rem; }
+.gala-form .req { color: var(--p-red-500, #ef4444); }
+.gala-fee-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 0.75rem; }
+.gala-fee-grid label { font-weight: 500; }
+.gala-fee-grid :deep(.p-inputnumber) { width: 100%; }
 .appearance-detail-row > td { background: var(--surface-50); padding: 0.5rem 1rem; }
 .appearance-detail-table {
     width: 100%;
