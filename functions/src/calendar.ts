@@ -279,8 +279,12 @@ export async function updateCalendarEventTime(params: {
             };
         } else {
             // 時間指定なし → 終日イベント
+            // Calendar API の end.date は排他的（exclusive）。同日にすると 400 になるため翌日にする。
+            const endDateObj = new Date(params.startDate + "T00:00:00");
+            endDateObj.setDate(endDateObj.getDate() + 1);
+            const exclusiveEnd = endDateObj.toISOString().split("T")[0]!;
             requestBody.start = { date: params.startDate };
-            requestBody.end = { date: params.startDate };
+            requestBody.end = { date: exclusiveEnd };
         }
 
         await calendar.events.patch({
