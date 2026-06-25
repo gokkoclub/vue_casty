@@ -6,6 +6,7 @@ import Tag from 'primevue/tag'
 import Dialog from 'primevue/dialog'
 import Checkbox from 'primevue/checkbox'
 import type { ShootingContact, ShootingContactStatus } from '@/types'
+import type { Timestamp } from 'firebase/firestore'
 
 const props = defineProps<{
     contacts: ShootingContact[]
@@ -70,6 +71,21 @@ function formatDate(contact: ShootingContact): string {
         return `${d.getMonth() + 1}/${d.getDate()}(${weekdays[d.getDay()]})`
     }
     return '-'
+}
+
+// 詳細ポップアップ（完了タブ）
+const detailContact = ref<ShootingContact | null>(null)
+function openDetail(contact: ShootingContact) {
+    detailContact.value = contact
+}
+function fmtTs(ts?: Timestamp): string {
+    if (!ts?.toDate) return '-'
+    const d = ts.toDate()
+    const weekdays = ['日', '月', '火', '水', '木', '金', '土']
+    return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}(${weekdays[d.getDay()]})`
+}
+function fmtCost(c: ShootingContact): string {
+    return c.cost || (c.fee ? `¥${c.fee.toLocaleString()}` : '-')
 }
 
 // Status change confirmation
@@ -275,6 +291,17 @@ function cancelConfirm() {
                             />
                         </template>
 
+                        <!-- 詳細 (完了タブ): 保持情報を全て表示 -->
+                        <Button
+                            v-if="status === '完了'"
+                            icon="pi pi-info-circle"
+                            size="small"
+                            severity="secondary"
+                            outlined
+                            @click="openDetail(contact)"
+                            v-tooltip.top="'詳細を表示'"
+                        />
+
                         <!-- 発注書PDF (only 発注書送信待ち) -->
                         <Button
                             v-if="status === '発注書送信待ち'"
@@ -339,6 +366,47 @@ function cancelConfirm() {
             <Button :label="confirmAction?.type === 'advance' ? 'はい、進める' : 'はい、戻す'" :severity="confirmAction?.type === 'advance' ? 'success' : 'warning'" @click="executeConfirm" />
         </template>
     </Dialog>
+
+    <!-- 詳細ポップアップ (完了タブ) -->
+    <Dialog
+        :visible="!!detailContact"
+        @update:visible="detailContact = null"
+        modal
+        header="撮影連絡 詳細"
+        :style="{ width: '560px' }"
+    >
+        <div v-if="detailContact" class="detail-grid">
+            <div class="detail-row"><span class="detail-label">キャスト</span><span>{{ detailContact.castName }}<Tag :value="detailContact.castType" :severity="detailContact.castType === '内部' ? 'info' : 'warn'" class="detail-tag" /></span></div>
+            <div class="detail-row"><span class="detail-label">作品名</span><span>{{ detailContact.projectName || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">アカウント</span><span>{{ detailContact.accountName || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">役名</span><span>{{ detailContact.roleName || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">メイン/サブ</span><span>{{ detailContact.mainSub || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">代理店</span><span>{{ detailContact.agencyName || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">撮影日</span><span>{{ fmtTs(detailContact.shootDate) }}</span></div>
+            <div class="detail-row"><span class="detail-label">香盤 IN</span><span>{{ detailContact.inTime || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">香盤 OUT</span><span>{{ detailContact.outTime || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">集合場所</span><span>{{ detailContact.location || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">住所</span><span>{{ detailContact.address || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">金額</span><span>{{ fmtCost(detailContact) }}</span></div>
+            <div class="detail-row"><span class="detail-label">投稿日</span><span>{{ fmtTs(detailContact.postDate) }}</span></div>
+            <div class="detail-row">
+                <span class="detail-label">オフショット</span>
+                <span>
+                    <a v-if="detailContact.makingUrl" :href="detailContact.makingUrl" target="_blank" class="detail-link"><i class="pi pi-external-link"></i> 開く</a>
+                    <span v-else class="no-data">-</span>
+                    <Tag v-if="detailContact.makingFileCount != null" :value="`${detailContact.makingFileCount}件`" :severity="detailContact.makingFileCount > 0 ? 'success' : 'secondary'" class="detail-tag" />
+                </span>
+            </div>
+            <div class="detail-row"><span class="detail-label">メール</span><span>{{ detailContact.email || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">Notion ID</span><span class="detail-mono">{{ detailContact.notionId || '-' }}</span></div>
+            <div class="detail-row"><span class="detail-label">ステータス</span><span>{{ detailContact.status }}</span></div>
+            <div class="detail-row"><span class="detail-label">作成日時</span><span>{{ fmtTs(detailContact.createdAt) }}</span></div>
+            <div class="detail-row"><span class="detail-label">更新日時</span><span>{{ fmtTs(detailContact.updatedAt) }}</span></div>
+        </div>
+        <template #footer>
+            <Button label="閉じる" severity="secondary" @click="detailContact = null" />
+        </template>
+    </Dialog>
 </template>
 
 <style scoped>
@@ -379,6 +447,13 @@ function cancelConfirm() {
 .col-url { min-width: 200px; }
 .col-postdate { width: 100px; }
 .col-actions { width: 150px; }
+.detail-grid { display: flex; flex-direction: column; }
+.detail-row { display: grid; grid-template-columns: 110px 1fr; gap: 0.5rem; padding: 0.45rem 0; border-bottom: 1px solid var(--surface-100, #f1f5f9); align-items: center; }
+.detail-row:last-child { border-bottom: none; }
+.detail-label { color: var(--text-color-secondary); font-size: 0.8rem; font-weight: 600; }
+.detail-tag { margin-left: 0.4rem; font-size: 0.7rem; }
+.detail-link { color: var(--primary-color); text-decoration: none; }
+.detail-mono { font-family: monospace; font-size: 0.8rem; word-break: break-all; }
 
 .cast-name {
     font-weight: 600;
