@@ -250,6 +250,33 @@ function rowEffectiveCost(row: AppearanceRow): number {
     return row.items.reduce((sum, it) => sum + itemEffectiveCost(it), 0)
 }
 
+// ===== 金額の手動設定（未入力分をオーダー(castings.cost)に書き戻す）=====
+const itemCostInput = ref<Record<string, number | null>>({})
+const savingItemCost = ref<Record<string, boolean>>({})
+
+async function saveItemCost(item: AppearanceRow['items'][number]) {
+    if (!db) return
+    // 入力値があればそれ、無ければ換算表の候補値
+    const value = (itemCostInput.value[item.id] ?? lookupGala(item.accountName, item.mainSub)) || 0
+    if (!value || value <= 0) {
+        toast.add({ severity: 'warn', summary: '入力エラー', detail: '金額を入力してください', life: 3000 })
+        return
+    }
+    savingItemCost.value[item.id] = true
+    try {
+        // オーダー(casting)本体に書き戻す。cost(数値)を更新（ダッシュボード/管理表/撮影連絡が参照）
+        await updateDoc(doc(db, 'castings', item.id), { cost: value, fee: value, updatedAt: serverTimestamp() })
+        item.cost = value // ローカル反映（合計も再計算される）
+        delete itemCostInput.value[item.id]
+        toast.add({ severity: 'success', summary: '登録しました', detail: `¥${value.toLocaleString()} をオーダーに登録`, life: 2500 })
+    } catch (e) {
+        console.error('Failed to save item cost:', e)
+        toast.add({ severity: 'error', summary: 'エラー', detail: '金額の登録に失敗しました', life: 3000 })
+    } finally {
+        savingItemCost.value[item.id] = false
+    }
+}
+
 // ===== ギャラ換算表 CRUD（管理画面タブ）=====
 const galaDialogVisible = ref(false)
 const galaIsNew = ref(false)
@@ -1566,11 +1593,28 @@ function setAllNewDate(date: Date | null) {
                                                     <td>{{ item.roleName || '-' }}</td>
                                                     <td>{{ item.mainSub || '-' }}</td>
                                                     <td :class="{ 'gala-estimated': itemIsEstimated(item) }">
-                                                        <template v-if="itemEffectiveCost(item) > 0">
-                                                            ¥{{ itemEffectiveCost(item).toLocaleString() }}
-                                                            <span v-if="itemIsEstimated(item)" class="gala-badge" v-tooltip.top="'換算表で補完'">補完</span>
+                                                        <!-- 実額あり: そのまま表示 -->
+                                                        <template v-if="item.cost > 0">
+                                                            ¥{{ item.cost.toLocaleString() }}
                                                         </template>
-                                                        <template v-else>-</template>
+                                                        <!-- 未入力: 手動設定してオーダーに登録 -->
+                                                        <template v-else>
+                                                            <div class="item-cost-edit">
+                                                                <InputNumber
+                                                                    v-model="itemCostInput[item.id]"
+                                                                    prefix="¥" :min="0"
+                                                                    :placeholder="lookupGala(item.accountName, item.mainSub) ? `候補 ¥${lookupGala(item.accountName, item.mainSub)!.toLocaleString()}` : '金額'"
+                                                                    inputClass="item-cost-num"
+                                                                />
+                                                                <Button
+                                                                    icon="pi pi-check" size="small" text
+                                                                    :loading="savingItemCost[item.id]"
+                                                                    @click="saveItemCost(item)"
+                                                                    v-tooltip.top="'この金額をオーダーに登録'"
+                                                                />
+                                                                <span v-if="itemIsEstimated(item)" class="gala-badge" v-tooltip.top="'換算表の補完候補（未登録）'">補完候補</span>
+                                                            </div>
+                                                        </template>
                                                     </td>
                                                 </tr>
                                             </tbody>
@@ -1759,6 +1803,8 @@ function setAllNewDate(date: Date | null) {
     vertical-align: middle;
 }
 .gala-estimated { color: var(--p-purple-600, #9333ea); }
+.item-cost-edit { display: flex; align-items: center; gap: 0.25rem; }
+.item-cost-edit :deep(.item-cost-num) { width: 100px; padding: 0.25rem 0.4rem; font-size: 0.8rem; }
 .gala-aliases, .gala-note { color: var(--text-color-secondary); font-size: 0.85rem; }
 .gala-form { display: flex; flex-direction: column; gap: 0.4rem; }
 .gala-form label { font-size: 0.85rem; font-weight: 600; margin-top: 0.4rem; }
