@@ -109,18 +109,29 @@ exports.retrySlackThreadLink = (0, https_1.onRequest)({
             res.json({ ok: true, skipped: "already linked" });
             return;
         }
-        // projectId でグルーピング (同一 project の castings は同じ thread を共有)
-        const byProject = new Map();
+        // Timestamp → YYYY-MM-DD
+        const tsToYmd = (ts) => {
+            try {
+                return ts?.toDate?.().toISOString().slice(0, 10) || "";
+            }
+            catch {
+                return "";
+            }
+        };
+        // 「作品 + 撮影日」でグルーピング（同じ作品でも別日のオーダーは別スレッド）
+        const byGroup = new Map();
         for (const t of targets) {
             const pid = t.data()?.projectId || "";
             if (!pid)
                 continue;
-            const arr = byProject.get(pid) || [];
-            arr.push(t);
-            byProject.set(pid, arr);
+            const ymd = tsToYmd(t.data()?.startDate);
+            const key = `${pid}__${ymd}`;
+            const g = byGroup.get(key) || { projectId: pid, ymd, casts: [] };
+            g.casts.push(t);
+            byGroup.set(key, g);
         }
         const results = [];
-        for (const [projectId, casts] of byProject) {
+        for (const { projectId, ymd, casts } of byGroup.values()) {
             // 0) 撮影モード: shooting.slackThreadTs を最優先
             const isShootingMode = casts.some(t => t.data()?.mode === "shooting" || !t.data()?.mode);
             if (isShootingMode) {
@@ -130,7 +141,8 @@ exports.retrySlackThreadLink = (0, https_1.onRequest)({
                         .get();
                     const activeShoot = shootSnap.docs.find(d => {
                         const sd = d.data();
-                        return sd.deleted !== true && sd.slackThreadTs;
+                        // 撮影日が一致するスレッドのみ（別日の撮影スレッド誤掴み防止）
+                        return sd.deleted !== true && sd.slackThreadTs && (!ymd || String(sd.shootDate || "").slice(0, 10) === ymd);
                     });
                     if (activeShoot) {
                         const sd = activeShoot.data();
@@ -157,11 +169,13 @@ exports.retrySlackThreadLink = (0, https_1.onRequest)({
                 .get();
             const activeSibling = sibSnap.docs.find(d => {
                 const dd = d.data();
+                // 撮影日が一致する有効な兄弟スレッドのみ（別日の別オーダーのスレッド誤掴み防止）
                 return dd.slackThreadTs
                     && dd.deleted !== true
                     && dd.status !== "キャンセル"
                     && dd.status !== "NG"
-                    && dd.status !== "削除済み";
+                    && dd.status !== "削除済み"
+                    && (!ymd || tsToYmd(dd.startDate) === ymd);
             });
             if (activeSibling) {
                 const sd = activeSibling.data();
@@ -203,6 +217,13 @@ exports.retrySlackThreadLink = (0, https_1.onRequest)({
             //          (b) Notion URL フラグメント（フォールバック・古いメッセージ用）
             const targetCastingIds = casts.map(t => t.ref.id);
             const notionUrlFrag = `notion.so/${String(projectId).replace(/-/g, "")}`;
+            // notionUrl フォールバック用の撮影日トークン（別日の親メッセージ誤掴み防止）
+            const dateTokens = [];
+            if (ymd) {
+                const [yyyy, mm, dd] = ymd.split("-");
+                dateTokens.push(ymd, `${yyyy}/${mm}/${dd}`, `${mm}/${dd}`, `${Number(mm)}/${Number(dd)}`);
+            }
+            const textHasOrderDate = (text) => dateTokens.length === 0 || dateTokens.some(t => text.includes(t));
             let foundTs = "";
             let foundPermalink = "";
             let foundMode = "";
@@ -223,7 +244,7 @@ exports.retrySlackThreadLink = (0, https_1.onRequest)({
                     return targetCastingIds.some(id => m.text.includes(id));
                 });
                 const foundByNotionUrl = !foundByCastingId
-                    ? hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts))
+                    ? hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && textHasOrderDate(m.text) && !blacklistedTs.has(m.ts))
                     : undefined;
                 const found = foundByCastingId || foundByNotionUrl;
                 if (found) {

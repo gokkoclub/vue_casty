@@ -399,6 +399,34 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     let existingThreadTs = "";
     let existingPermalink = "";
     let resolvedThreadChannel = "";
+    // スレッドは「作品 + 撮影日」単位で紐付ける（同じ作品でも別日のオーダーは別スレッド）。
+    // 新オーダーの撮影日セット（YYYY-MM-DD）を dateRanges から作る。
+    const orderDateSet = new Set();
+    for (const dr of (data.dateRanges || [])) {
+        for (const part of String(dr).split("~")) {
+            const ymd = part.trim().replace(/\//g, "-").slice(0, 10);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(ymd))
+                orderDateSet.add(ymd);
+        }
+    }
+    // Timestamp → YYYY-MM-DD（既存コードと同じく toISOString 基準）
+    const tsToYmd = (ts) => {
+        try {
+            return ts?.toDate?.().toISOString().slice(0, 10) || "";
+        }
+        catch {
+            return "";
+        }
+    };
+    // この日付が新オーダーの撮影日と一致するか（日付不明時は従来通り許可）
+    const dateMatches = (ymd) => orderDateSet.size === 0 || !ymd || orderDateSet.has(ymd);
+    // Slack 親メッセージ本文の日付照合用トークン（スラッシュ/ハイフン/ゼロ詰めなしを網羅）
+    const dateTokens = [];
+    for (const ymd of orderDateSet) {
+        const [yyyy, mm, dd] = ymd.split("-");
+        dateTokens.push(ymd, `${yyyy}/${mm}/${dd}`, `${mm}/${dd}`, `${Number(mm)}/${Number(dd)}`);
+    }
+    const textHasOrderDate = (text) => dateTokens.length === 0 || dateTokens.some(t => text.includes(t));
     if (data.replyToThreadTs) {
         existingThreadTs = data.replyToThreadTs;
         // Firestoreからスレッドのチャンネルを取得
@@ -424,7 +452,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     .get();
                 const active = shootSnap.docs.find(d => {
                     const sd = d.data();
-                    return sd.deleted !== true && sd.slackThreadTs;
+                    // 撮影日が一致するスレッドのみ（別日の撮影スレッド誤掴み防止）
+                    return sd.deleted !== true && sd.slackThreadTs && dateMatches(String(sd.shootDate || "").slice(0, 10));
                 });
                 if (active) {
                     const sd = active.data();
@@ -453,14 +482,15 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     return false;
                 return true;
             };
-            const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs);
+            // 撮影日が一致する有効な兄弟スレッドのみ採用（別日の別オーダーのスレッド誤掴み防止）
+            const docWithThread = existingSnap.docs.find(d => isActive(d.data()) && d.data().slackThreadTs && dateMatches(tsToYmd(d.data().startDate)));
             if (docWithThread) {
                 const existingData = docWithThread.data();
                 existingThreadTs = existingData.slackThreadTs || "";
                 existingPermalink = existingData.slackPermalink || "";
                 resolvedThreadChannel = resolveSlackChannel(existingData);
             }
-            else if (existingSnap.docs.some(d => isActive(d.data()))) {
+            else if (existingSnap.docs.some(d => isActive(d.data()) && dateMatches(tsToYmd(d.data().startDate)))) {
                 // 有効なキャスティングは存在するが slackThreadTs が空 → ts 保存失敗
                 // → Slack チャンネル履歴から Notion URL で元スレッドを検索してリカバリ
                 // ⚠️ ただし、削除/キャンセル済みキャスティングに紐づいたスレッドはブラックリスト化（誤投稿防止）
@@ -491,7 +521,8 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                         if (!historyData.ok || !historyData.messages)
                             break;
                         for (const msg of historyData.messages) {
-                            if (msg.text && msg.text.includes(notionUrl)) {
+                            // Notion URL 一致 + 撮影日一致（別日の親メッセージ誤掴み防止）
+                            if (msg.text && msg.text.includes(notionUrl) && textHasOrderDate(msg.text)) {
                                 // 削除/キャンセル済みキャスティングと紐づいた古いスレッドはスキップ
                                 if (blacklistedTs.has(msg.ts)) {
                                     console.log("[Recovery] Skipping blacklisted (deleted casting) thread ts:", msg.ts);
