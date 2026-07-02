@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.resendCalendarInvite = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.retryCalendarAttendee = exports.retrySlackThreadLink = exports.sendSlackOffshot = exports.onShootingEventCreate = exports.dispatchShootingSubmission = exports.handleSlackInteraction = exports.scheduledSyncCastsFromNotion = exports.syncCastsFromNotion = exports.scheduledSyncFromNotion = exports.syncFromNotion = exports.reassignCastingThread = exports.backfillCastingProjectName = exports.consolidateShootingDuplicates = exports.syncScheduleFromSam = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.resendCalendarInvite = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.retryCalendarAttendee = exports.retrySlackThreadLink = exports.sendSlackOffshot = exports.onShootingEventCreate = exports.dispatchShootingSubmission = exports.handleSlackInteraction = exports.scheduledSyncCastsFromNotion = exports.syncCastsFromNotion = exports.scheduledSyncFromNotion = exports.syncFromNotion = exports.reassignCastingThread = exports.backfillCastingProjectName = exports.consolidateShootingDuplicates = exports.syncScheduleFromSam = exports.scheduledRemindOffshotUnfilled = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -63,6 +63,7 @@ Object.defineProperty(exports, "syncDriveLinksToContacts", { enumerable: true, g
 var syncOffshotFileCounts_1 = require("./syncOffshotFileCounts");
 Object.defineProperty(exports, "scheduledSyncOffshotFileCounts", { enumerable: true, get: function () { return syncOffshotFileCounts_1.scheduledSyncOffshotFileCounts; } });
 Object.defineProperty(exports, "syncOffshotFileCounts", { enumerable: true, get: function () { return syncOffshotFileCounts_1.syncOffshotFileCounts; } });
+Object.defineProperty(exports, "scheduledRemindOffshotUnfilled", { enumerable: true, get: function () { return syncOffshotFileCounts_1.scheduledRemindOffshotUnfilled; } });
 // Sam 経由の同期は Notion 直接同期 (syncFromNotion) に移行済み。手動 onCall と移行ユーティリティは残し、cron は廃止。
 var syncFromSam_1 = require("./syncFromSam");
 Object.defineProperty(exports, "syncScheduleFromSam", { enumerable: true, get: function () { return syncFromSam_1.syncScheduleFromSam; } });

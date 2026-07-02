@@ -52,7 +52,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = void 0;
+exports.scheduledRemindOffshotUnfilled = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = void 0;
 exports.extractFolderId = extractFolderId;
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
@@ -281,5 +281,125 @@ exports.syncOffshotFileCounts = (0, https_1.onCall)({
         console.error("[syncOffshotFileCounts] Error:", e);
         throw new https_1.HttpsError("internal", "オフショットファイル数の同期に失敗: " + msg);
     }
+});
+/**
+ * オフショット未格納リマインド（定期実行: 毎日 10:00 JST）
+ *
+ * sendSlackOffshot で通知済み（offshotNotifications.status='sent'）のうち、
+ * 送信から 2 日以上経過してもオフショットフォルダが 0 件のものについて、
+ * 元の Slack スレッドに、元のメンション相手（FD/SD・制作）を再メンションして
+ * リマインドを 1 回投稿する。
+ *
+ * 冪等性: offshotReminded=true で二重リマインドを防止。
+ *         格納済み(>0件)が確認できた場合も offshotReminded=true にして以降のチェックを止める。
+ */
+const REMIND_AFTER_MS = 2 * 24 * 60 * 60 * 1000; // 2日: これ以上経過で対象
+const REMIND_MAX_AGE_MS = 10 * 24 * 60 * 60 * 1000; // 10日: これ以上古いものは対象外（初回一斉送信・古い案件へのスパム防止）
+exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
+    schedule: "0 10 * * *",
+    timeZone: "Asia/Tokyo",
+    secrets: [SECRET, "SLACK_OFFSHOT_BOT_TOKEN", "SLACK_CHANNEL_OFFSHOT"],
+    memory: "512MiB",
+    timeoutSeconds: 300,
+    maxInstances: 1,
+}, async () => {
+    const key = process.env[SECRET];
+    const slackToken = process.env.SLACK_OFFSHOT_BOT_TOKEN;
+    const slackChannel = process.env.SLACK_CHANNEL_OFFSHOT;
+    if (!key || !slackToken || !slackChannel) {
+        console.error("[remindOffshot] 必要な secret が未設定 (SA/SLACK_OFFSHOT_BOT_TOKEN/SLACK_CHANNEL_OFFSHOT)");
+        return;
+    }
+    const db = admin.firestore();
+    const drive = getDriveClient(key);
+    const nowMs = Date.now();
+    const snap = await db.collection("offshotNotifications").where("status", "==", "sent").get();
+    let checked = 0;
+    let reminded = 0;
+    let alreadyFilled = 0;
+    for (const doc of snap.docs) {
+        const n = doc.data();
+        if (n.offshotReminded === true)
+            continue;
+        const sentAt = n.sentAt;
+        if (!sentAt?.toMillis)
+            continue;
+        const ageMs = nowMs - sentAt.toMillis();
+        if (ageMs < REMIND_AFTER_MS)
+            continue; // 2日未満はスキップ
+        if (ageMs > REMIND_MAX_AGE_MS)
+            continue; // 10日超の古い案件はスキップ（スパム防止）
+        const slackTs = n.slackTs || "";
+        if (!slackTs)
+            continue; // スレッド親が無いと返信できない
+        // オフショットフォルダを解決: offshotUrlAtSend 優先、無ければ projects.driveFolderUrl から辿る
+        let folderId = n.offshotUrlAtSend ? extractFolderId(n.offshotUrlAtSend) : null;
+        if (!folderId) {
+            try {
+                const projDoc = await db.collection("projects").doc(doc.id.replace(/-/g, "").toLowerCase()).get();
+                const rootLink = projDoc.exists ? projDoc.data()?.driveFolderUrl : "";
+                const rootId = rootLink ? extractFolderId(rootLink) : null;
+                if (rootId)
+                    folderId = await resolveOffshotFolderId(drive, rootId);
+            }
+            catch (e) {
+                console.warn(`[remindOffshot] folder 解決失敗 pageId=${doc.id}:`, e);
+            }
+        }
+        if (!folderId)
+            continue;
+        checked++;
+        let fileCount = 0;
+        try {
+            fileCount = await countFilesInFolder(drive, folderId);
+        }
+        catch (e) {
+            console.warn(`[remindOffshot] カウント失敗 pageId=${doc.id}:`, e);
+            continue; // 次回に再試行（フラグは立てない）
+        }
+        if (fileCount > 0) {
+            // 既に格納済み → リマインド不要。以降のチェックを止める
+            await doc.ref.update({ offshotReminded: true, offshotFileCountAtCheck: fileCount });
+            alreadyFilled++;
+            continue;
+        }
+        // 0 件 → スレッドにリマインド返信
+        const mentionIds = Array.isArray(n.resolvedMentionIds) ? n.resolvedMentionIds : [];
+        const mentionStr = mentionIds.map((id) => `<@${id}>`).join(" ");
+        const url = n.offshotUrlAtSend || "";
+        const text = [
+            mentionStr,
+            "`【リマインド】オフショットがまだ格納されていません。`",
+            "撮影から2日以上経過していますが、Drive内が0件です。オフショットの格納をお願いします。",
+            url,
+        ].filter(Boolean).join("\n");
+        try {
+            const res = await fetch("https://slack.com/api/chat.postMessage", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    channel: slackChannel,
+                    thread_ts: slackTs,
+                    text,
+                    link_names: true,
+                    unfurl_links: false,
+                }),
+            });
+            const data = await res.json();
+            if (!data.ok) {
+                console.warn(`[remindOffshot] Slack 返信失敗 pageId=${doc.id}: ${data.error}`);
+                continue; // フラグは立てず次回再試行
+            }
+            await doc.ref.update({
+                offshotReminded: true,
+                offshotRemindedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            reminded++;
+        }
+        catch (e) {
+            console.warn(`[remindOffshot] Slack 返信例外 pageId=${doc.id}:`, e);
+        }
+    }
+    console.log(`[remindOffshot] Done checked=${checked} reminded=${reminded} alreadyFilled=${alreadyFilled}`);
 });
 //# sourceMappingURL=syncOffshotFileCounts.js.map
