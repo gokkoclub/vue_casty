@@ -788,7 +788,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     let slackResult = { ok: false };
     try {
         slackResult = data.pdfBase64 && data.pdfFileName
-            ? await (0, slack_1.uploadFileToSlack)(slackToken, postChannel, message, data.pdfBase64, data.pdfFileName, threadTsForReply)
+            ? await (0, slack_1.uploadFileToSlack)(slackToken, postChannel, message, data.pdfBase64, data.pdfFileName, threadTsForReply, data.castingIds || [])
             : await (0, slack_1.postToSlack)(slackToken, postChannel, message, undefined, threadTsForReply);
         console.log("Slack post completed, ts:", slackResult.ts, "permalink:", slackResult.permalink);
     }
@@ -1141,9 +1141,25 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
             const sibSnap = await db.collection("castings")
                 .where("projectId", "==", casting.projectId)
                 .get();
+            // 撮影日一致の兄弟のみ借用（別日の別オーダーのスレッド誤掴み防止）
+            const selfYmd = (() => { try {
+                return casting.startDate?.toDate?.().toISOString().slice(0, 10) || "";
+            }
+            catch {
+                return "";
+            } })();
             const sibling = sibSnap.docs.find(d => {
                 const dd = d.data();
-                return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み";
+                if (!(dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み"))
+                    return false;
+                if (!selfYmd)
+                    return true;
+                let sibYmd = "";
+                try {
+                    sibYmd = dd.startDate?.toDate?.().toISOString().slice(0, 10) || "";
+                }
+                catch { /* noop */ }
+                return !sibYmd || sibYmd === selfYmd;
             });
             if (sibling) {
                 const sd = sibling.data();
@@ -1180,10 +1196,13 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
                     const hd = await histRes.json();
                     if (!hd.ok || !hd.messages)
                         break;
-                    const found = hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
+                    // 最優先: 本文に自身の castingId を含むメッセージ（オーダー本文の `casting` 行で一意特定）
+                    // 次点: Notion URL 一致
+                    const foundById = hd.messages.find(m => m.text && data.castingId && m.text.includes(data.castingId) && !blacklistedTs.has(m.ts));
+                    const found = foundById || hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
                     if (found) {
                         slackThreadTs = found.ts;
-                        console.log("[StatusRecovery] Found ts via Slack history:", slackThreadTs);
+                        console.log("[StatusRecovery] Found ts via Slack history:", slackThreadTs, foundById ? "(by castingId)" : "(by notionUrl)");
                         await castingDoc.ref.update({
                             slackThreadTs,
                             slackChannel,

@@ -76,7 +76,7 @@ async function postToSlack(token, channel, text, blocks, threadTs) {
  * @slack/web-api の filesUploadV2 を使用（V1 の Python slack_sdk.files_upload_v2 と同等）
  * SDK がリダイレクト処理・リトライを内部的に処理するため安定動作する
  */
-async function uploadFileToSlack(token, channel, text, fileBase64, fileName, threadTs) {
+async function uploadFileToSlack(token, channel, text, fileBase64, fileName, threadTs, matchCastingIds) {
     try {
         const fileBuffer = Buffer.from(fileBase64, "base64");
         console.log("[SLACK SDK] Uploading file:", fileName, "size:", fileBuffer.length);
@@ -163,11 +163,17 @@ async function uploadFileToSlack(token, channel, text, fileBase64, fileName, thr
             try {
                 const history = await client.conversations.history({
                     channel,
-                    limit: 5,
+                    limit: 20,
                 });
-                // ファイル名が一致するメッセージ、またはBot投稿の直近メッセージを探す
+                // 最優先: 本文に castingId を含むメッセージ（オーダー本文は castingId を含むため一意に特定できる）
+                // 次点: ファイル名一致、または本文先頭一致（誤マッチしやすいので castingId が使えない時のみ）
+                const ids = (matchCastingIds || []).filter(Boolean);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const botMsg = (history.messages || []).find((m) => (m.files && m.files.length > 0 && m.files.some((f) => f.name === fileName)) ||
+                const msgs = (history.messages || []);
+                const byCastingId = ids.length > 0
+                    ? msgs.find((m) => m.text && ids.some(id => m.text.includes(id)))
+                    : undefined;
+                const botMsg = byCastingId || msgs.find((m) => (m.files && m.files.length > 0 && m.files.some((f) => f.name === fileName)) ||
                     (m.bot_id && m.text && m.text.includes(text.substring(0, 50))));
                 if (botMsg?.ts) {
                     console.log("[SLACK SDK] Found ts from history:", botMsg.ts);

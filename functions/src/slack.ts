@@ -93,7 +93,8 @@ export async function uploadFileToSlack(
     text: string,
     fileBase64: string,
     fileName: string,
-    threadTs?: string
+    threadTs?: string,
+    matchCastingIds?: string[]
 ): Promise<SlackPostResult> {
     try {
         const fileBuffer = Buffer.from(fileBase64, "base64");
@@ -189,11 +190,17 @@ export async function uploadFileToSlack(
             try {
                 const history = await client.conversations.history({
                     channel,
-                    limit: 5,
+                    limit: 20,
                 });
-                // ファイル名が一致するメッセージ、またはBot投稿の直近メッセージを探す
+                // 最優先: 本文に castingId を含むメッセージ（オーダー本文は castingId を含むため一意に特定できる）
+                // 次点: ファイル名一致、または本文先頭一致（誤マッチしやすいので castingId が使えない時のみ）
+                const ids = (matchCastingIds || []).filter(Boolean);
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const botMsg = (history.messages || []).find((m: any) =>
+                const msgs = (history.messages || []) as any[];
+                const byCastingId = ids.length > 0
+                    ? msgs.find((m: any) => m.text && ids.some(id => m.text.includes(id)))
+                    : undefined;
+                const botMsg = byCastingId || msgs.find((m: any) =>
                     (m.files && m.files.length > 0 && m.files.some((f: any) => f.name === fileName)) ||
                     (m.bot_id && m.text && m.text.includes(text.substring(0, 50)))
                 );

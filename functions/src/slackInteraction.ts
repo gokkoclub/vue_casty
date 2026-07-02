@@ -218,17 +218,20 @@ export const handleSlackInteraction = onRequest(
                 console.log(`[SlackInteraction] Status updated: ${valueData.castingId} → OK`);
 
                 // 2. オーダースレッドにBOT返信
-                const threadChannel = valueData.slackChannel || process.env.SLACK_CHANNEL_INTERNAL || "";
-                if (threadChannel && valueData.slackThreadTs) {
+                // ⚠️ ボタンに焼き込まれた slackThreadTs は古い/誤リンクの可能性があるため、
+                //    castingId で引いた casting ドキュメントの現在値を「正」として優先する。
+                const threadTs = castingData.slackThreadTs || valueData.slackThreadTs || "";
+                const threadChannel = castingData.slackChannel || valueData.slackChannel || process.env.SLACK_CHANNEL_INTERNAL || "";
+                if (threadChannel && threadTs) {
                     const replyText = `✅ *${valueData.castName}* が出演OKしました（${valueData.projectName}）\n\`${oldStatus}\` → \`OK\``;
                     await postToSlack(
                         slackToken,
                         threadChannel,
                         replyText,
                         undefined,
-                        valueData.slackThreadTs
+                        threadTs
                     );
-                    console.log("[SlackInteraction] Thread reply posted");
+                    console.log("[SlackInteraction] Thread reply posted to", threadTs, "(source:", castingData.slackThreadTs ? "casting doc" : "button value", ")");
                 }
 
                 // 3. DM のボタンを更新（ボタンを消して結果テキストに差し替え）
