@@ -640,6 +640,7 @@ async function updateSlackMessage(token, channel, ts, text, blocks) {
  */
 function buildCastOrderDmBlocks(params) {
     const dateText = params.dateRanges.join(", ");
+    const castingIds = (params.castingIds || []).filter(Boolean);
     return [
         {
             type: "header",
@@ -679,7 +680,8 @@ function buildCastOrderDmBlocks(params) {
                     style: "primary",
                     action_id: "cast_ok",
                     value: JSON.stringify({
-                        castingId: params.castingId,
+                        castingId: castingIds[0] || "", // 後方互換（表示・スレッド解決用の主 ID）
+                        castingIds, // このキャストの全日程分（複数日程対応）
                         castName: params.castName,
                         projectName: params.projectName,
                         slackThreadTs: params.slackThreadTs,

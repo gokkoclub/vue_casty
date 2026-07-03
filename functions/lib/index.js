@@ -1064,13 +1064,24 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             item.slackMentionId &&
             (item.rank ?? 1) === 1 // 第1候補のみDM送信。第2候補以降はNG時に繰り上がりDMを送る
         );
+        // castingIds は items × 各itemの日程 の順で生成されている（item-major）。
+        // フロントの生成順に合わせて、各 item の開始インデックス(baseIndex)を算出する。
+        // ⚠️ 旧実装は findIndex（items内の位置）で castingIds を引いていたため、複数日程時に
+        //    別キャストの castingId を掴み、DMのOKが別人に反映される不具合があった。
+        const allItemsFull = data.items;
+        const datesOf = (it) => (it.selectedDates && it.selectedDates.length > 0) ? it.selectedDates : (data.dateRanges || []);
         for (let i = 0; i < internalItemsForDm.length; i++) {
             const item = internalItemsForDm[i];
-            // castingId を取得（items と castingIds は同じ順序）
-            const allItems = data.items;
-            const originalIndex = allItems.findIndex((ai) => ai.castName === item.castName && ai.castType === item.castType);
-            const castingId = castingIds[originalIndex] || "";
-            if (!castingId || !item.slackMentionId)
+            const originalIndex = allItemsFull.findIndex((ai) => ai.castName === item.castName && ai.castType === item.castType);
+            if (originalIndex < 0)
+                continue;
+            // このキャストの castingIds 範囲を items-major の生成順から特定
+            let baseIndex = 0;
+            for (let k = 0; k < originalIndex; k++)
+                baseIndex += datesOf(allItemsFull[k]).length;
+            const thisDatesCount = datesOf(allItemsFull[originalIndex]).length;
+            const castCastingIds = castingIds.slice(baseIndex, baseIndex + thisDatesCount).filter(Boolean);
+            if (castCastingIds.length === 0 || !item.slackMentionId)
                 continue;
             try {
                 const dmBlocks = (0, slack_1.buildCastOrderDmBlocks)({
@@ -1079,7 +1090,7 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
                     roleName: item.roleName || "出演",
                     dateRanges: data.dateRanges || [],
                     accountName: data.accountName || "",
-                    castingId,
+                    castingIds: castCastingIds,
                     slackThreadTs: threadTs,
                     slackChannel: postChannel,
                     permalink: dmPermalink,
@@ -1910,7 +1921,7 @@ exports.sendPromotionDm = (0, https_1.onCall)({ secrets: ["SLACK_BOT_TOKEN", "GO
         roleName: casting.roleName || "出演",
         dateRanges,
         accountName: casting.accountName || "",
-        castingId,
+        castingIds: [castingId],
         slackThreadTs,
         slackChannel: resolveSlackChannel(casting),
         permalink,

@@ -142,6 +142,7 @@ export const handleSlackInteraction = onRequest(
             try {
                 const valueData = JSON.parse(action.value || "{}") as {
                     castingId: string;
+                    castingIds?: string[];
                     castName: string;
                     projectName: string;
                     slackThreadTs: string;
@@ -216,6 +217,31 @@ export const handleSlackInteraction = onRequest(
                     updatedBy: "Slack応答",
                 });
                 console.log(`[SlackInteraction] Status updated: ${valueData.castingId} → OK`);
+
+                // 複数日程対応: このキャストの他日程分の casting も同時にOKにする
+                const extraIds = (Array.isArray(valueData.castingIds) ? valueData.castingIds : [])
+                    .filter(id => id && id !== valueData.castingId);
+                if (extraIds.length > 0) {
+                    try {
+                        const extraSnaps = await db.getAll(...extraIds.map(id => db.collection("castings").doc(id)));
+                        const batch = db.batch();
+                        let n = 0;
+                        for (const s of extraSnaps) {
+                            if (!s.exists) continue;
+                            if (terminalStatuses.includes(s.data()?.status || "")) continue;
+                            batch.update(s.ref, {
+                                status: "OK",
+                                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                                updatedBy: "Slack応答",
+                            });
+                            n++;
+                        }
+                        if (n > 0) await batch.commit();
+                        console.log(`[SlackInteraction] Extra dates updated: ${n}/${extraIds.length}`);
+                    } catch (e) {
+                        console.warn("[SlackInteraction] Extra dates update failed:", e);
+                    }
+                }
 
                 // 2. オーダースレッドにBOT返信
                 // ⚠️ ボタンに焼き込まれた slackThreadTs は古い/誤リンクの可能性があるため、

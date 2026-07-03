@@ -804,12 +804,13 @@ export function buildCastOrderDmBlocks(params: {
     roleName: string;
     dateRanges: string[];
     accountName: string;
-    castingId: string;
+    castingIds: string[]; // このキャストの全日程分の castingId（複数日程対応）
     slackThreadTs: string;
     slackChannel: string;
     permalink: string;
 }): unknown[] {
     const dateText = params.dateRanges.join(", ");
+    const castingIds = (params.castingIds || []).filter(Boolean);
 
     return [
         {
@@ -850,7 +851,8 @@ export function buildCastOrderDmBlocks(params: {
                     style: "primary",
                     action_id: "cast_ok",
                     value: JSON.stringify({
-                        castingId: params.castingId,
+                        castingId: castingIds[0] || "", // 後方互換（表示・スレッド解決用の主 ID）
+                        castingIds,                     // このキャストの全日程分（複数日程対応）
                         castName: params.castName,
                         projectName: params.projectName,
                         slackThreadTs: params.slackThreadTs,
