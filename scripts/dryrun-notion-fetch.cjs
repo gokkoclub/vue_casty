@@ -3,7 +3,7 @@
  */
 const { Client } = require('/Users/mk0012/Desktop/workspace/vue_casty/functions/node_modules/@notionhq/client')
 
-const NOTION_TOKEN = 'process.env.NOTION_TOKEN'
+const NOTION_TOKEN = process.env.NOTION_TOKEN
 const NOTION_DATABASE_ID = 'c9ee418a40f64f4ca0cc542b2470024b'
 
 async function main() {

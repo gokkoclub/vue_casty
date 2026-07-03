@@ -9,7 +9,7 @@ const serviceAccount = require(path.join(__dirname, 'serviceAccountKey.json'))
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
 const db = admin.firestore()
 
-const TOKEN = 'process.env.NOTION_TOKEN'
+const TOKEN = process.env.NOTION_TOKEN
 const DB_ID = '32f505a5277e43b8a789ae382d3421f4'
 
 function readTitle(p, k) {

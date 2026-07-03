@@ -9,7 +9,7 @@ const serviceAccount = require(path.join(__dirname, 'serviceAccountKey.json'))
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) })
 const db = admin.firestore()
 
-const NOTION_TOKEN = 'process.env.NOTION_TOKEN'
+const NOTION_TOKEN = process.env.NOTION_TOKEN
 const NOTION_DATABASE_ID = 'c9ee418a40f64f4ca0cc542b2470024b'
 const TARGET = '2026-05-22'
 
