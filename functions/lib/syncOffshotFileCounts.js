@@ -286,12 +286,12 @@ exports.syncOffshotFileCounts = (0, https_1.onCall)({
  * オフショット未格納リマインド（定期実行: 毎日 10:00 JST）
  *
  * sendSlackOffshot で通知済み（offshotNotifications.status='sent'）のうち、
- * 送信から 2 日以上経過してもオフショットフォルダが 0 件のものについて、
- * 元の Slack スレッドに、元のメンション相手（FD/SD・制作）を再メンションして
- * リマインドを 1 回投稿する。
+ * 送信から 2 日以上経過したものについて、オフショットフォルダの件数を確認し:
+ *   - 0 件         → 元の Slack スレッドに再メンションでリマインドを投稿
+ *   - 1 件以上格納 → 元のスレッドに「格納ありがとうございます」のお礼を投稿
+ * どちらも 1 回のみ。
  *
- * 冪等性: offshotReminded=true で二重リマインドを防止。
- *         格納済み(>0件)が確認できた場合も offshotReminded=true にして以降のチェックを止める。
+ * 冪等性: offshotReminded=true で二重投稿を防止（お礼を送った場合も true にする）。
  */
 const REMIND_AFTER_MS = 2 * 24 * 60 * 60 * 1000; // 2日: これ以上経過で対象
 const REMIND_MAX_AGE_MS = 10 * 24 * 60 * 60 * 1000; // 10日: これ以上古いものは対象外（初回一斉送信・古い案件へのスパム防止）
@@ -358,8 +358,42 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
             continue; // 次回に再試行（フラグは立てない）
         }
         if (fileCount > 0) {
-            // 既に格納済み → リマインド不要。以降のチェックを止める
-            await doc.ref.update({ offshotReminded: true, offshotFileCountAtCheck: fileCount });
+            // 既に格納済み → スレッドにお礼を投稿して以降のチェックを止める
+            const mentionIds = Array.isArray(n.resolvedMentionIds) ? n.resolvedMentionIds : [];
+            const mentionStr = mentionIds.map((id) => `<@${id}>`).join(" ");
+            const thanksText = [
+                mentionStr,
+                "`オフショットの格納を確認しました。ありがとうございます！`",
+                `（現在 ${fileCount}件 格納されています）`,
+            ].filter(Boolean).join("\n");
+            try {
+                const res = await fetch("https://slack.com/api/chat.postMessage", {
+                    method: "POST",
+                    headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        channel: slackChannel,
+                        thread_ts: slackTs,
+                        text: thanksText,
+                        link_names: true,
+                        unfurl_links: false,
+                    }),
+                });
+                const data = await res.json();
+                if (!data.ok) {
+                    console.warn(`[remindOffshot] お礼投稿失敗 pageId=${doc.id}: ${data.error}`);
+                    continue; // フラグは立てず次回再試行
+                }
+            }
+            catch (e) {
+                console.warn(`[remindOffshot] お礼投稿例外 pageId=${doc.id}:`, e);
+                continue;
+            }
+            await doc.ref.update({
+                offshotReminded: true,
+                offshotThanked: true,
+                offshotFileCountAtCheck: fileCount,
+                offshotThankedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
             alreadyFilled++;
             continue;
         }
