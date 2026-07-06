@@ -184,40 +184,50 @@ export async function uploadFileToSlack(
         }
 
         // ts が空（shares/files.info から取得失敗、またはgetPermalink検証失敗）
-        // → conversations.history で直近のファイル付きメッセージから ts を取得
+        // → conversations.history から「今アップロードしたメッセージ」を厳密に特定して ts を取得。
+        //   ⚠️ 旧実装は「本文先頭50文字一致」でフォールバックしていたが、オーダー本文は同じ
+        //      グループメンションで始まるため、別の古いメッセージへ誤マッチし、新オーダーが
+        //      無関係なスレッドに紐付く重大バグの原因になっていた。
+        //   対策: アップロードしたファイルID（一意）を最優先で照合。次点で castingId。
+        //         いずれも見つからなければ ts は空のまま（誤った ts は絶対に書き込まない）。
+        //         空の場合は後続の retrySlackThreadLink が castingId 起点で正しく再リンクする。
+        const uploadedFileId: string = files?.[0]?.id || "";
+        const ids = (matchCastingIds || []).filter(Boolean);
         if (!ts) {
-            console.log("[SLACK SDK] ts empty, falling back to conversations.history...");
-            try {
-                const history = await client.conversations.history({
-                    channel,
-                    limit: 20,
-                });
-                // 最優先: 本文に castingId を含むメッセージ（オーダー本文は castingId を含むため一意に特定できる）
-                // 次点: ファイル名一致、または本文先頭一致（誤マッチしやすいので castingId が使えない時のみ）
-                const ids = (matchCastingIds || []).filter(Boolean);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const msgs = (history.messages || []) as any[];
-                const byCastingId = ids.length > 0
-                    ? msgs.find((m: any) => m.text && ids.some(id => m.text.includes(id)))
-                    : undefined;
-                const botMsg = byCastingId || msgs.find((m: any) =>
-                    (m.files && m.files.length > 0 && m.files.some((f: any) => f.name === fileName)) ||
-                    (m.bot_id && m.text && m.text.includes(text.substring(0, 50)))
-                );
-                if (botMsg?.ts) {
-                    console.log("[SLACK SDK] Found ts from history:", botMsg.ts);
-                    ts = botMsg.ts;
-                    // permalink 取得
-                    try {
-                        const plResult2 = await client.chat.getPermalink({ channel, message_ts: ts });
-                        permalink = plResult2.permalink || "";
-                    } catch { /* ignore */ }
-                    tsVerified = true;
-                } else {
-                    console.warn("[SLACK SDK] Could not find message in history");
+            console.log("[SLACK SDK] ts empty, locating uploaded message by fileId/castingId...");
+            const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+            // filesUploadV2 直後は履歴反映に遅延があるため数回リトライ
+            for (let attempt = 0; attempt < 3 && !ts; attempt++) {
+                if (attempt > 0) await sleep(1200);
+                try {
+                    const history = await client.conversations.history({ channel, limit: 30 });
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const msgs = (history.messages || []) as any[];
+                    // 1) アップロードしたファイルID一致（最も確実）
+                    const byFileId = uploadedFileId
+                        ? msgs.find((m: any) => Array.isArray(m.files) && m.files.some((f: any) => f.id === uploadedFileId))
+                        : undefined;
+                    // 2) 本文に castingId を含む（オーダー本文は castingId を含むため一意）
+                    const byCastingId = !byFileId && ids.length > 0
+                        ? msgs.find((m: any) => m.text && ids.some((id) => m.text.includes(id)))
+                        : undefined;
+                    const hit = byFileId || byCastingId;
+                    if (hit?.ts) {
+                        ts = hit.ts;
+                        console.log(`[SLACK SDK] Located message ts: ${ts} (by ${byFileId ? "fileId" : "castingId"})`);
+                        try {
+                            const plResult2 = await client.chat.getPermalink({ channel, message_ts: ts });
+                            permalink = plResult2.permalink || "";
+                        } catch { /* ignore */ }
+                        tsVerified = true;
+                    }
+                } catch (histErr) {
+                    console.warn("[SLACK SDK] conversations.history lookup failed:", histErr);
                 }
-            } catch (histErr) {
-                console.warn("[SLACK SDK] conversations.history fallback failed:", histErr);
+            }
+            if (!ts) {
+                // 誤った ts を返すくらいなら空で返す（後続の castingId 再リンクに委ねる）
+                console.warn("[SLACK SDK] Could not locate uploaded message — returning empty ts (will be re-linked by castingId later)");
             }
         }
 
