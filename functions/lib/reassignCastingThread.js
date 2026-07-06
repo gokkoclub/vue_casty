@@ -46,6 +46,7 @@ exports.reassignCastingThread = void 0;
  */
 const https_1 = require("firebase-functions/v2/https");
 const admin = __importStar(require("firebase-admin"));
+const _helpers_1 = require("./automation/_helpers");
 exports.reassignCastingThread = (0, https_1.onCall)({
     region: "asia-northeast1",
     secrets: ["SLACK_BOT_TOKEN"],
@@ -68,19 +69,9 @@ exports.reassignCastingThread = (0, https_1.onCall)({
     // permalink 取得（失敗しても継続）
     let permalink = (data?.slackThreadUrl || "").trim();
     if (token) {
-        try {
-            const r = await fetch("https://slack.com/api/chat.getPermalink", {
-                method: "POST",
-                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ channel: slackChannel, message_ts: slackThreadTs }),
-            });
-            const j = await r.json();
-            if (j.ok && j.permalink)
-                permalink = j.permalink;
-        }
-        catch (e) {
-            console.warn("[reassignCastingThread] getPermalink failed:", e);
-        }
+        const pl = await (0, _helpers_1.getSlackPermalink)(token, slackChannel, slackThreadTs);
+        if (pl)
+            permalink = pl;
     }
     // castings update
     const updateFields = {

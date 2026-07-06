@@ -21,6 +21,7 @@ import { postToSlack, uploadFileToSlack, buildOrderMessage, buildAdditionalOrder
 import { createCalendarEvent, handleCalendarStatusChange, updateCalendarEventTime, updateCalendarEventTitle } from "./calendar";
 import { addAttendeeViaGas } from "./gasCalendar";
 import { syncCastToNotion, createNotionCastPage } from "./notion";
+import { buildShootId, getSlackPermalink } from "./automation/_helpers";
 
 // Re-export new Cloud Functions
 export { getShootingDetails, syncShootingDetailsToContacts } from "./shootingDetails";
@@ -326,18 +327,20 @@ async function lookupSlackIdByName(name: string): Promise<string> {
 }
 
 /**
- * オーダー本文に含まれる castingId から、対応する Slack 親メッセージ(スレッド)を特定する。
- * オーダー送信時、メッセージ本文には必ず `casting <id>, <id>...` が含まれるため、
- * castingId を含むメッセージ = そのオーダーのスレッド、と一意に確定できる。
+ * オーダー本文に含まれる一意トークン（撮影ID or castingId）から、対応する Slack
+ * 親メッセージ(スレッド)を特定する。
+ * オーダー文には必ず `撮影ID SH-...` と `casting <id>, ...` が記載されるため、
+ * トークンを含むメッセージ = そのオーダーのスレッド、と一意に確定できる。
  * これを紐付けの唯一の根拠とする（projectId/日付/Notion URL/本文一致などの推測はしない）。
+ * 優先順: 撮影ID（撮影単位で安定・誤リンクが伝播しない）> castingId。
  */
-async function findThreadTsByCastingIds(
+async function findThreadTsByTokens(
     slackToken: string,
     channel: string,
-    castingIds: string[],
+    tokens: string[],
     maxPages = 5,
 ): Promise<{ ts: string; permalink: string } | null> {
-    const ids = (castingIds || []).filter(Boolean);
+    const ids = (tokens || []).filter(Boolean);
     if (!slackToken || !channel || ids.length === 0) return null;
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page++) {
@@ -354,16 +357,7 @@ async function findThreadTsByCastingIds(
         if (!data.ok || !data.messages) break;
         const hit = data.messages.find(m => m.text && ids.some(id => m.text!.includes(id)));
         if (hit) {
-            let permalink = "";
-            try {
-                const pl = await fetch("https://slack.com/api/chat.getPermalink", {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ channel, message_ts: hit.ts }),
-                });
-                const pd = await pl.json() as { ok: boolean; permalink?: string };
-                if (pd.ok) permalink = pd.permalink || "";
-            } catch { /* ignore */ }
+            const permalink = await getSlackPermalink(slackToken, channel, hit.ts);
             return { ts: hit.ts, permalink };
         }
         cursor = data.response_metadata?.next_cursor;
@@ -441,6 +435,12 @@ export const notifyOrderCreated = onCall(
         };
         // この日付が新オーダーの撮影日と一致するか（日付不明時は従来通り許可）
         const dateMatches = (ymd: string): boolean => orderDateSet.size === 0 || !ymd || orderDateSet.has(ymd);
+
+        // 撮影ID（作品+撮影日で一意・決定的）。オーダー文の先頭に記載し、スレッド検出の第一根拠にする。
+        const shootIds: string[] = data.projectId
+            ? [...orderDateSet].sort().map((ymd) => buildShootId(data.projectId, ymd)).filter(Boolean)
+            : [];
+
         if (data.replyToThreadTs) {
             existingThreadTs = data.replyToThreadTs;
             // Firestoreからスレッドのチャンネルを取得
@@ -457,11 +457,10 @@ export const notifyOrderCreated = onCall(
                 }
             }
         } else if (data.projectId && !data.forceNewThread) {
-            // ── 追加オーダーのスレッド解決: castingId 一本化 ──
-            // 同じ作品(projectId)+撮影日のアクティブな兄弟 casting を集め、その castingId を
-            // 含む Slack メッセージ（＝元オーダーの親）をチャンネル履歴から探して「正」とする。
-            // ⚠️ 以前の shooting.slackThreadTs / Notion URL / 本文一致による推測は誤リンクの
-            //    原因だったため廃止。「本文に castingId が載っている」事実のみを根拠にする。
+            // ── 追加オーダーのスレッド解決: 撮影ID → castingId の2段検索 ──
+            // 1) 撮影ID（作品+撮影日で一意・オーダー文の先頭に必ず記載）を含むメッセージ
+            // 2) 同じ撮影のアクティブ兄弟 casting の castingId を含むメッセージ（撮影ID導入前の互換）
+            // ⚠️ shooting.slackThreadTs / Notion URL / 本文一致による推測は誤リンクの原因だったため廃止。
             const isActive = (d: FirebaseFirestore.DocumentData) => {
                 if (d.deleted === true) return false;
                 if (d.status === "キャンセル" || d.status === "NG" || d.status === "削除済み") return false;
@@ -475,12 +474,13 @@ export const notifyOrderCreated = onCall(
                 .filter(d => isActive(d.data()) && dateMatches(tsToYmd(d.data().startDate)))
                 .map(d => d.id);
 
-            const found = await findThreadTsByCastingIds(slackToken, slackChannel, siblingIds);
+            const found = (await findThreadTsByTokens(slackToken, slackChannel, shootIds))
+                || (await findThreadTsByTokens(slackToken, slackChannel, siblingIds));
             if (found) {
                 existingThreadTs = found.ts;
                 existingPermalink = found.permalink;
                 resolvedThreadChannel = slackChannel;
-                console.log("[Additional order] thread located by castingId:", existingThreadTs);
+                console.log("[Additional order] thread located by shootId/castingId:", existingThreadTs);
                 // まだ ts が無いアクティブ兄弟にも書き戻す（キャッシュ）
                 const batch = db.batch();
                 let wb = 0;
@@ -692,6 +692,7 @@ export const notifyOrderCreated = onCall(
                 // @taremane は内部キャストがオーダーに含まれる時のみ
                 taremaneGroupId: (data.hasInternal && taremaneGroupId) ? taremaneGroupId : undefined,
                 castingIds: data.castingIds || [],
+                shootIds,
             });
         } else if (orderMode === "external" || orderMode === "internal") {
             // 特別オーダー: ORDER_INTEGRATION_GUIDE セクション4・5準拠
@@ -705,6 +706,7 @@ export const notifyOrderCreated = onCall(
                 ccMention: resolvedCcMention || undefined,
                 ordererName: orderCreatorMention || orderCreatorName || undefined,
                 castingIds: data.castingIds || [],
+                shootIds,
             });
         } else {
             // 撮影オーダー
@@ -722,6 +724,7 @@ export const notifyOrderCreated = onCall(
                 ccString: ccString || undefined,
                 ordererName: orderCreatorMention || orderCreatorName || undefined,
                 castingIds: data.castingIds || [],
+                shootIds,
             });
         }
 
@@ -1007,15 +1010,21 @@ export const notifyOrderCreated = onCall(
                 console.log(`[Writeback] Updated ${updateCount} castings (slackTs=${threadTs ? "yes" : "NO"})`);
             }
 
-            // ── shooting への dual write（撮影モードのみ）──
-            // 同 NotionID = 1 shooting に集約済みのため、shooting.slackThreadTs を「正」とする運用に寄せる。
-            // 過去データ互換のため casting 側にも書く（dual write）。読み取り側は shooting 優先で見る。
+            // ── shooting への dual write（撮影モードのみ・情報キャッシュ）──
+            // ⚠️ shootings は「作品」単位で1ドキュメントのため、スレッド（作品+撮影日単位）の
+            //    「正」にはならない。スレッド解決はオーダー文の撮影ID/castingId 検索で行い、
+            //    ここは shootDate がオーダーの撮影日と一致する場合のみ更新するキャッシュに留める
+            //    （別日のオーダーによる上書き事故防止）。
             if (threadTs && orderMode === "shooting" && data.projectId) {
                 try {
                     const shootSnap = await db.collection("shootings")
                         .where("notionPageId", "==", data.projectId)
                         .get();
-                    const activeShoots = shootSnap.docs.filter(d => d.data().deleted !== true);
+                    const activeShoots = shootSnap.docs.filter(d => {
+                        const sd = d.data();
+                        if (sd.deleted === true) return false;
+                        return dateMatches(String(sd.shootDate || "").slice(0, 10));
+                    });
                     if (activeShoots.length > 0) {
                         const shBatch = db.batch();
                         for (const sdoc of activeShoots) {
@@ -1159,75 +1168,45 @@ export const notifyStatusUpdate = onCall(
         let slackChannel = resolveSlackChannel(casting);
 
         // ── slackThreadTs が空のときのリカバリ ──
-        // 同じ projectId の他キャスティングから ts を借りる、
-        // それでも無ければ Slack history を Notion URL で検索
+        // 優先順: 1) 撮影ID検索 2) 自身の castingId 検索 3) 撮影日一致のアクティブ兄弟キャッシュ
+        // （Notion URL / 本文一致による推測は誤リンクの原因だったため廃止）
         if (!slackThreadTs && casting.projectId && slackToken && slackChannel) {
             try {
-                const sibSnap = await db.collection("castings")
-                    .where("projectId", "==", casting.projectId)
-                    .get();
-                // 撮影日一致の兄弟のみ借用（別日の別オーダーのスレッド誤掴み防止）
                 const selfYmd = (() => { try { return casting.startDate?.toDate?.().toISOString().slice(0, 10) || ""; } catch { return ""; } })();
-                const sibling = sibSnap.docs.find(d => {
-                    const dd = d.data();
-                    if (!(dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み")) return false;
-                    if (!selfYmd) return true;
-                    let sibYmd = ""; try { sibYmd = dd.startDate?.toDate?.().toISOString().slice(0, 10) || ""; } catch { /* noop */ }
-                    return !sibYmd || sibYmd === selfYmd;
-                });
-                if (sibling) {
-                    const sd = sibling.data();
-                    slackThreadTs = sd.slackThreadTs;
-                    if (sd.slackChannel) slackChannel = sd.slackChannel;
-                    console.log("[StatusRecovery] Borrowed thread ts from sibling:", slackThreadTs);
-                    // 自身にも書き戻し
+                const shootId = selfYmd ? buildShootId(casting.projectId, selfYmd) : "";
+
+                const found = (await findThreadTsByTokens(slackToken, slackChannel, shootId ? [shootId] : []))
+                    || (await findThreadTsByTokens(slackToken, slackChannel, [data.castingId]));
+                if (found) {
+                    slackThreadTs = found.ts;
+                    console.log("[StatusRecovery] Found ts via shootId/castingId search:", slackThreadTs);
                     await castingDoc.ref.update({
                         slackThreadTs,
-                        slackPermalink: sd.slackPermalink || casting.slackPermalink || "",
-                        slackChannel: sd.slackChannel || slackChannel,
+                        slackPermalink: found.permalink || "",
+                        slackChannel,
                     }).catch(e => console.warn("[StatusRecovery] writeback failed:", e));
                 } else {
-                    // Slack history から Notion URL で検索
-                    console.log("[StatusRecovery] No sibling thread, searching Slack history...");
-                    const notionUrlFrag = `notion.so/${(casting.projectId as string).replace(/-/g, "")}`;
-                    // 削除/キャンセル済みキャスティングに紐づくスレッドはブラックリスト化
-                    const blacklistedTs = new Set<string>(
-                        sibSnap.docs
-                            .filter(d => {
-                                const dd = d.data();
-                                return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG" || dd.status === "削除済み";
-                            })
-                            .map(d => d.data().slackThreadTs)
-                            .filter((ts): ts is string => !!ts)
-                    );
-                    let cursor: string | undefined;
-                    for (let page = 0; page < 2 && !slackThreadTs; page++) {
-                        const histRes = await fetch("https://slack.com/api/conversations.history", {
-                            method: "POST",
-                            headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-                            body: JSON.stringify({ channel: slackChannel, limit: 100, ...(cursor ? { cursor } : {}) }),
-                        });
-                        const hd = await histRes.json() as {
-                            ok: boolean;
-                            messages?: Array<{ ts: string; text?: string }>;
-                            response_metadata?: { next_cursor?: string };
-                        };
-                        if (!hd.ok || !hd.messages) break;
-                        // 最優先: 本文に自身の castingId を含むメッセージ（オーダー本文の `casting` 行で一意特定）
-                        // 次点: Notion URL 一致
-                        const foundById = hd.messages.find(m => m.text && data.castingId && m.text.includes(data.castingId) && !blacklistedTs.has(m.ts));
-                        const found = foundById || hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
-                        if (found) {
-                            slackThreadTs = found.ts;
-                            console.log("[StatusRecovery] Found ts via Slack history:", slackThreadTs, foundById ? "(by castingId)" : "(by notionUrl)");
-                            await castingDoc.ref.update({
-                                slackThreadTs,
-                                slackChannel,
-                            }).catch(e => console.warn("[StatusRecovery] writeback failed:", e));
-                            break;
-                        }
-                        cursor = hd.response_metadata?.next_cursor;
-                        if (!cursor) break;
+                    // フォールバック: 撮影日一致のアクティブ兄弟のキャッシュ
+                    const sibSnap = await db.collection("castings")
+                        .where("projectId", "==", casting.projectId)
+                        .get();
+                    const sibling = sibSnap.docs.find(d => {
+                        const dd = d.data();
+                        if (!(dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み")) return false;
+                        if (!selfYmd) return true;
+                        let sibYmd = ""; try { sibYmd = dd.startDate?.toDate?.().toISOString().slice(0, 10) || ""; } catch { /* noop */ }
+                        return !sibYmd || sibYmd === selfYmd;
+                    });
+                    if (sibling) {
+                        const sd = sibling.data();
+                        slackThreadTs = sd.slackThreadTs;
+                        if (sd.slackChannel) slackChannel = sd.slackChannel;
+                        console.log("[StatusRecovery] Borrowed thread ts from sibling cache:", slackThreadTs);
+                        await castingDoc.ref.update({
+                            slackThreadTs,
+                            slackPermalink: sd.slackPermalink || casting.slackPermalink || "",
+                            slackChannel: sd.slackChannel || slackChannel,
+                        }).catch(e => console.warn("[StatusRecovery] writeback failed:", e));
                     }
                 }
             } catch (e) {
@@ -1661,81 +1640,49 @@ export const repairCastingThread = onCall(
             return { success: true, mode: "manual", slackThreadTs: ts, slackChannel: channel };
         }
 
-        // 2. 自動復旧パス（StatusRecovery と同じロジック）
+        // 2. 自動復旧パス
+        // 優先順: 1) 撮影ID検索 2) 自身の castingId 検索 3) 撮影日一致のアクティブ兄弟キャッシュ
+        // （日付無視の兄弟借用・Notion URL 検索は誤リンクの原因だったため廃止）
         const slackToken = getEnv("SLACK_BOT_TOKEN");
-        let slackChannel = resolveSlackChannel(casting);
+        let slackChannel = resolveSlackChannel(casting) || getEnv("SLACK_CHANNEL_INTERNAL");
         let slackThreadTs = "";
+        let foundPermalink = "";
 
         if (!casting.projectId) {
             throw new HttpsError("failed-precondition", "casting に projectId がないため自動復旧不可");
         }
-
-        // 兄弟から借用
-        const sibSnap = await db.collection("castings")
-            .where("projectId", "==", casting.projectId)
-            .get();
-        const sibling = sibSnap.docs.find(d => {
-            const dd = d.data();
-            return dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み";
-        });
-        if (sibling) {
-            const sd = sibling.data();
-            slackThreadTs = sd.slackThreadTs;
-            if (sd.slackChannel) slackChannel = sd.slackChannel;
-            await castingDoc.ref.update({
-                slackThreadTs,
-                slackPermalink: sd.slackPermalink || "",
-                slackChannel: sd.slackChannel || slackChannel,
-            });
-            console.log(`[repairCastingThread] Borrowed from sibling: casting=${data.castingId} ts=${slackThreadTs}`);
-            return { success: true, mode: "sibling", slackThreadTs, slackChannel };
-        }
-
-        // Slack history 検索
         if (!slackToken || !slackChannel) {
             throw new HttpsError("failed-precondition", "Slack認証情報がない");
         }
-        const blacklistedTs = new Set<string>(
-            sibSnap.docs
-                .filter(d => {
-                    const dd = d.data();
-                    return dd.deleted === true || dd.status === "キャンセル" || dd.status === "NG" || dd.status === "削除済み";
-                })
-                .map(d => d.data().slackThreadTs)
-                .filter((ts): ts is string => !!ts)
-        );
-        const notionUrlFrag = `notion.so/${(casting.projectId as string).replace(/-/g, "")}`;
-        let cursor: string | undefined;
-        let foundPermalink = "";
-        for (let page = 0; page < 3 && !slackThreadTs; page++) {
-            const histRes = await fetch("https://slack.com/api/conversations.history", {
-                method: "POST",
-                headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ channel: slackChannel, limit: 100, ...(cursor ? { cursor } : {}) }),
+
+        const selfYmd = (() => { try { return casting.startDate?.toDate?.().toISOString().slice(0, 10) || ""; } catch { return ""; } })();
+        const shootId = selfYmd ? buildShootId(casting.projectId, selfYmd) : "";
+
+        const foundByToken = (await findThreadTsByTokens(slackToken, slackChannel, shootId ? [shootId] : []))
+            || (await findThreadTsByTokens(slackToken, slackChannel, [data.castingId]));
+        if (foundByToken) {
+            slackThreadTs = foundByToken.ts;
+            foundPermalink = foundByToken.permalink;
+            console.log(`[repairCastingThread] Found via shootId/castingId: casting=${data.castingId} ts=${slackThreadTs}`);
+        } else {
+            // フォールバック: 撮影日一致のアクティブ兄弟キャッシュ
+            const sibSnap = await db.collection("castings")
+                .where("projectId", "==", casting.projectId)
+                .get();
+            const sibling = sibSnap.docs.find(d => {
+                const dd = d.data();
+                if (!(dd.slackThreadTs && dd.deleted !== true && dd.status !== "キャンセル" && dd.status !== "NG" && dd.status !== "削除済み")) return false;
+                if (!selfYmd) return true;
+                let sibYmd = ""; try { sibYmd = dd.startDate?.toDate?.().toISOString().slice(0, 10) || ""; } catch { /* noop */ }
+                return !sibYmd || sibYmd === selfYmd;
             });
-            const hd = await histRes.json() as {
-                ok: boolean;
-                messages?: Array<{ ts: string; text?: string }>;
-                response_metadata?: { next_cursor?: string };
-            };
-            if (!hd.ok || !hd.messages) break;
-            const found = hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && !blacklistedTs.has(m.ts));
-            if (found) {
-                slackThreadTs = found.ts;
-                // permalink 取得
-                try {
-                    const plRes = await fetch("https://slack.com/api/chat.getPermalink", {
-                        method: "POST",
-                        headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-                        body: JSON.stringify({ channel: slackChannel, message_ts: slackThreadTs }),
-                    });
-                    const plData = await plRes.json() as { ok: boolean; permalink?: string };
-                    if (plData.ok && plData.permalink) foundPermalink = plData.permalink;
-                } catch { /* ignore */ }
-                break;
+            if (sibling) {
+                const sd = sibling.data();
+                slackThreadTs = sd.slackThreadTs;
+                foundPermalink = sd.slackPermalink || "";
+                if (sd.slackChannel) slackChannel = sd.slackChannel;
+                console.log(`[repairCastingThread] Borrowed from date-matched sibling: casting=${data.castingId} ts=${slackThreadTs}`);
             }
-            cursor = hd.response_metadata?.next_cursor;
-            if (!cursor) break;
         }
 
         if (!slackThreadTs) {

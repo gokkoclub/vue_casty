@@ -4,6 +4,7 @@
  * ファイルアップロードは @slack/web-api SDK を使用（V1のPython slack_sdkと同等）
  */
 import { WebClient } from "@slack/web-api";
+import { getSlackPermalink } from "./automation/_helpers";
 
 interface SlackPostResult {
     ok: boolean;
@@ -55,25 +56,8 @@ export async function postToSlack(
             throw new Error(`Slack API error: ${errorMsg}`);
         }
 
-        // パーマリンクを取得
-        let permalink = "";
-        try {
-            const plResponse = await fetch("https://slack.com/api/chat.getPermalink", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    channel,
-                    message_ts: result.ts,
-                }),
-            });
-            const plResult = await plResponse.json() as { permalink?: string };
-            permalink = plResult.permalink || "";
-        } catch (e) {
-            console.warn("Failed to get permalink:", e);
-        }
+        // パーマリンクを取得（chat.getPermalink は form-encoded 必須）
+        const permalink = await getSlackPermalink(token, channel, String(result.ts || ""));
 
         return { ok: true, ts: result.ts, permalink };
     } catch (error) {
@@ -260,8 +244,14 @@ export function buildSpecialOrderMessage(params: {
     ccMention?: string; // 作成者のSlackメンション or 名前
     ordererName?: string;
     castingIds?: string[];
+    shootIds?: string[];
 }): string {
     const lines: string[] = [];
+
+    // 撮影ID（スレッド検出の根拠。文頭に必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
 
     // ヘッダー（オーダー主名を含む）
     const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
@@ -410,6 +400,7 @@ export function buildOrderMessage(params: {
     ccString?: string;
     ordererName?: string;
     castingIds?: string[];
+    shootIds?: string[];
 }): string {
     const isShooting = params.mode === "shooting" || !params.mode;
     const dateLabel = isShooting ? "撮影日" : "日程";
@@ -428,8 +419,13 @@ export function buildOrderMessage(params: {
         lines.push(`cc: ${params.ccString}`);
     }
 
+    // 撮影ID（スレッド検出の根拠。文頭に必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
+
     // 空行
-    if (groupMentions.length > 0 || params.ccString) {
+    if (groupMentions.length > 0 || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
 
@@ -581,6 +577,7 @@ export function buildAdditionalOrderMessage(params: {
     mentionGroupId?: string;
     taremaneGroupId?: string;
     castingIds?: string[];
+    shootIds?: string[];
 }): string {
     const lines: string[] = [];
 
@@ -589,6 +586,13 @@ export function buildAdditionalOrderMessage(params: {
         .map((id) => `<!subteam^${id}>`);
     if (groupMentions.length > 0) {
         lines.push(groupMentions.join(" "));
+    }
+
+    // 撮影ID（スレッド検出の根拠。追加オーダーにも必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
+    if (groupMentions.length > 0 || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
 

@@ -10,6 +10,7 @@
  */
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
+import { getSlackPermalink } from "./automation/_helpers";
 
 export const reassignCastingThread = onCall(
     {
@@ -42,17 +43,8 @@ export const reassignCastingThread = onCall(
         // permalink 取得（失敗しても継続）
         let permalink = (data?.slackThreadUrl || "").trim();
         if (token) {
-            try {
-                const r = await fetch("https://slack.com/api/chat.getPermalink", {
-                    method: "POST",
-                    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                    body: JSON.stringify({ channel: slackChannel, message_ts: slackThreadTs }),
-                });
-                const j = await r.json() as { ok: boolean; permalink?: string };
-                if (j.ok && j.permalink) permalink = j.permalink;
-            } catch (e) {
-                console.warn("[reassignCastingThread] getPermalink failed:", e);
-            }
+            const pl = await getSlackPermalink(token, slackChannel, slackThreadTs);
+            if (pl) permalink = pl;
         }
 
         // castings update

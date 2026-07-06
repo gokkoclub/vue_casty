@@ -53,6 +53,8 @@ exports.resolveSlackMentionsByNames = resolveSlackMentionsByNames;
 exports.buildCalendarClient = buildCalendarClient;
 exports.getOrCreateCalendarId = getOrCreateCalendarId;
 exports.simpleHash = simpleHash;
+exports.buildShootId = buildShootId;
+exports.getSlackPermalink = getSlackPermalink;
 const admin = __importStar(require("firebase-admin"));
 const googleapis_1 = require("googleapis");
 /** 名前正規化(空白・敬称除去・小文字化) */
@@ -306,5 +308,51 @@ function simpleHash(s) {
         h = h & h;
     }
     return Math.abs(h).toString(36);
+}
+// ============================================================
+// 撮影ID (shootId)
+// ============================================================
+/**
+ * 撮影ID を決定的に生成する。形式: SH-<projectIdハイフン無し小文字>-<YYYYMMDD>
+ * 「作品 + 撮影日」で一意。保存不要（projectId と日付からいつでも再計算できる）。
+ *
+ * オーダー文の先頭に必ず記載され、Slack スレッド検出の唯一の根拠になる:
+ * 「この撮影IDを含むチャンネル内の最初のメッセージ＝その撮影のオーダースレッド」。
+ * castingId / 兄弟casting の保存値 / shootings.slackThreadTs に依存しないため、
+ * 誤リンクが伝播しない（自己修復的）。
+ */
+function buildShootId(projectId, ymd) {
+    const pid = String(projectId || "").replace(/-/g, "").toLowerCase();
+    const date = String(ymd || "").replace(/[/-]/g, "").slice(0, 8);
+    if (!pid || date.length !== 8)
+        return "";
+    return `SH-${pid}-${date}`;
+}
+// ============================================================
+// Slack permalink
+// ============================================================
+/**
+ * chat.getPermalink で permalink を取得する。
+ * ⚠️ この API は JSON POST 非対応（form-encoded 必須）。JSON で投げると
+ *    invalid_arguments になり permalink が常に空になるバグの温床だった。
+ */
+async function getSlackPermalink(token, channel, messageTs) {
+    if (!token || !channel || !messageTs)
+        return "";
+    try {
+        const res = await fetch("https://slack.com/api/chat.getPermalink", {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: new URLSearchParams({ channel, message_ts: String(messageTs) }),
+        });
+        const data = await res.json();
+        return data.ok ? (data.permalink || "") : "";
+    }
+    catch {
+        return "";
+    }
 }
 //# sourceMappingURL=_helpers.js.map

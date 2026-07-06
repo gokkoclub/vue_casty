@@ -16,6 +16,7 @@ exports.buildCastOrderDmBlocks = buildCastOrderDmBlocks;
  * ファイルアップロードは @slack/web-api SDK を使用（V1のPython slack_sdkと同等）
  */
 const web_api_1 = require("@slack/web-api");
+const _helpers_1 = require("./automation/_helpers");
 /**
  * Slack にメッセージを投稿
  */
@@ -44,26 +45,8 @@ async function postToSlack(token, channel, text, blocks, threadTs) {
             console.error("Slack API error:", errorMsg);
             throw new Error(`Slack API error: ${errorMsg}`);
         }
-        // パーマリンクを取得
-        let permalink = "";
-        try {
-            const plResponse = await fetch("https://slack.com/api/chat.getPermalink", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                    channel,
-                    message_ts: result.ts,
-                }),
-            });
-            const plResult = await plResponse.json();
-            permalink = plResult.permalink || "";
-        }
-        catch (e) {
-            console.warn("Failed to get permalink:", e);
-        }
+        // パーマリンクを取得（chat.getPermalink は form-encoded 必須）
+        const permalink = await (0, _helpers_1.getSlackPermalink)(token, channel, String(result.ts || ""));
         return { ok: true, ts: result.ts, permalink };
     }
     catch (error) {
@@ -221,6 +204,10 @@ async function uploadFileToSlack(token, channel, text, fileBase64, fileName, thr
  */
 function buildSpecialOrderMessage(params) {
     const lines = [];
+    // 撮影ID（スレッド検出の根拠。文頭に必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
     // ヘッダー（オーダー主名を含む）
     const ordererSuffix = params.ordererName ? `（${params.ordererName}からオーダー）` : "";
     if (params.mode === "external") {
@@ -349,8 +336,12 @@ function buildOrderMessage(params) {
     if (params.ccString) {
         lines.push(`cc: ${params.ccString}`);
     }
+    // 撮影ID（スレッド検出の根拠。文頭に必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
     // 空行
-    if (groupMentions.length > 0 || params.ccString) {
+    if (groupMentions.length > 0 || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
     // ヘッダー（オーダー主名を含む）
@@ -481,6 +472,12 @@ function buildAdditionalOrderMessage(params) {
         .map((id) => `<!subteam^${id}>`);
     if (groupMentions.length > 0) {
         lines.push(groupMentions.join(" "));
+    }
+    // 撮影ID（スレッド検出の根拠。追加オーダーにも必ず記載する）
+    if (params.shootIds && params.shootIds.length > 0) {
+        lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
+    }
+    if (groupMentions.length > 0 || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
     lines.push("追加オーダーのお知らせ");

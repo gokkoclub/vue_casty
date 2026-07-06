@@ -8,14 +8,15 @@
  * 発火源: notifyOrderCreated → scheduleSlackThreadLinkRetry()
  * 処理:
  *   - castingIds のうち slackThreadTs がまだ空のものだけを対象
- *   - projectId 単位で: 兄弟 casting からの借用 → Slack history 検索
- *   - 手動ボタン (repairCastingThread) と同じロジック
+ *   - 「作品+撮影日」単位で: 撮影ID検索 → castingId検索 → 撮影日一致の兄弟キャッシュ
+ *   - 手動ボタン (repairCastingThread) と同じ優先順
  * =========================================================================
  */
 
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 import { CloudTasksClient } from "@google-cloud/tasks";
+import { getSlackPermalink, buildShootId } from "./_helpers";
 
 const PROJECT_ID = "gokko-casty";
 const LOCATION = "asia-northeast1";
@@ -111,68 +112,8 @@ export const retrySlackThreadLink = onRequest(
             const results: Array<{ castingId: string; status: string; mode?: string }> = [];
 
             for (const { projectId, ymd, casts } of byGroup.values()) {
-                // 0) 撮影モード: shooting.slackThreadTs を最優先
-                const isShootingMode = casts.some(t => t.data()?.mode === "shooting" || !t.data()?.mode);
-                if (isShootingMode) {
-                    try {
-                        const shootSnap = await db.collection("shootings")
-                            .where("notionPageId", "==", projectId)
-                            .get();
-                        const activeShoot = shootSnap.docs.find(d => {
-                            const sd = d.data();
-                            // 撮影日が一致するスレッドのみ（別日の撮影スレッド誤掴み防止）
-                            return sd.deleted !== true && sd.slackThreadTs && (!ymd || String(sd.shootDate || "").slice(0, 10) === ymd);
-                        });
-                        if (activeShoot) {
-                            const sd = activeShoot.data();
-                            const batch = db.batch();
-                            for (const t of casts) {
-                                batch.update(t.ref, {
-                                    slackThreadTs: sd.slackThreadTs,
-                                    slackPermalink: sd.slackPermalink || "",
-                                    slackChannel: sd.slackChannel || defaultChannel,
-                                });
-                                results.push({ castingId: t.ref.id, status: "linked", mode: "shooting" });
-                            }
-                            await batch.commit();
-                            continue;
-                        }
-                    } catch (e) {
-                        console.warn("[retrySlackThreadLink] shooting lookup failed:", e);
-                    }
-                }
-
-                // 1) 兄弟借用
-                const sibSnap = await db.collection("castings")
-                    .where("projectId", "==", projectId)
-                    .get();
-                const activeSibling = sibSnap.docs.find(d => {
-                    const dd = d.data();
-                    // 撮影日が一致する有効な兄弟スレッドのみ（別日の別オーダーのスレッド誤掴み防止）
-                    return dd.slackThreadTs
-                        && dd.deleted !== true
-                        && dd.status !== "キャンセル"
-                        && dd.status !== "NG"
-                        && dd.status !== "削除済み"
-                        && (!ymd || tsToYmd(dd.startDate as FirebaseFirestore.Timestamp | undefined) === ymd);
-                });
-
-                if (activeSibling) {
-                    const sd = activeSibling.data();
-                    const batch = db.batch();
-                    for (const t of casts) {
-                        batch.update(t.ref, {
-                            slackThreadTs: sd.slackThreadTs,
-                            slackPermalink: sd.slackPermalink || "",
-                            slackChannel: sd.slackChannel || defaultChannel,
-                        });
-                        results.push({ castingId: t.ref.id, status: "linked", mode: "sibling" });
-                    }
-                    await batch.commit();
-                    continue;
-                }
-
-                // 2) Slack history 検索
+                // ── 解決順: 1) 撮影ID検索 2) castingId検索 3) 撮影日一致のアクティブ兄弟キャッシュ ──
+                // ⚠️ shooting.slackThreadTs 最優先・Notion URL 検索は誤リンクの原因だったため廃止。
                 if (!slackToken) {
                     for (const t of casts) results.push({ castingId: t.ref.id, status: "no slack token" });
                     continue;
@@ -183,6 +124,9 @@ export const retrySlackThreadLink = onRequest(
                     continue;
                 }
 
+                const sibSnap = await db.collection("castings")
+                    .where("projectId", "==", projectId)
+                    .get();
                 const blacklistedTs = new Set<string>(
                     sibSnap.docs
                         .filter(d => {
@@ -195,21 +139,13 @@ export const retrySlackThreadLink = onRequest(
                         .map(d => d.data().slackThreadTs as string | undefined)
                         .filter((ts): ts is string => !!ts)
                 );
-                // 探索キー: (a) この project の対象 castingId のいずれか（最優先・厳密）
-                //          (b) Notion URL フラグメント（フォールバック・古いメッセージ用）
+                // 探索キー: (a) 撮影ID（作品+撮影日で一意・最優先） (b) 対象 castingId
+                const shootId = ymd ? buildShootId(projectId, ymd) : "";
                 const targetCastingIds = casts.map(t => t.ref.id);
-                const notionUrlFrag = `notion.so/${String(projectId).replace(/-/g, "")}`;
-                // notionUrl フォールバック用の撮影日トークン（別日の親メッセージ誤掴み防止）
-                const dateTokens: string[] = [];
-                if (ymd) {
-                    const [yyyy, mm, dd] = ymd.split("-");
-                    dateTokens.push(ymd, `${yyyy}/${mm}/${dd}`, `${mm}/${dd}`, `${Number(mm)}/${Number(dd)}`);
-                }
-                const textHasOrderDate = (text: string): boolean => dateTokens.length === 0 || dateTokens.some(t => text.includes(t));
 
                 let foundTs = "";
                 let foundPermalink = "";
-                let foundMode: "history-castingId" | "history-notionUrl" | "" = "";
+                let foundMode: "history-shootId" | "history-castingId" | "" = "";
                 let cursor: string | undefined;
                 for (let page = 0; page < 3 && !foundTs; page++) {
                     const histRes = await fetch("https://slack.com/api/conversations.history", {
@@ -223,27 +159,22 @@ export const retrySlackThreadLink = onRequest(
                         response_metadata?: { next_cursor?: string };
                     };
                     if (!hd.ok || !hd.messages) break;
-                    // 優先: 本文に対象 castingId のいずれかを含むメッセージ
-                    const foundByCastingId = hd.messages.find(m => {
-                        if (!m.text || blacklistedTs.has(m.ts)) return false;
-                        return targetCastingIds.some(id => m.text!.includes(id));
-                    });
-                    const foundByNotionUrl = !foundByCastingId
-                        ? hd.messages.find(m => m.text && m.text.includes(notionUrlFrag) && textHasOrderDate(m.text) && !blacklistedTs.has(m.ts))
+                    // 最優先: 撮影ID（作品+撮影日で一意）
+                    const foundByShootId = shootId
+                        ? hd.messages.find(m => m.text && m.text.includes(shootId) && !blacklistedTs.has(m.ts))
                         : undefined;
-                    const found = foundByCastingId || foundByNotionUrl;
+                    // 次点: 本文に対象 castingId のいずれかを含むメッセージ
+                    const foundByCastingId = !foundByShootId
+                        ? hd.messages.find(m => {
+                            if (!m.text || blacklistedTs.has(m.ts)) return false;
+                            return targetCastingIds.some(id => m.text!.includes(id));
+                        })
+                        : undefined;
+                    const found = foundByShootId || foundByCastingId;
                     if (found) {
                         foundTs = found.ts;
-                        foundMode = foundByCastingId ? "history-castingId" : "history-notionUrl";
-                        try {
-                            const plRes = await fetch("https://slack.com/api/chat.getPermalink", {
-                                method: "POST",
-                                headers: { Authorization: `Bearer ${slackToken}`, "Content-Type": "application/json" },
-                                body: JSON.stringify({ channel: searchChannel, message_ts: foundTs }),
-                            });
-                            const plData = await plRes.json() as { ok: boolean; permalink?: string };
-                            if (plData.ok && plData.permalink) foundPermalink = plData.permalink;
-                        } catch { /* ignore */ }
+                        foundMode = foundByShootId ? "history-shootId" : "history-castingId";
+                        foundPermalink = await getSlackPermalink(slackToken || "", searchChannel, foundTs);
                         break;
                     }
                     cursor = hd.response_metadata?.next_cursor;
@@ -259,6 +190,31 @@ export const retrySlackThreadLink = onRequest(
                             slackChannel: searchChannel,
                         });
                         results.push({ castingId: t.ref.id, status: "linked", mode: foundMode || "history" });
+                    }
+                    await batch.commit();
+                    continue;
+                }
+
+                // 3) フォールバック: 撮影日一致のアクティブ兄弟キャッシュ
+                const activeSibling = sibSnap.docs.find(d => {
+                    const dd = d.data();
+                    return dd.slackThreadTs
+                        && dd.deleted !== true
+                        && dd.status !== "キャンセル"
+                        && dd.status !== "NG"
+                        && dd.status !== "削除済み"
+                        && (!ymd || tsToYmd(dd.startDate as FirebaseFirestore.Timestamp | undefined) === ymd);
+                });
+                if (activeSibling) {
+                    const sd = activeSibling.data();
+                    const batch = db.batch();
+                    for (const t of casts) {
+                        batch.update(t.ref, {
+                            slackThreadTs: sd.slackThreadTs,
+                            slackPermalink: sd.slackPermalink || "",
+                            slackChannel: sd.slackChannel || defaultChannel,
+                        });
+                        results.push({ castingId: t.ref.id, status: "linked", mode: "sibling" });
                     }
                     await batch.commit();
                 } else {
