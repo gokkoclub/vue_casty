@@ -29,7 +29,7 @@ const FOLDER_MIME = "application/vnd.google-apps.folder";
 /**
  * Drive APIクライアントを取得（読み取り専用）
  */
-function getDriveClient(serviceAccountKey: string): drive_v3.Drive {
+export function getDriveClient(serviceAccountKey: string): drive_v3.Drive {
     const credentials = JSON.parse(serviceAccountKey);
     const auth = new google.auth.GoogleAuth({
         credentials,
@@ -57,7 +57,7 @@ export function extractFolderId(driveLink: string): string | null {
  * 指定フォルダ直下のファイル数（サブフォルダを除く）を数える。
  * ページネーションで全件取得。共有ドライブにも対応。
  */
-async function countFilesInFolder(drive: drive_v3.Drive, folderId: string): Promise<number> {
+export async function countFilesInFolder(drive: drive_v3.Drive, folderId: string): Promise<number> {
     let count = 0;
     let pageToken: string | undefined;
 
@@ -99,7 +99,7 @@ async function findChildFolder(drive: drive_v3.Drive, parentId: string, regex: R
  * オフショットフォルダの ID を返す。テンプレ構造に依存（全角/半角カッコ揺れは正規表現で吸収）。
  * GAS の extractOffshotToFirestore と同等の解決を CF 内でリアルタイムに行う。
  */
-async function resolveOffshotFolderId(drive: drive_v3.Drive, rootFolderId: string): Promise<string | null> {
+export async function resolveOffshotFolderId(drive: drive_v3.Drive, rootFolderId: string): Promise<string | null> {
     const kouhouId = await findChildFolder(drive, rootFolderId, /広報/);
     if (!kouhouId) return null;
     return await findChildFolder(drive, kouhouId, /撮影オフショット|オフショット/);
@@ -329,16 +329,33 @@ export const scheduledRemindOffshotUnfilled = onSchedule(
             const slackTs: string = n.slackTs || "";
             if (!slackTs) continue; // スレッド親が無いと返信できない
 
-            // オフショットフォルダを解決: offshotUrlAtSend 優先、無ければ projects.driveFolderUrl から辿る
-            let folderId = n.offshotUrlAtSend ? extractFolderId(n.offshotUrlAtSend) : null;
-            if (!folderId) {
-                try {
-                    const projDoc = await db.collection("projects").doc(doc.id.replace(/-/g, "").toLowerCase()).get();
-                    const rootLink = projDoc.exists ? (projDoc.data()?.driveFolderUrl as string) : "";
-                    const rootId = rootLink ? extractFolderId(rootLink) : null;
-                    if (rootId) folderId = await resolveOffshotFolderId(drive, rootId);
-                } catch (e) {
-                    console.warn(`[remindOffshot] folder 解決失敗 pageId=${doc.id}:`, e);
+            // オフショットフォルダを解決。
+            // ⚠️ offshotUrlAtSend は信用しない: 通知送信時に shootings.driveUrl（作品ルート）へ
+            //    フォールバックしていた時期があり、ルート直下の自動生成スプレッドシート（香盤等）を
+            //    数えて「格納ありがとう」を誤送信する原因になった。
+            //    必ず projects.offshotUrl（＝オフショットサブフォルダ）→ ルートからの走査で解決する。
+            let folderId: string | null = null;
+            let resolvedOffshotUrl = "";
+            let rootFolderId: string | null = null;
+            try {
+                const projDoc = await db.collection("projects").doc(doc.id.replace(/-/g, "").toLowerCase()).get();
+                const pd = projDoc.exists ? projDoc.data()! : {};
+                rootFolderId = pd.driveFolderUrl ? extractFolderId(pd.driveFolderUrl as string) : null;
+                folderId = pd.offshotUrl ? extractFolderId(pd.offshotUrl as string) : null;
+                if (folderId && rootFolderId && folderId === rootFolderId) folderId = null; // ルートを指していたら不採用
+                if (!folderId && rootFolderId) {
+                    folderId = await resolveOffshotFolderId(drive, rootFolderId);
+                }
+                if (folderId) resolvedOffshotUrl = `https://drive.google.com/drive/folders/${folderId}`;
+            } catch (e) {
+                console.warn(`[remindOffshot] folder 解決失敗 pageId=${doc.id}:`, e);
+            }
+            // 最後の手段: offshotUrlAtSend（ただしルートと同一なら不採用）
+            if (!folderId && n.offshotUrlAtSend) {
+                const atSendId = extractFolderId(n.offshotUrlAtSend);
+                if (atSendId && atSendId !== rootFolderId) {
+                    folderId = atSendId;
+                    resolvedOffshotUrl = n.offshotUrlAtSend;
                 }
             }
             if (!folderId) continue;
@@ -392,10 +409,10 @@ export const scheduledRemindOffshotUnfilled = onSchedule(
                 continue;
             }
 
-            // 0 件 → スレッドにリマインド返信
+            // 0 件 → スレッドにリマインド返信（URL は解決済みのオフショットフォルダを使う）
             const mentionIds: string[] = Array.isArray(n.resolvedMentionIds) ? n.resolvedMentionIds : [];
             const mentionStr = mentionIds.map((id) => `<@${id}>`).join(" ");
-            const url: string = n.offshotUrlAtSend || "";
+            const url: string = resolvedOffshotUrl || n.offshotUrlAtSend || "";
             const text = [
                 mentionStr,
                 "`【リマインド】オフショットがまだ格納されていません。`",

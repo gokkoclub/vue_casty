@@ -18,11 +18,12 @@
 import { onRequest } from "firebase-functions/v2/https";
 import * as admin from "firebase-admin";
 import { resolveSlackMentionsByNames } from "./_helpers";
+import { getDriveClient, extractFolderId, resolveOffshotFolderId } from "../syncOffshotFileCounts";
 
 export const sendSlackOffshot = onRequest(
     {
         region: "asia-northeast1",
-        secrets: ["SLACK_OFFSHOT_BOT_TOKEN", "SLACK_CHANNEL_OFFSHOT"],
+        secrets: ["SLACK_OFFSHOT_BOT_TOKEN", "SLACK_CHANNEL_OFFSHOT", "GOOGLE_SERVICE_ACCOUNT_KEY"],
         // Cloud Tasks からのみ呼ばれる。公開なので認証はOIDCで検証するのが望ましいが、
         // 冪等性と処理内容でバリデーションされるので当面スキップ。
         invoker: "public",
@@ -60,10 +61,47 @@ export const sendSlackOffshot = onRequest(
                 return;
             }
 
-            // shootings から driveUrl / offshotUrl を取得
+            // ── オフショットフォルダ URL の解決 ──
+            // ⚠️ 旧実装は shootings.driveUrl（作品ルートフォルダ）にフォールバックしていたため、
+            //    親フォルダのリンクが通知され、リマインドがルート直下の自動生成スプレッドシートを
+            //    数えて誤動作する原因になった。ルート URL は絶対に採用しない。
+            // 優先順: shootings.offshotUrl → projects.offshotUrl → Drive走査(ルート→02_広報→01_撮影オフショット)
             const shootingsSnap = await db.doc(`shootings/${pageId}`).get();
             const shData = shootingsSnap.exists ? shootingsSnap.data()! : {};
-            const offshotUrl: string = shData.offshotUrl || shData.driveUrl || "";
+            const projDocId = String(pageId).replace(/-/g, "").toLowerCase();
+            const projSnap = await db.doc(`projects/${projDocId}`).get();
+            const projData = projSnap.exists ? projSnap.data()! : {};
+
+            const rootUrl: string = projData.driveFolderUrl || shData.driveUrl || "";
+            const rootId = rootUrl ? extractFolderId(rootUrl) : null;
+            const notRoot = (url: string): boolean => {
+                const id = url ? extractFolderId(url) : null;
+                return !!id && id !== rootId;
+            };
+
+            let offshotUrl = "";
+            if (shData.offshotUrl && notRoot(shData.offshotUrl)) {
+                offshotUrl = shData.offshotUrl;
+            } else if (projData.offshotUrl && notRoot(projData.offshotUrl)) {
+                offshotUrl = projData.offshotUrl;
+            } else if (rootId && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+                // Drive を実走査してオフショットサブフォルダを解決（日次ジョブを待たない）
+                try {
+                    const drive = getDriveClient(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+                    const offshotFolderId = await resolveOffshotFolderId(drive, rootId);
+                    if (offshotFolderId) {
+                        offshotUrl = `https://drive.google.com/drive/folders/${offshotFolderId}`;
+                        // 次回以降のために書き戻し（projects / shootings 両方）
+                        await Promise.all([
+                            projSnap.exists ? projSnap.ref.update({ offshotUrl }).catch(() => {}) : Promise.resolve(),
+                            shootingsSnap.exists ? shootingsSnap.ref.update({ offshotUrl }).catch(() => {}) : Promise.resolve(),
+                        ]);
+                        console.log(`[sendSlackOffshot] offshot folder resolved via Drive: ${offshotUrl}`);
+                    }
+                } catch (e) {
+                    console.warn(`[sendSlackOffshot] Drive 走査失敗 pageId=${pageId}:`, e);
+                }
+            }
             const team: string = notif.team || shData.team || "";
             const shootingDate: string = notif.shootingDate || shData.shootDate || "";
             // メンション対象 = FD/SD + 制作。新形式 mentionNames を優先、無ければ旧 fdNames にフォールバック。

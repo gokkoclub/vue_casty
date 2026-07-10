@@ -53,7 +53,10 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.scheduledRemindOffshotUnfilled = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = void 0;
+exports.getDriveClient = getDriveClient;
 exports.extractFolderId = extractFolderId;
+exports.countFilesInFolder = countFilesInFolder;
+exports.resolveOffshotFolderId = resolveOffshotFolderId;
 const https_1 = require("firebase-functions/v2/https");
 const scheduler_1 = require("firebase-functions/v2/scheduler");
 const admin = __importStar(require("firebase-admin"));
@@ -332,18 +335,36 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
         const slackTs = n.slackTs || "";
         if (!slackTs)
             continue; // スレッド親が無いと返信できない
-        // オフショットフォルダを解決: offshotUrlAtSend 優先、無ければ projects.driveFolderUrl から辿る
-        let folderId = n.offshotUrlAtSend ? extractFolderId(n.offshotUrlAtSend) : null;
-        if (!folderId) {
-            try {
-                const projDoc = await db.collection("projects").doc(doc.id.replace(/-/g, "").toLowerCase()).get();
-                const rootLink = projDoc.exists ? projDoc.data()?.driveFolderUrl : "";
-                const rootId = rootLink ? extractFolderId(rootLink) : null;
-                if (rootId)
-                    folderId = await resolveOffshotFolderId(drive, rootId);
+        // オフショットフォルダを解決。
+        // ⚠️ offshotUrlAtSend は信用しない: 通知送信時に shootings.driveUrl（作品ルート）へ
+        //    フォールバックしていた時期があり、ルート直下の自動生成スプレッドシート（香盤等）を
+        //    数えて「格納ありがとう」を誤送信する原因になった。
+        //    必ず projects.offshotUrl（＝オフショットサブフォルダ）→ ルートからの走査で解決する。
+        let folderId = null;
+        let resolvedOffshotUrl = "";
+        let rootFolderId = null;
+        try {
+            const projDoc = await db.collection("projects").doc(doc.id.replace(/-/g, "").toLowerCase()).get();
+            const pd = projDoc.exists ? projDoc.data() : {};
+            rootFolderId = pd.driveFolderUrl ? extractFolderId(pd.driveFolderUrl) : null;
+            folderId = pd.offshotUrl ? extractFolderId(pd.offshotUrl) : null;
+            if (folderId && rootFolderId && folderId === rootFolderId)
+                folderId = null; // ルートを指していたら不採用
+            if (!folderId && rootFolderId) {
+                folderId = await resolveOffshotFolderId(drive, rootFolderId);
             }
-            catch (e) {
-                console.warn(`[remindOffshot] folder 解決失敗 pageId=${doc.id}:`, e);
+            if (folderId)
+                resolvedOffshotUrl = `https://drive.google.com/drive/folders/${folderId}`;
+        }
+        catch (e) {
+            console.warn(`[remindOffshot] folder 解決失敗 pageId=${doc.id}:`, e);
+        }
+        // 最後の手段: offshotUrlAtSend（ただしルートと同一なら不採用）
+        if (!folderId && n.offshotUrlAtSend) {
+            const atSendId = extractFolderId(n.offshotUrlAtSend);
+            if (atSendId && atSendId !== rootFolderId) {
+                folderId = atSendId;
+                resolvedOffshotUrl = n.offshotUrlAtSend;
             }
         }
         if (!folderId)
@@ -397,10 +418,10 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
             alreadyFilled++;
             continue;
         }
-        // 0 件 → スレッドにリマインド返信
+        // 0 件 → スレッドにリマインド返信（URL は解決済みのオフショットフォルダを使う）
         const mentionIds = Array.isArray(n.resolvedMentionIds) ? n.resolvedMentionIds : [];
         const mentionStr = mentionIds.map((id) => `<@${id}>`).join(" ");
-        const url = n.offshotUrlAtSend || "";
+        const url = resolvedOffshotUrl || n.offshotUrlAtSend || "";
         const text = [
             mentionStr,
             "`【リマインド】オフショットがまだ格納されていません。`",
