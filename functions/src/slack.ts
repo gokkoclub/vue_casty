@@ -572,6 +572,7 @@ export function buildAdditionalOrderMessage(params: {
         mainSub: string;
         slackMentionId?: string;
         projectName: string;
+        conflictInfo?: string;
     }>;
     hasInternal: boolean;
     mentionGroupId?: string;
@@ -614,14 +615,16 @@ export function buildAdditionalOrderMessage(params: {
     for (const [projectName, roles] of Object.entries(grouped)) {
         lines.push(`【${projectName}】`);
         for (const [roleName, casts] of Object.entries(roles)) {
-            // 候補を / で区切って横並び表示
-            const castList = casts
-                .sort((a, b) => a.rank - b.rank)
-                .map((c) =>
-                    c.slackMentionId ? `<@${c.slackMentionId}>` : c.castName
-                )
-                .join(" / ");
-            lines.push(`${roleName}：${castList}`);
+            // 通常オーダーと同じ表記（役名の下に 第N候補：@名前 を縦並び）
+            lines.push(`  ${roleName}`);
+            casts.sort((a, b) => a.rank - b.rank);
+            casts.forEach((c) => {
+                const mention = c.slackMentionId ? `<@${c.slackMentionId}>` : c.castName;
+                lines.push(`    第${c.rank}候補：${mention}`);
+                if (c.conflictInfo) {
+                    lines.push(`    🚨 ${c.conflictInfo}`);
+                }
+            });
         }
         lines.push("");
     }

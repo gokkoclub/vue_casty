@@ -449,6 +449,36 @@ export function useOrders() {
             }
 
             // Firestore batch write
+            // ── 候補番号の継続（追加オーダー対応）──
+            // 同じ作品・同じ役に既存の候補がいる場合、新規候補の 第N候補 は既存の
+            // 最大候補番号の続きから振る（例: 既存が第1・第2 → 新規は第3・第4…）。
+            // 削除済みは番号を空けるが、NG/キャンセルは番号を使用済みとして継続する。
+            if (payload.projectId) {
+                try {
+                    const existSnap = await getDocs(query(
+                        collection(db, 'castings'),
+                        where('projectId', '==', payload.projectId)
+                    ))
+                    const maxRankByRole = new Map<string, number>()
+                    existSnap.forEach(docSnap => {
+                        const d = docSnap.data()
+                        if (d.deleted === true || d.status === '削除済み') return
+                        const role = String(d.roleName || '').trim()
+                        if (!role) return
+                        const r = Number(d.rank) || 0
+                        if (r > (maxRankByRole.get(role) || 0)) maxRankByRole.set(role, r)
+                    })
+                    for (const item of payload.items) {
+                        const offset = maxRankByRole.get(String(item.roleName || '').trim()) || 0
+                        if (offset > 0) {
+                            item.rank = (Number(item.rank) || 1) + offset
+                        }
+                    }
+                } catch (e) {
+                    console.warn('[rank継続] 既存候補番号の取得に失敗（新規採番のまま続行）:', e)
+                }
+            }
+
             const batch = writeBatch(db)
             const now = Timestamp.now()
             const castingIds: string[] = []
