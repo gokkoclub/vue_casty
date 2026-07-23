@@ -564,6 +564,9 @@ export function useCastings() {
 
             // 3) Slack通知 + カレンダータイトル更新はバックグラウンドで実行
             //    （個別の失敗はタイトル確定に影響させない）
+            // 宮澤アカウントによるタイトル変更は Slack 通知を抑止（カレンダー連動のみ）
+            const SILENT_TITLE_EDITORS = ['yuki.miyazawa@gokkoclub.jp']
+            const suppressSlack = SILENT_TITLE_EDITORS.includes((userEmail.value || '').toLowerCase())
             if (functions) {
                 const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
                 for (const castingId of castingIds) {
@@ -571,7 +574,8 @@ export function useCastings() {
                         castingId,
                         changes: {
                             projectName: { from: oldProjectName, to: newProjectName }
-                        }
+                        },
+                        suppressSlack
                     }).catch(err => console.warn(`[updateProjectName] 通知連動失敗 (${castingId}):`, err))
                 }
             }

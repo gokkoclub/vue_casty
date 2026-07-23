@@ -1857,11 +1857,13 @@ export const notifyOrderUpdated = onCall(
         }
 
         // Slack通知（スレッド返信）— castings に保存されたチャンネルを優先
+        // suppressSlack=true のときは通知しない（Firestore/カレンダー連動のみ実行）。
+        // 例: 宮澤アカウントによる作品名変更は Slack 通知不要。
         const slackToken = getEnv("SLACK_BOT_TOKEN");
         const slackChannel = resolveSlackChannel(casting);
         const slackThreadTs = casting.slackThreadTs || "";
 
-        if (slackToken && slackChannel && slackThreadTs) {
+        if (!data.suppressSlack && slackToken && slackChannel && slackThreadTs) {
             const message = buildOrderUpdateMessage({
                 castName: casting.castName,
                 projectName: projectNameTo || casting.projectName,
@@ -1869,6 +1871,8 @@ export const notifyOrderUpdated = onCall(
             });
 
             await postToSlack(slackToken, slackChannel, message, undefined, slackThreadTs);
+        } else if (data.suppressSlack) {
+            console.log("[notifyOrderUpdated] Slack通知を抑止 (suppressSlack=true)");
         }
 
         // カレンダー更新（内部キャストのみ）
