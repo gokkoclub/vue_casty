@@ -242,6 +242,12 @@ export function useCastings() {
     async function autoCancelCompetingCandidates(decidedCasting: Casting): Promise<void> {
         if (!db) return
 
+        // 外部案件・社内イベントは「同じ役の候補から1名選ぶ」構造ではなく複数人全員が
+        // 出演対象のため、1人の決定で他をキャンセルしてはいけない（撮影オーダーのみ対象）
+        if (decidedCasting.mode === 'external' || decidedCasting.mode === 'internal') {
+            return
+        }
+
         const q = query(
             collection(db, 'castings'),
             where('projectName', '==', decidedCasting.projectName),
