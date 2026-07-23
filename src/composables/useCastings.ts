@@ -538,32 +538,41 @@ export function useCastings() {
         try {
             const oldProjectName = castings.value.find(c => castingIds.includes(c.id))?.projectName || ''
 
-            // 各castingを更新
+            // 1) まず Firestore を一括バッチで確定（アトミック）。
+            //    旧実装は CF(notifyOrderUpdated) を1件ずつ直列 await しており、途中で1件でも
+            //    失敗すると残りの casting が旧タイトルのまま残り、後続の fetchCastings()（一括
+            //    ステータス変更後など）でタイトルが巻き戻って見えるバグの原因だった。
+            //    タイトルの確定と Slack/カレンダー連動を分離する。
+            const batch = writeBatch(db)
             for (const castingId of castingIds) {
-                // Cloud Function経由で更新（Slack + Calendar cascade）
-                if (functions) {
-                    const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
-                    await notifyUpdate({
-                        castingId,
-                        changes: {
-                            projectName: { from: oldProjectName, to: newProjectName }
-                        }
-                    })
-                } else {
-                    // CF無し: Firestoreのみ更新
-                    const castingRef = doc(db, 'castings', castingId)
-                    await updateDoc(castingRef, {
-                        projectName: newProjectName,
-                        updatedAt: Timestamp.now(),
-                        updatedBy: userEmail.value || 'unknown'
-                    })
-                }
+                batch.update(doc(db, 'castings', castingId), {
+                    projectName: newProjectName,
+                    updatedAt: Timestamp.now(),
+                    updatedBy: userEmail.value || 'unknown'
+                })
+            }
+            await batch.commit()
 
-                // ローカルステート更新
+            // 2) ローカルステート反映
+            for (const castingId of castingIds) {
                 const casting = castings.value.find(c => c.id === castingId)
                 if (casting) {
                     casting.projectName = newProjectName
                     casting.updatedAt = Timestamp.now()
+                }
+            }
+
+            // 3) Slack通知 + カレンダータイトル更新はバックグラウンドで実行
+            //    （個別の失敗はタイトル確定に影響させない）
+            if (functions) {
+                const notifyUpdate = httpsCallable(functions, 'notifyOrderUpdated')
+                for (const castingId of castingIds) {
+                    notifyUpdate({
+                        castingId,
+                        changes: {
+                            projectName: { from: oldProjectName, to: newProjectName }
+                        }
+                    }).catch(err => console.warn(`[updateProjectName] 通知連動失敗 (${castingId}):`, err))
                 }
             }
 
