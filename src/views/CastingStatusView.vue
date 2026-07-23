@@ -22,6 +22,7 @@ import BulkActionBar from '@/components/status/BulkActionBar.vue'
 import BulkStatusModal from '@/components/status/BulkStatusModal.vue'
 import ThreadReassignModal from '@/components/status/ThreadReassignModal.vue'
 import SummaryModal from '@/components/common/SummaryModal.vue'
+import QuickAddOrderModal from '@/components/status/QuickAddOrderModal.vue'
 import type { Casting, CastingStatus } from '@/types'
 
 const {
@@ -37,7 +38,8 @@ const {
   deleteCasting,
   getHierarchicalCastings,
   getFeatureGroupedCastings,
-  getProjectGroupedCastings
+  getProjectGroupedCastings,
+  quickAddOrder
 } = useCastings()
 
 const {
@@ -256,8 +258,19 @@ const handleSaveRoleName = async (castingId: string, newRoleName: string) => {
   })
 }
 
+// クイック追加オーダー（宮澤+三浦限定）: 作品情報を引き継いでキャスト+役名を追加
+const showQuickAddOrder = ref(false)
+const quickAddBase = ref<Casting | null>(null)
 const handleAdditionalOrder = (casting: Casting) => {
-  console.log('Additional order for:', casting)
+  quickAddBase.value = casting
+  showQuickAddOrder.value = true
+}
+const handleQuickAddConfirm = async (items: Array<{ cast: import('@/types').Cast; roleName: string; mainSub: 'メイン' | 'サブ' | 'その他' }>) => {
+  if (!quickAddBase.value) return
+  await withLoading('追加オーダー送信中...', async () => {
+    const ok = await quickAddOrder(quickAddBase.value!, items)
+    if (ok) showQuickAddOrder.value = false
+  })
 }
 
 const handleOpenSummary = (castings: Casting[]) => {
@@ -823,6 +836,12 @@ const countCastings = (dateGroup: any) => {
       v-model:visible="showOrderWaitEmail"
       :casting="selectedCasting"
       @copied="handleEmailCopied"
+    />
+
+    <QuickAddOrderModal
+      v-model:visible="showQuickAddOrder"
+      :base="quickAddBase"
+      @confirm="handleQuickAddConfirm"
     />
 
     <SummaryModal

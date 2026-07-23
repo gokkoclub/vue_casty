@@ -109,7 +109,11 @@ const saveRoleEdit = (castingId: string) => {
   editingRoleId.value = null
 }
 
-const { isAdmin } = useAuth()
+const { isAdmin, userEmail } = useAuth()
+
+// クイック追加オーダーを使えるアカウント（宮澤・三浦のみ）
+const QUICK_ORDER_ACCOUNTS = ['yuki.miyazawa@gokkoclub.jp', 'kunihito.miura@gokkoclub.jp']
+const canQuickOrder = computed(() => QUICK_ORDER_ACCOUNTS.includes((userEmail.value || '').toLowerCase()))
 
 // カレンダー再生成
 const toast = useToast()
@@ -532,7 +536,7 @@ const sortLabel = computed(() => {
           >
             <i :class="resendingInviteId === casting.id ? 'pi pi-spin pi-spinner' : 'pi pi-send'"></i>
           </button>
-          <button class="csl-act-btn" @click="emit('additional-order', casting)" title="追加オーダー">
+          <button v-if="canQuickOrder" class="csl-act-btn" @click="emit('additional-order', casting)" title="追加オーダー">
             <i class="pi pi-plus"></i>
           </button>
           <button v-if="isExternalTab" class="csl-act-btn" @click="emit('open-email', casting)" title="メール">

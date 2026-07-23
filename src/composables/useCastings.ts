@@ -2,7 +2,7 @@ import { ref, computed } from 'vue'
 import { collection, query, orderBy, where, getDocs, doc, updateDoc, writeBatch, Timestamp } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
-import type { Casting, CastingStatus } from '@/types'
+import type { Cast, Casting, CastingStatus } from '@/types'
 import { useToast } from 'primevue/usetoast'
 import { useAuth } from '@/composables/useAuth'
 import { useSlack } from '@/composables/useSlack'
@@ -1267,6 +1267,122 @@ export function useCastings() {
         return true
     }
 
+    /**
+     * 作品からのクイック追加オーダー（宮澤+三浦アカウント限定機能のバックエンド）
+     * 既存 casting（base）から作品情報・日程を引き継ぎ、選択キャストを初期ステータスで追加。
+     * 候補番号は既存の続きから採番し、CF(notifyOrderCreated) が既存スレッドへ
+     * 「追加オーダーのお知らせ」を投稿（カレンダー/DM 連動も通常どおり）。
+     */
+    async function quickAddOrder(
+        base: Casting,
+        items: Array<{ cast: Cast; roleName: string; mainSub: 'メイン' | 'サブ' | 'その他' }>
+    ): Promise<boolean> {
+        if (!db || items.length === 0) return false
+        try {
+            // 既存の候補番号の続きから採番（削除済みは番号を空け、NG/キャンセルは使用済み）
+            const maxRankByRole = new Map<string, number>()
+            if (base.projectId) {
+                const snap = await getDocs(query(
+                    collection(db, 'castings'),
+                    where('projectId', '==', base.projectId)
+                ))
+                snap.forEach(s => {
+                    const d = s.data()
+                    if (d.deleted === true || d.status === '削除済み') return
+                    const role = String(d.roleName || '').trim()
+                    if (!role) return
+                    const r = Number(d.rank) || 0
+                    if (r > (maxRankByRole.get(role) || 0)) maxRankByRole.set(role, r)
+                })
+            }
+
+            const dateObj = base.startDate.toDate()
+            const dateStr = `${dateObj.getFullYear()}/${String(dateObj.getMonth() + 1).padStart(2, '0')}/${String(dateObj.getDate()).padStart(2, '0')}`
+
+            const batch = writeBatch(db)
+            const now = Timestamp.now()
+            const castingIds: string[] = []
+            const roleSeq = new Map<string, number>()
+            const cfItems: Array<Record<string, unknown>> = []
+
+            for (const it of items) {
+                const role = it.roleName.trim()
+                const seq = (roleSeq.get(role) || 0) + 1
+                roleSeq.set(role, seq)
+                const rank = (maxRankByRole.get(role) || 0) + seq
+
+                const castingRef = doc(collection(db, 'castings'))
+                castingIds.push(castingRef.id)
+                batch.set(castingRef, {
+                    castId: it.cast.id,
+                    castName: it.cast.name,
+                    castType: it.cast.castType,
+                    accountName: base.accountName || '',
+                    projectName: base.projectName,
+                    projectId: base.projectId || '',
+                    roleName: role,
+                    rank,
+                    mode: base.mode || 'shooting',
+                    status: it.cast.castType === '外部' ? 'オーダー待ち' : '仮キャスティング',
+                    note: '',
+                    mainSub: it.mainSub,
+                    cost: 0,
+                    slackThreadTs: '',
+                    slackPermalink: '',
+                    calendarEventId: '',
+                    dbSentStatus: '',
+                    startDate: base.startDate,
+                    endDate: base.endDate || base.startDate,
+                    createdAt: now,
+                    updatedAt: now,
+                    createdBy: userEmail.value || 'unknown',
+                    updatedBy: userEmail.value || 'unknown'
+                })
+                cfItems.push({
+                    castId: it.cast.id,
+                    castName: it.cast.name,
+                    castType: it.cast.castType,
+                    roleName: role,
+                    rank,
+                    mainSub: it.mainSub,
+                    projectName: base.projectName,
+                    slackMentionId: it.cast.slackMentionId || undefined,
+                    selectedDates: []
+                })
+            }
+            await batch.commit()
+
+            // CF: 既存スレッドへ追加オーダー投稿 + カレンダー/DM 連動 + ts 書き戻し
+            if (functions) {
+                const notifyOrder = httpsCallable(functions, 'notifyOrderCreated')
+                await notifyOrder({
+                    accountName: base.accountName || '',
+                    projectName: base.projectName,
+                    projectId: base.projectId || '',
+                    mode: base.mode || 'shooting',
+                    dateRanges: [dateStr],
+                    hasInternal: items.some(i => i.cast.castType === '内部'),
+                    items: cfItems,
+                    castingIds,
+                    forceNewThread: false
+                })
+            }
+
+            await fetchCastings()
+            toast.add({
+                severity: 'success',
+                summary: '追加オーダー完了',
+                detail: `${items.length}名を「${base.projectName}」に追加しました`,
+                life: 3000
+            })
+            return true
+        } catch (e) {
+            console.error('quickAddOrder failed:', e)
+            toast.add({ severity: 'error', summary: 'エラー', detail: '追加オーダーに失敗しました', life: 3000 })
+            return false
+        }
+    }
+
     return {
         castings,
         loading,
@@ -1284,7 +1400,8 @@ export function useCastings() {
         getCastingById,
         getHierarchicalCastings,
         getFeatureGroupedCastings,
-        getProjectGroupedCastings
+        getProjectGroupedCastings,
+        quickAddOrder
     }
 }
 
