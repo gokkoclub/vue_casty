@@ -291,9 +291,9 @@ function cancelConfirm() {
                             />
                         </template>
 
-                        <!-- 詳細 (完了タブ): 保持情報を全て表示 -->
+                        <!-- 詳細 (完了 / 投稿日連絡待ち): 保持情報を全て表示 -->
                         <Button
-                            v-if="status === '完了'"
+                            v-if="status === '完了' || status === '投稿日連絡待ち'"
                             icon="pi pi-info-circle"
                             size="small"
                             severity="secondary"

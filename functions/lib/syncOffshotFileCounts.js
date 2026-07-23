@@ -289,15 +289,32 @@ exports.syncOffshotFileCounts = (0, https_1.onCall)({
  * オフショット未格納リマインド（定期実行: 毎日 10:00 JST）
  *
  * sendSlackOffshot で通知済み（offshotNotifications.status='sent'）のうち、
- * 送信から 2 日以上経過したものについて、オフショットフォルダの件数を確認し:
+ * 撮影日の曜日で決まる判定日（月火撮影→同週金曜 / 水〜日撮影→翌週火曜）を迎えたものに
+ * ついて、オフショットフォルダの件数を確認し:
  *   - 0 件         → 元の Slack スレッドに再メンションでリマインドを投稿
- *   - 1 件以上格納 → 元のスレッドに「格納ありがとうございます」のお礼を投稿
+ *   - 1 件以上格納 → 元のスレッドに「格納ありがとうございます」＋追加時の一報依頼を投稿
  * どちらも 1 回のみ。
  *
  * 冪等性: offshotReminded=true で二重投稿を防止（お礼を送った場合も true にする）。
  */
-const REMIND_AFTER_MS = 2 * 24 * 60 * 60 * 1000; // 2日: これ以上経過で対象
-const REMIND_MAX_AGE_MS = 10 * 24 * 60 * 60 * 1000; // 10日: これ以上古いものは対象外（初回一斉送信・古い案件へのスパム防止）
+/**
+ * リマインド/お礼の判定日を撮影日の曜日から決める。
+ *   月・火 の撮影 → 同じ週の金曜日
+ *   水〜日 の撮影 → 翌週の火曜日
+ * 判定日を過ぎても未チェックの場合、CATCH_UP_DAYS 日間は追いかけて判定する
+ * （実行失敗時の取りこぼし防止）。それより古いものは対象外（スパム防止）。
+ */
+function reminderTargetYmd(shootYmd) {
+    const d = new Date(`${shootYmd}T00:00:00+09:00`);
+    if (isNaN(d.getTime()))
+        return "";
+    const dow = new Date(d.getTime() + 9 * 3600 * 1000).getUTCDay(); // JSTの曜日
+    // 月(1)→+4=金, 火(2)→+3=金, 水(3)→+6=翌火, 木(4)→+5, 金(5)→+4, 土(6)→+3, 日(0)→+2
+    const addDays = dow === 1 ? 4 : dow === 2 ? 3 : dow === 3 ? 6 : dow === 4 ? 5 : dow === 5 ? 4 : dow === 6 ? 3 : 2;
+    const t = new Date(d.getTime() + addDays * 86400 * 1000 + 9 * 3600 * 1000);
+    return t.toISOString().slice(0, 10);
+}
+const CATCH_UP_DAYS = 4;
 exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
     schedule: "0 10 * * *",
     timeZone: "Asia/Tokyo",
@@ -315,7 +332,8 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
     }
     const db = admin.firestore();
     const drive = getDriveClient(key);
-    const nowMs = Date.now();
+    // 今日の日付（JST）
+    const todayYmd = new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
     const snap = await db.collection("offshotNotifications").where("status", "==", "sent").get();
     let checked = 0;
     let reminded = 0;
@@ -324,14 +342,21 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
         const n = doc.data();
         if (n.offshotReminded === true)
             continue;
+        // 撮影日の曜日で判定日を決定（月火→金曜 / 水〜日→翌週火曜）
         const sentAt = n.sentAt;
-        if (!sentAt?.toMillis)
+        const shootYmd = String(n.shootingDate || "").slice(0, 10)
+            || (sentAt?.toDate ? new Date(sentAt.toDate().getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10) : "");
+        if (!shootYmd)
             continue;
-        const ageMs = nowMs - sentAt.toMillis();
-        if (ageMs < REMIND_AFTER_MS)
-            continue; // 2日未満はスキップ
-        if (ageMs > REMIND_MAX_AGE_MS)
-            continue; // 10日超の古い案件はスキップ（スパム防止）
+        const targetYmd = reminderTargetYmd(shootYmd);
+        if (!targetYmd)
+            continue;
+        if (todayYmd < targetYmd)
+            continue; // まだ判定日前
+        // 判定日から CATCH_UP_DAYS 日を過ぎた古いものは対象外（スパム防止）
+        const limit = new Date(new Date(`${targetYmd}T00:00:00Z`).getTime() + CATCH_UP_DAYS * 86400 * 1000).toISOString().slice(0, 10);
+        if (todayYmd > limit)
+            continue;
         const slackTs = n.slackTs || "";
         if (!slackTs)
             continue; // スレッド親が無いと返信できない
@@ -386,6 +411,7 @@ exports.scheduledRemindOffshotUnfilled = (0, scheduler_1.onSchedule)({
                 mentionStr,
                 "`オフショットの格納を確認しました。ありがとうございます！`",
                 `（現在 ${fileCount}件 格納されています）`,
+                "オフショットを新たに追加するときは、こちらで一報ご連絡ください。",
             ].filter(Boolean).join("\n");
             try {
                 const res = await fetch("https://slack.com/api/chat.postMessage", {
