@@ -11,6 +11,7 @@ import type { Casting, CastingStatus } from '@/types'
 import { useAuth } from '@/composables/useAuth'
 
 const props = defineProps<{
+  multiDate?: boolean
   castings: Casting[]
   projectName: string
   updaters?: string[]
@@ -347,6 +348,7 @@ const sortLabel = computed(() => {
             <i class="pi pi-pencil csl-edit-icon"></i>
           </span>
         </template>
+        <span v-if="multiDate" class="csl-multidate-tag" title="この作品は複数日程のオーダーがあります">複数日程</span>
         <span class="csl-cast-count">{{ castings.length }}人</span>
       </div>
       <div class="csl-project-actions">
@@ -990,5 +992,16 @@ const sortLabel = computed(() => {
   color: var(--p-red-600);
   font-weight: 600;
   white-space: nowrap;
+}
+.csl-multidate-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  border-radius: 9px;
+  background: #FEF3C7;
+  color: #B45309;
+  vertical-align: middle;
 }
 </style>

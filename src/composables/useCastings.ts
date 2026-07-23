@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { collection, query, orderBy, where, getDocs, doc, updateDoc, writeBatch, Timestamp } from 'firebase/firestore'
+import { collection, query, orderBy, where, getDocs, doc, updateDoc, writeBatch, Timestamp, deleteField } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { db, functions } from '@/services/firebase'
 import type { Cast, Casting, CastingStatus } from '@/types'
@@ -1383,6 +1383,66 @@ export function useCastings() {
         }
     }
 
+    /**
+     * 中長編: 日付ごとのステータス変更（dateStatuses マップ）。
+     * Slack へは notifyFeatureDateStatus CF 経由でスレッド通知（カレンダー等の副作用なし）。
+     */
+    async function updateFeatureDateStatus(casting: Casting, dateStr: string, newStatus: CastingStatus): Promise<boolean> {
+        if (!db) return false
+        try {
+            await updateDoc(doc(db, 'castings', casting.id), {
+                [`dateStatuses.${dateStr}`]: newStatus,
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'unknown'
+            })
+            if (!casting.dateStatuses) casting.dateStatuses = {}
+            casting.dateStatuses[dateStr] = newStatus
+            if (functions) {
+                httpsCallable(functions, 'notifyFeatureDateStatus')({
+                    castingId: casting.id, date: dateStr, newStatus, action: 'status'
+                }).catch(e => console.warn('[featureDateStatus] Slack通知失敗:', e))
+            }
+            return true
+        } catch (e) {
+            console.error('updateFeatureDateStatus failed:', e)
+            toast.add({ severity: 'error', summary: 'エラー', detail: '日付ステータスの更新に失敗しました', life: 3000 })
+            return false
+        }
+    }
+
+    /**
+     * 中長編: 特定日付の出演を削除（shootingDates から除去）。最後の1日なら casting ごと削除。
+     */
+    async function removeFeatureDate(casting: Casting, dateStr: string): Promise<boolean> {
+        if (!db) return false
+        try {
+            const newDates = (casting.shootingDates || []).filter(d => d !== dateStr)
+            if (newDates.length === 0) {
+                // 最後の日 → casting 自体を削除（既存の削除フロー = Slack通知あり）
+                return await deleteCasting(casting.id, false)
+            }
+            await updateDoc(doc(db, 'castings', casting.id), {
+                shootingDates: newDates,
+                [`dateStatuses.${dateStr}`]: deleteField(),
+                updatedAt: Timestamp.now(),
+                updatedBy: userEmail.value || 'unknown'
+            })
+            casting.shootingDates = newDates
+            if (casting.dateStatuses) delete casting.dateStatuses[dateStr]
+            if (functions) {
+                httpsCallable(functions, 'notifyFeatureDateStatus')({
+                    castingId: casting.id, date: dateStr, newStatus: '', action: 'removeDate'
+                }).catch(e => console.warn('[featureDateStatus] Slack通知失敗:', e))
+            }
+            toast.add({ severity: 'success', summary: '削除完了', detail: `${casting.castName} の ${dateStr} 分を削除しました`, life: 2500 })
+            return true
+        } catch (e) {
+            console.error('removeFeatureDate failed:', e)
+            toast.add({ severity: 'error', summary: 'エラー', detail: '日付の削除に失敗しました', life: 3000 })
+            return false
+        }
+    }
+
     return {
         castings,
         loading,
@@ -1401,7 +1461,9 @@ export function useCastings() {
         getHierarchicalCastings,
         getFeatureGroupedCastings,
         getProjectGroupedCastings,
-        quickAddOrder
+        quickAddOrder,
+        updateFeatureDateStatus,
+        removeFeatureDate
     }
 }
 

@@ -26,6 +26,7 @@ import QuickAddOrderModal from '@/components/status/QuickAddOrderModal.vue'
 import type { Casting, CastingStatus } from '@/types'
 
 const {
+  castings: allCastings,
   loading,
   fetchCastings,
   updateCastingStatus,
@@ -39,8 +40,68 @@ const {
   getHierarchicalCastings,
   getFeatureGroupedCastings,
   getProjectGroupedCastings,
-  quickAddOrder
+  quickAddOrder,
+  updateFeatureDateStatus,
+  removeFeatureDate
 } = useCastings()
+
+// ── 中長編: 日付ごとステータス ──
+const FEATURE_STATUS_OPTIONS: CastingStatus[] = [
+  '仮押さえ', '仮キャスティング', '打診中',
+  'オーダー待ち', 'オーダー待ち（仮キャスティング）',
+  'OK', '決定', '条件つきOK', 'NG', 'キャンセル'
+]
+const featureDateStatus = (casting: Casting, dateStr: string): string =>
+  casting.dateStatuses?.[dateStr] ?? casting.status
+
+const handleFeatureDateStatusChange = async (casting: Casting, dateStr: string, ev: Event) => {
+  const newStatus = (ev.target as HTMLSelectElement).value as CastingStatus
+  await updateFeatureDateStatus(casting, dateStr, newStatus)
+}
+
+const handleFeatureDateRemove = async (casting: Casting, dateStr: string) => {
+  const isLast = (casting.shootingDates || []).length <= 1
+  const msg = isLast
+    ? `${casting.castName} の ${dateStr} 分を削除します。最後の出演日のためキャスティング自体が削除されます。よろしいですか？`
+    : `${casting.castName} の ${dateStr} 分の出演日を削除しますか？`
+  if (!confirm(msg)) return
+  await withLoading('削除中...', async () => {
+    await removeFeatureDate(casting, dateStr)
+    if (isLast) await fetchCastings()
+  })
+}
+
+const handleFeatureCastCancel = async (casting: Casting) => {
+  if (!confirm(`${casting.castName} を全日程キャンセルにしますか？`)) return
+  await withLoading('キャンセル中...', async () => {
+    await updateCastingStatus(casting.id, 'キャンセル')
+  })
+}
+
+// 複数日程オーダーがある作品（projectId基準・無ければprojectName）の集合
+// 判定: shootingDates が2日以上 or 同一作品でアクティブcastingの撮影日が2日以上
+const multiDateProjects = computed(() => {
+  const dates = new Map<string, Set<string>>()
+  const result = new Set<string>()
+  for (const c of allCastings.value) {
+    if (String(c.status) === '削除済み' || (c as unknown as { deleted?: boolean }).deleted === true) continue
+    const key = c.projectId || c.projectName
+    if (!key) continue
+    if (c.shootingDates && c.shootingDates.length > 1) { result.add(key); continue }
+    const d = c.startDate?.toDate?.()
+    if (!d) continue
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    if (!dates.has(key)) dates.set(key, new Set())
+    dates.get(key)!.add(ymd)
+    if (dates.get(key)!.size > 1) result.add(key)
+  }
+  return result
+})
+const isMultiDateProject = (castings: Casting[]): boolean => {
+  const c = castings[0]
+  if (!c) return false
+  return multiDateProjects.value.has(c.projectId || c.projectName)
+}
 
 const {
   bulkSelectMode,
@@ -652,6 +713,7 @@ const countCastings = (dateGroup: any) => {
             >
               <CastingStatusList
                 :castings="projectGroup.castings"
+                :multiDate="isMultiDateProject(projectGroup.castings)"
                 :projectName="projectGroup.projectName"
                 :updaters="projectGroup.updaters"
                 :isExternalTab="currentTab === 'event'"
@@ -772,44 +834,55 @@ const countCastings = (dateGroup: any) => {
         <!-- Feature Cast List -->
         <div v-if="isDateExpanded(featureGroup.projectName)" class="sv-date-content">
           <div class="sv-feature-schedule">
-            <!-- Date headers -->
+            <!-- Header row: キャスト列（縦=日付、横=キャスト） -->
             <div class="sv-feature-date-row">
-              <div class="sv-feature-cast-cell sv-feature-label">キャスト</div>
-              <div class="sv-feature-cast-cell sv-feature-label">ステータス</div>
-              <div 
-                v-for="dateStr in featureGroup.allDates" 
-                :key="dateStr" 
-                class="sv-feature-date-cell"
-                :class="{ 'weekend': isWeekend(dateStr) }"
+              <div class="sv-feature-date-cell sv-feature-label">日付</div>
+              <div
+                v-for="casting in featureGroup.castings"
+                :key="casting.id"
+                class="sv-feature-cast-cell sv-feature-cast-head"
               >
-                {{ formatDateShort(dateStr) }}
+                <span class="sv-feature-cast-name" @click="openStatusModal(casting.id)" title="全日程のステータスを変更">
+                  {{ casting.castName }}
+                </span>
+                <span class="sv-feature-cast-acts">
+                  <button class="sv-fc-btn" @click.stop="handleFeatureCastCancel(casting)" title="このキャストを全日程キャンセル">
+                    <i class="pi pi-ban"></i>
+                  </button>
+                  <button class="sv-fc-btn danger" @click.stop="handleDelete(casting.id)" title="このキャストを削除">
+                    <i class="pi pi-trash"></i>
+                  </button>
+                </span>
               </div>
             </div>
 
-            <!-- Cast rows -->
-            <div 
-              v-for="casting in featureGroup.castings" 
-              :key="casting.id" 
+            <!-- Date rows: 各日付 × キャストのステータス -->
+            <div
+              v-for="dateStr in featureGroup.allDates"
+              :key="dateStr"
               class="sv-feature-cast-row"
-              @click="openStatusModal(casting.id)"
             >
-              <div class="sv-feature-cast-cell sv-feature-cast-name">
-                {{ casting.castName }}
+              <div class="sv-feature-date-cell" :class="{ 'weekend': isWeekend(dateStr) }">
+                {{ formatDateShort(dateStr) }}
               </div>
-              <div class="sv-feature-cast-cell">
-                <span 
-                  class="sv-status-badge" 
-                  :class="'status-' + casting.status"
-                >
-                  {{ casting.status }}
-                </span>
-              </div>
-              <div 
-                v-for="dateStr in featureGroup.allDates" 
-                :key="dateStr" 
-                class="sv-feature-date-cell"
+              <div
+                v-for="casting in featureGroup.castings"
+                :key="casting.id"
+                class="sv-feature-cast-cell"
               >
-                <span v-if="isCastOnDate(casting, dateStr)" class="sv-date-check">✅</span>
+                <template v-if="isCastOnDate(casting, dateStr)">
+                  <select
+                    class="sv-feature-status-select"
+                    :class="'status-' + featureDateStatus(casting, dateStr)"
+                    :value="featureDateStatus(casting, dateStr)"
+                    @change="handleFeatureDateStatusChange(casting, dateStr, $event)"
+                  >
+                    <option v-for="st in FEATURE_STATUS_OPTIONS" :key="st" :value="st">{{ st }}</option>
+                  </select>
+                  <button class="sv-fc-btn danger" @click="handleFeatureDateRemove(casting, dateStr)" title="この日の出演を削除">
+                    <i class="pi pi-times"></i>
+                  </button>
+                </template>
                 <span v-else class="sv-date-dash">—</span>
               </div>
             </div>
@@ -1411,4 +1484,17 @@ const countCastings = (dateGroup: any) => {
   background: var(--p-content-hover-background);
   color: var(--p-text-muted-color);
 }
+
+/* ── 中長編 転置テーブル ── */
+.sv-feature-cast-head { display: flex; align-items: center; gap: 4px; justify-content: space-between; font-weight: 700; }
+.sv-feature-cast-name { cursor: pointer; }
+.sv-feature-cast-name:hover { text-decoration: underline; }
+.sv-feature-cast-acts { display: inline-flex; gap: 2px; }
+.sv-fc-btn { border: none; background: transparent; cursor: pointer; color: #64748B; padding: 2px 4px; border-radius: 4px; font-size: 0.75rem; }
+.sv-fc-btn:hover { background: #E2E8F0; }
+.sv-fc-btn.danger:hover { background: #FEE2E2; color: #DC2626; }
+.sv-feature-status-select { font-size: 0.72rem; padding: 2px 4px; border: 1px solid #CBD5E1; border-radius: 6px; background: #fff; max-width: 130px; }
+.sv-feature-status-select.status-決定 { background: #DCFCE7; border-color: #86EFAC; }
+.sv-feature-status-select.status-OK { background: #DBEAFE; border-color: #93C5FD; }
+.sv-feature-status-select.status-NG, .sv-feature-status-select.status-キャンセル { background: #FEE2E2; border-color: #FCA5A5; }
 </style>

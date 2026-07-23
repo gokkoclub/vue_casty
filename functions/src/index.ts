@@ -1301,6 +1301,46 @@ export const notifyStatusUpdate = onCall(
 // ──────────────────────────────────────
 // 2b. 一括ステータス変更通知（まとめてSlack送信）
 // ──────────────────────────────────────
+/**
+ * 中長編: 日付ごとのステータス変更/日付削除を Slack スレッドに通知する。
+ * casting 全体のステータスは変えないため、カレンダー/Notion 等の副作用は持たない。
+ */
+export const notifyFeatureDateStatus = onCall(
+    {
+        maxInstances: 10,
+        secrets: ["SLACK_BOT_TOKEN", "SLACK_CHANNEL_INTERNAL"],
+    },
+    async (request) => {
+        const data = request.data as { castingId?: string; date?: string; newStatus?: string; action?: string };
+        if (!data?.castingId || !data?.date) {
+            throw new HttpsError("invalid-argument", "castingId and date are required");
+        }
+        const db = admin.firestore();
+        const snap = await db.collection("castings").doc(data.castingId).get();
+        if (!snap.exists) throw new HttpsError("not-found", "Casting not found");
+        const casting = snap.data()!;
+
+        const slackToken = getEnv("SLACK_BOT_TOKEN");
+        const slackChannel = resolveSlackChannel(casting);
+        const slackThreadTs = casting.slackThreadTs || "";
+        if (!slackToken || !slackChannel || !slackThreadTs) {
+            return { success: false, skipped: "no thread" };
+        }
+
+        const md = (() => {
+            const m = String(data.date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+            return m ? `${parseInt(m[2]!, 10)}/${parseInt(m[3]!, 10)}` : data.date;
+        })();
+
+        const message = data.action === "removeDate"
+            ? `📅 *${casting.castName}* の ${md} 分の出演日を削除しました（${casting.projectName}）`
+            : `📅 *${casting.castName}* の ${md} 分のステータスが変更されました → \`${data.newStatus}\`（${casting.projectName}）`;
+
+        await postToSlack(slackToken, slackChannel, message, undefined, slackThreadTs);
+        return { success: true };
+    }
+);
+
 export const notifyBulkStatusUpdate = onCall(
     {
         maxInstances: 10,

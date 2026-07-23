@@ -44,7 +44,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.resendCalendarInvite = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.retryCalendarAttendee = exports.retrySlackThreadLink = exports.sendSlackOffshot = exports.onShootingEventCreate = exports.dispatchShootingSubmission = exports.handleSlackInteraction = exports.scheduledSyncCastsFromNotion = exports.syncCastsFromNotion = exports.scheduledSyncFromNotion = exports.syncFromNotion = exports.reassignCastingThread = exports.backfillCastingProjectName = exports.consolidateShootingDuplicates = exports.syncScheduleFromSam = exports.scheduledRemindOffshotUnfilled = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
+exports.sendPromotionDm = exports.notifyOrderUpdated = exports.deleteCastingCleanup = exports.repairCastingThread = exports.resendCalendarInvite = exports.regenerateCalendarEvent = exports.notifyBulkStatusUpdate = exports.notifyFeatureDateStatus = exports.notifyStatusUpdate = exports.notifyOrderCreated = exports.createNotionCast = exports.retryCalendarAttendee = exports.retrySlackThreadLink = exports.sendSlackOffshot = exports.onShootingEventCreate = exports.dispatchShootingSubmission = exports.handleSlackInteraction = exports.scheduledSyncCastsFromNotion = exports.syncCastsFromNotion = exports.scheduledSyncFromNotion = exports.syncFromNotion = exports.reassignCastingThread = exports.backfillCastingProjectName = exports.consolidateShootingDuplicates = exports.syncScheduleFromSam = exports.scheduledRemindOffshotUnfilled = exports.syncOffshotFileCounts = exports.scheduledSyncOffshotFileCounts = exports.syncDriveLinksToContacts = exports.syncShootingDetailsToContacts = exports.getShootingDetails = void 0;
 const https_1 = require("firebase-functions/v2/https");
 const options_1 = require("firebase-functions/v2/options");
 // リージョン設定（東京）- MUST be before any function re-exports
@@ -1235,6 +1235,39 @@ exports.notifyStatusUpdate = (0, https_1.onCall)({
 // ──────────────────────────────────────
 // 2b. 一括ステータス変更通知（まとめてSlack送信）
 // ──────────────────────────────────────
+/**
+ * 中長編: 日付ごとのステータス変更/日付削除を Slack スレッドに通知する。
+ * casting 全体のステータスは変えないため、カレンダー/Notion 等の副作用は持たない。
+ */
+exports.notifyFeatureDateStatus = (0, https_1.onCall)({
+    maxInstances: 10,
+    secrets: ["SLACK_BOT_TOKEN", "SLACK_CHANNEL_INTERNAL"],
+}, async (request) => {
+    const data = request.data;
+    if (!data?.castingId || !data?.date) {
+        throw new https_1.HttpsError("invalid-argument", "castingId and date are required");
+    }
+    const db = admin.firestore();
+    const snap = await db.collection("castings").doc(data.castingId).get();
+    if (!snap.exists)
+        throw new https_1.HttpsError("not-found", "Casting not found");
+    const casting = snap.data();
+    const slackToken = getEnv("SLACK_BOT_TOKEN");
+    const slackChannel = resolveSlackChannel(casting);
+    const slackThreadTs = casting.slackThreadTs || "";
+    if (!slackToken || !slackChannel || !slackThreadTs) {
+        return { success: false, skipped: "no thread" };
+    }
+    const md = (() => {
+        const m = String(data.date).match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return m ? `${parseInt(m[2], 10)}/${parseInt(m[3], 10)}` : data.date;
+    })();
+    const message = data.action === "removeDate"
+        ? `📅 *${casting.castName}* の ${md} 分の出演日を削除しました（${casting.projectName}）`
+        : `📅 *${casting.castName}* の ${md} 分のステータスが変更されました → \`${data.newStatus}\`（${casting.projectName}）`;
+    await (0, slack_1.postToSlack)(slackToken, slackChannel, message, undefined, slackThreadTs);
+    return { success: true };
+});
 exports.notifyBulkStatusUpdate = (0, https_1.onCall)({
     maxInstances: 10,
     secrets: [

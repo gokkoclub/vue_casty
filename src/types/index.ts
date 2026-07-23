@@ -46,6 +46,7 @@ export interface Casting {
     dbSentStatus: '済' | ''
     mode?: 'shooting' | 'external' | 'internal'
     shootingDates?: string[]  // 中長編用: キャスト参加日 ['2026-02-14', '2026-02-15']
+    dateStatuses?: Record<string, CastingStatus>  // 中長編用: 日付ごとのステータス（未設定日は status を継承）
     competitionType?: string  // 競合の種類 (e.g., "化粧品", "飲料")
     competitionPeriod?: string // 競合の期間 (e.g., "2026/03-2027/03")
     conditionalMessage?: string // 条件つきOK 時のメッセージ / コメント
