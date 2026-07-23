@@ -128,6 +128,17 @@ async function performSync() {
                 const account = readRichTextOrSelect(page.properties, PROP_ACCOUNT_CANDIDATES);
                 const team = readRichTextOrSelect(page.properties, PROP_TEAM_CANDIDATES);
                 const shootDate = readDateProp(page.properties);
+                // スタッフ列（GAS 新香盤.gs と同じ Notion プロパティ名）。
+                // オーダー時の CC 欄（CD/FD/P/衣装 メンション）が GAS 同期を待たず
+                // Casty 自身の同期（2時間おき + 手動同期ボタン）で埋まるようにする。
+                const cd = readRichTextOrSelect(page.properties, ["CD"]);
+                const fd = readRichTextOrSelect(page.properties, ["FD/SD", "FD"]);
+                const producer = readRichTextOrSelect(page.properties, ["P"]);
+                const chiefProducer = readRichTextOrSelect(page.properties, ["制作チーフ"]);
+                const six = readRichTextOrSelect(page.properties, ["SIX"]);
+                const camera = readRichTextOrSelect(page.properties, ["カメラ"]);
+                const costume = readRichTextOrSelect(page.properties, ["衣装"]);
+                const hairMakeup = readRichTextOrSelect(page.properties, ["ヘアメイク"]);
                 // shooting.team の値: アカウントが空でなければアカウント、空なら 撮影チーム
                 const teamValue = account || team || "";
                 const baseDocId = notionPageId.replace(/[/.]/g, "_").replace(/^__/, "xx").trim();
@@ -146,6 +157,23 @@ async function performSync() {
                     deleted: false,
                     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 };
+                // スタッフ列は「値があるときのみ」上書き（GAS 等が入れた既存値を空で潰さない）
+                if (cd)
+                    shootingData.cd = cd;
+                if (fd)
+                    shootingData.fd = fd;
+                if (producer)
+                    shootingData.producer = producer;
+                if (chiefProducer)
+                    shootingData.chiefProducer = chiefProducer;
+                if (six)
+                    shootingData.six = six;
+                if (camera)
+                    shootingData.camera = camera;
+                if (costume)
+                    shootingData.costume = costume;
+                if (hairMakeup)
+                    shootingData.hairMakeup = hairMakeup;
                 if (existing.exists) {
                     const existingData = existing.data();
                     const existingDate = existingData?.shootDate || "";
