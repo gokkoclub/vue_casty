@@ -247,6 +247,10 @@ export function useCastings() {
         if (decidedCasting.mode === 'external' || decidedCasting.mode === 'internal') {
             return
         }
+        // 古いデータは mode 未設定のことがあるため、アカウント名でも判定（すり抜け防止）
+        if (!decidedCasting.mode && ['外部案件', '社内イベント'].includes(decidedCasting.accountName || '')) {
+            return
+        }
 
         const q = query(
             collection(db, 'castings'),
