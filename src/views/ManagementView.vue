@@ -66,7 +66,9 @@ function classifyAppearance(data: { accountName?: string; roleName?: string; mod
 
 const appearanceLoading = ref(false)
 const appearanceRows = ref<AppearanceRow[]>([])
-const appearanceDateRange = ref<Date[]>([])
+// 期間絞り込み（いつから / いつまで を個別指定。片方だけでも可）
+const appearanceStartDate = ref<Date | null>(null)
+const appearanceEndDate = ref<Date | null>(null)
 const appearanceSearch = ref('')
 const expandedCastRows = ref<Set<string>>(new Set())
 
@@ -85,7 +87,8 @@ async function loadAppearanceData() {
     try {
         const snap = await getDocs(query(collection(db, 'castings')))
         const grouped = new Map<string, AppearanceRow>()
-        const [startD, endD] = appearanceDateRange.value || []
+        const startD = appearanceStartDate.value
+        const endD = appearanceEndDate.value
         const startTs = startD ? new Date(startD.getFullYear(), startD.getMonth(), startD.getDate(), 0, 0, 0).getTime() : null
         const endTs = endD ? new Date(endD.getFullYear(), endD.getMonth(), endD.getDate(), 23, 59, 59, 999).getTime() : null
         snap.forEach(d => {
@@ -400,7 +403,8 @@ function downloadCsv(filename: string, header: string[], rows: Array<Array<strin
 }
 
 function rangeLabel(): string {
-    const [s, e] = appearanceDateRange.value || []
+    const s = appearanceStartDate.value
+    const e = appearanceEndDate.value
     const fmt = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
     if (s && e) return `_${fmt(s)}-${fmt(e)}`
     if (s) return `_${fmt(s)}-`
@@ -1467,15 +1471,32 @@ function setAllNewDate(date: Date | null) {
                             placeholder="キャスト名 / 作品名 / アカウント名 で絞り込み"
                             class="appearance-search"
                         />
-                        <DatePicker
-                            v-model="appearanceDateRange"
-                            selectionMode="range"
-                            dateFormat="yy/mm/dd"
-                            placeholder="期間 (任意)"
-                            showButtonBar
-                            class="appearance-daterange"
-                            @update:modelValue="loadAppearanceData"
-                        />
+                        <div class="appearance-period">
+                            <DatePicker
+                                v-model="appearanceStartDate"
+                                dateFormat="yy/mm/dd"
+                                placeholder="いつから"
+                                showButtonBar
+                                class="appearance-datefield"
+                                @update:modelValue="loadAppearanceData"
+                            />
+                            <span class="appearance-period-sep">〜</span>
+                            <DatePicker
+                                v-model="appearanceEndDate"
+                                dateFormat="yy/mm/dd"
+                                placeholder="いつまで"
+                                showButtonBar
+                                class="appearance-datefield"
+                                @update:modelValue="loadAppearanceData"
+                            />
+                            <Button
+                                v-if="appearanceStartDate || appearanceEndDate"
+                                icon="pi pi-times"
+                                text size="small" severity="secondary"
+                                @click="appearanceStartDate = null; appearanceEndDate = null; loadAppearanceData()"
+                                v-tooltip.bottom="'期間をクリア'"
+                            />
+                        </div>
                         <Button
                             label="更新"
                             icon="pi pi-refresh"
@@ -2222,4 +2243,7 @@ function setAllNewDate(date: Date | null) {
 @media (max-width: 720px) {
     .staff-form-grid { grid-template-columns: 1fr; }
 }
+.appearance-period { display: inline-flex; align-items: center; gap: 4px; }
+.appearance-period-sep { color: var(--text-color-secondary); }
+.appearance-datefield { width: 140px; }
 </style>
