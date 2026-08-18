@@ -5,7 +5,7 @@ import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import type { Cast, Casting } from '@/types'
 import { useOrderStore } from '@/stores/orderStore'
-import { convertDriveUrlToImage, getPlaceholderImage } from '@/utils/imageUrl'
+import { getCastImageUrl, getPlaceholderImage } from '@/utils/imageUrl'
 import { Timestamp } from 'firebase/firestore'
 
 const props = defineProps<{
@@ -20,10 +20,7 @@ const emit = defineEmits<{
 
 const store = useOrderStore()
 
-const imageUrl = computed(() => {
-  if (!props.cast?.imageUrl) return getPlaceholderImage()
-  return convertDriveUrlToImage(props.cast.imageUrl)
-})
+const imageUrl = computed(() => props.cast ? getCastImageUrl(props.cast) : getPlaceholderImage())
 
 const isInCart = computed(() => 
   props.cast ? !!store.pool[props.cast.id] : false

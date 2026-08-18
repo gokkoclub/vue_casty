@@ -305,6 +305,12 @@ const handleNewCastSaved = (cast: Cast) => {
   toast.add({ severity: 'success', summary: 'カートに追加', detail: `${cast.name} をカートに追加しました`, life: 3000 })
 }
 
+const handleExistingCastSelected = (cast: Cast) => {
+  // サジェストから選んだ登録済みキャストをカートに追加（新規登録はしない）
+  store.addItem(cast)
+  toast.add({ severity: 'info', summary: '登録済みキャストを追加', detail: `${cast.name} をカートに追加しました（新規登録はされていません）`, life: 3000 })
+}
+
 // Order submission with progress
 const { submitOrder, checkExistingProject } = useOrders()
 
@@ -770,7 +776,9 @@ onUnmounted(() => {
     <!-- 新規外部キャストモーダル -->
     <NewCastModal
       v-model:visible="showNewCastModal"
+      :existing-casts="casts"
       @saved="handleNewCastSaved"
+      @select-existing="handleExistingCastSelected"
     />
 
     <!-- 特記事項警告ダイアログ -->

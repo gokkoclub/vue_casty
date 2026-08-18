@@ -5,7 +5,7 @@ import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import type { CartItem, OrderContext } from '@/types'
 import { useOrderStore } from '@/stores/orderStore'
-import { convertDriveUrlToImage, getPlaceholderImage } from '@/utils/imageUrl'
+import { getCastImageUrl, getPlaceholderImage } from '@/utils/imageUrl'
 
 const props = defineProps<{
   item: CartItem
@@ -20,10 +20,6 @@ const mainSubOptions = [
   { label: 'その他', value: 'その他' }
 ]
 
-const getImageUrl = (imageUrl: string) => {
-  if (!imageUrl) return getPlaceholderImage()
-  return convertDriveUrlToImage(imageUrl)
-}
 
 const handleRemove = () => {
   store.removeItem(props.item.tempId)
@@ -45,7 +41,7 @@ const handleRemove = () => {
     <!-- キャスト情報 -->
     <div class="cast-info">
       <img 
-        :src="getImageUrl(item.cast.imageUrl)"
+        :src="getCastImageUrl(item.cast)"
         :alt="item.cast.name"
         class="cast-thumb"
         @error="($event.target as HTMLImageElement).src = getPlaceholderImage()"

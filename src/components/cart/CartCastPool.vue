@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import draggable from 'vuedraggable'
 import { useOrderStore } from '@/stores/orderStore'
-import { convertDriveUrlToImage, getPlaceholderImage } from '@/utils/imageUrl'
+import { getCastImageUrl, getPlaceholderImage } from '@/utils/imageUrl'
 
 const store = useOrderStore()
 
@@ -11,10 +11,6 @@ const poolList = computed(() => {
   return Object.values(store.pool)
 })
 
-const getImageUrl = (imageUrl: string) => {
-  if (!imageUrl) return getPlaceholderImage()
-  return convertDriveUrlToImage(imageUrl)
-}
 
 const handleRemove = (id: string) => {
   store.removeFromPool(id)
@@ -45,7 +41,7 @@ const handleRemove = (id: string) => {
           </button>
 
           <img 
-            :src="getImageUrl(element.cast.imageUrl)"
+            :src="getCastImageUrl(element.cast)"
             class="pool-thumb"
             @error="($event.target as HTMLImageElement).src = getPlaceholderImage()"
           />

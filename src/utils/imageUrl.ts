@@ -50,6 +50,40 @@ export function convertDriveUrlToImage(url: string): string {
 }
 
 /**
+ * Instagram URL からユーザー名を抽出する
+ *
+ * 対応形式:
+ * - https://www.instagram.com/username/
+ * - https://instagram.com/username?igsh=...
+ * 投稿やリールなど、プロフィール以外のURLは空文字を返す
+ */
+export function extractInstagramUsername(url: string): string {
+    if (!url) return ''
+    const match = url.match(/instagram\.com\/([A-Za-z0-9._]+)/)
+    if (!match || !match[1]) return ''
+    const username = match[1]
+    const reservedPaths = ['p', 'reel', 'reels', 'stories', 'explore', 'accounts', 'direct', 'tv']
+    if (reservedPaths.includes(username.toLowerCase())) return ''
+    return username
+}
+
+/**
+ * キャストのアイコンURLを解決する
+ *
+ * 優先順位:
+ * 1. imageUrl (Google Drive リンク)
+ * 2. snsInstagram から unavatar.io のプロフィール画像（fallback=false なので
+ *    取得できない場合は 404 → <img> の @error でプレースホルダーに落ちる）
+ * 3. プレースホルダー
+ */
+export function getCastImageUrl(cast: { imageUrl?: string; snsInstagram?: string }): string {
+    if (cast.imageUrl) return convertDriveUrlToImage(cast.imageUrl)
+    const username = extractInstagramUsername(cast.snsInstagram || '')
+    if (username) return `https://unavatar.io/instagram/${encodeURIComponent(username)}?fallback=false`
+    return getPlaceholderImage()
+}
+
+/**
  * Get a placeholder image URL for missing images
  */
 export function getPlaceholderImage(): string {

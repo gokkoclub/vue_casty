@@ -6,7 +6,7 @@ import Tag from 'primevue/tag'
 import type { Cast } from '@/types'
 import type { CastBooking } from '@/utils/castStatusUtils'
 import { useOrderStore } from '@/stores/orderStore'
-import { convertDriveUrlToImage, getPlaceholderImage } from '@/utils/imageUrl'
+import { getCastImageUrl, getPlaceholderImage } from '@/utils/imageUrl'
 
 const props = defineProps<{
   cast: Cast
@@ -28,10 +28,7 @@ onMounted(() => {
   }
 })
 
-const imageUrl = computed(() => {
-  if (!props.cast.imageUrl) return getPlaceholderImage()
-  return convertDriveUrlToImage(props.cast.imageUrl)
-})
+const imageUrl = computed(() => getCastImageUrl(props.cast))
 
 const isInCart = computed(() => 
   !!store.pool[props.cast.id]
