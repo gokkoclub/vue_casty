@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import Dialog from 'primevue/dialog'
 import InputText from 'primevue/inputtext'
 import Select from 'primevue/select'
@@ -34,6 +34,13 @@ const form = reactive({
     email: '',
     instagram: '',
     noInstagram: false,
+})
+
+// コピペ対応: 姓名間の全角/半角スペースを入力時点で自動除去する
+// （除去後の名前でそのまま下のサジェスト検索が走る）
+watch(() => form.name, (value) => {
+    const stripped = value.replace(/[\s　]+/g, '')
+    if (stripped !== value) form.name = stripped
 })
 
 // URL でも @ユーザー名 でも受け付けて、プロフィールURLに正規化する
@@ -200,6 +207,7 @@ function handleClose() {
                     @input="nameError = false"
                 />
                 <small v-if="nameError" class="p-error">名前は必須です</small>
+                <small class="field-hint">コピペOK。姓名の間のスペースは自動で削除され、登録済みキャストを検索します</small>
 
                 <!-- 登録済みキャストのサジェスト（重複登録防止） -->
                 <div v-if="similarCasts.length > 0" class="similar-casts">
