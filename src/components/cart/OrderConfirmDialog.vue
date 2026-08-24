@@ -5,6 +5,7 @@ import Button from 'primevue/button'
 import RadioButton from 'primevue/radiobutton'
 import Checkbox from 'primevue/checkbox'
 import InputText from 'primevue/inputtext'
+import { withWeekdayJa } from '@/utils/dateUtils'
 
 export interface OrderSummaryItem {
   castName: string
@@ -128,7 +129,7 @@ const handleCancel = () => {
           </div>
           <div class="slack-preview-field">
             <span class="slack-label">{{ isShootingMode ? '撮影日' : '日程' }}</span>
-            <span v-for="d in orderSummary.dateRanges" :key="d">・{{ d }}</span>
+            <span v-for="d in orderSummary.dateRanges" :key="d">・{{ withWeekdayJa(d) }}</span>
           </div>
           <div class="slack-preview-field">
             <span class="slack-label">アカウント</span>

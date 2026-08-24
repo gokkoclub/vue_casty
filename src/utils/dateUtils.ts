@@ -78,6 +78,33 @@ export function parseDate(dateStr: string): Date {
 }
 
 /**
+ * 日付文字列をローカルタイム（JST）の Date として安全にパースする。
+ * new Date("YYYY-MM-DD") は UTC 深夜0時として解釈されるため、
+ * タイムゾーンによって日付・曜日が1日ずれるのを防ぐ。
+ * @param dateStr YYYY-MM-DD or YYYY/MM/DD 形式
+ */
+export function parseDateLocal(dateStr: string): Date {
+    const [y, m, d] = dateStr.replace(/\//g, '-').split('-').map(Number)
+    return new Date(y || 1970, (m || 1) - 1, d || 1)
+}
+
+const WEEKDAYS_JA = ['日', '月', '火', '水', '木', '金', '土']
+
+/**
+ * 日付文字列に日本語曜日を付与する（"2026/08/20" → "2026/08/20（木）"）。
+ * "start~end" の範囲形式は両端それぞれに付与。パース不能な場合はそのまま返す。
+ */
+export function withWeekdayJa(dateStr: string): string {
+    return dateStr.split('~').map(part => {
+        const p = part.trim()
+        if (!p) return p
+        const d = parseDateLocal(p)
+        if (isNaN(d.getTime())) return p
+        return `${p}（${WEEKDAYS_JA[d.getDay()]}）`
+    }).join('~')
+}
+
+/**
  * Firestore Timestamp から Date オブジェクトに変換
  */
 export function timestampToDate(timestamp: { toDate: () => Date } | Date): Date {

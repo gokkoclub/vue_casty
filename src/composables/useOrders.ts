@@ -497,7 +497,7 @@ export function useOrders() {
 
                     // タイムゾーン安全な日付パース（正午に設定してUTC変換時の-1日を防止）
                     const parseLocalDate = (str: string): Date => {
-                        const parts = str.split('/')
+                        const parts = str.split(/[-/]/)
                         const d = new Date(
                             parseInt(parts[0]!),
                             parseInt(parts[1]!) - 1,
@@ -541,19 +541,29 @@ export function useOrders() {
                         updatedBy: userEmail.value || 'unknown'
                     }
 
+                    // shootingDates は "YYYY-MM-DD" 形式で統一して保存
+                    // （中長編ビューの日付キーと一致させる。ローカル日付で組み立てて
+                    //   toISOString の UTC 変換による -1日ずれを防ぐ）
+                    const toYmd = (dt: Date): string => {
+                        const y = dt.getFullYear()
+                        const m = String(dt.getMonth() + 1).padStart(2, '0')
+                        const dd = String(dt.getDate()).padStart(2, '0')
+                        return `${y}-${m}-${dd}`
+                    }
+
                     // For multi-day orders (中長編), auto-generate shootingDates
                     if (startDateStr && endDateStr && startDateStr !== endDateStr) {
                         const dates: string[] = []
-                        const current = new Date(startDateStr)
-                        const end = new Date(endDateStr)
+                        const current = parseLocalDate(startDateStr)
+                        const end = parseLocalDate(endDateStr)
                         while (current <= end) {
-                            dates.push(current.toISOString().split('T')[0]!)
+                            dates.push(toYmd(current))
                             current.setDate(current.getDate() + 1)
                         }
                         castingData.shootingDates = dates
                     } else if (item.selectedDates && item.selectedDates.length > 0) {
-                        // Store per-cast selected dates
-                        castingData.shootingDates = item.selectedDates
+                        // Store per-cast selected dates ("YYYY/MM/DD" で来るので正規化)
+                        castingData.shootingDates = item.selectedDates.map(d => d.replace(/\//g, '-'))
                     }
 
                     // Add time fields for external/internal events

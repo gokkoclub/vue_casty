@@ -1420,7 +1420,9 @@ export function useCastings() {
     async function removeFeatureDate(casting: Casting, dateStr: string): Promise<boolean> {
         if (!db) return false
         try {
-            const newDates = (casting.shootingDates || []).filter(d => d !== dateStr)
+            // shootingDates は "YYYY/MM/DD" 形式で保存された旧データがあるため表記ゆれを吸収して比較
+            const toKey = (s: string) => s.replace(/\//g, '-')
+            const newDates = (casting.shootingDates || []).filter(d => toKey(d) !== toKey(dateStr))
             if (newDates.length === 0) {
                 // 最後の日 → casting 自体を削除（既存の削除フロー = Slack通知あり）
                 return await deleteCasting(casting.id, false)

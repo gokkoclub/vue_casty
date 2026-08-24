@@ -11,6 +11,7 @@ import CartProjectList from './CartProjectList.vue'
 import SimpleCastList from './SimpleCastList.vue'
 import OrderConfirmDialog from './OrderConfirmDialog.vue'
 import { useOrderStore } from '@/stores/orderStore'
+import { withWeekdayJa } from '@/utils/dateUtils'
 
 const store = useOrderStore()
 
@@ -153,10 +154,10 @@ const handleConfirmed = (intimacy: string, competition?: { type: string; period:
         <div class="cart-header mb-2 px-2">
              <div class="date-tags mb-2">
                 <span class="text-sm font-bold mr-2">選択日程:</span>
-                <Badge 
-                    v-for="date in store.context.dateRanges" 
-                    :key="date" 
-                    :value="date" 
+                <Badge
+                    v-for="date in store.context.dateRanges"
+                    :key="date"
+                    :value="withWeekdayJa(date)"
                     severity="contrast"
                     class="mr-1"
                 />
