@@ -399,7 +399,6 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
         "SLACK_CHANNEL_INTERNAL",
         "SLACK_CHANNEL_EXTERNAL",
         "SLACK_MENTION_GROUP_ID",
-        "SLACK_TAREMANE_GROUP_ID",
         "GOOGLE_SERVICE_ACCOUNT_KEY",
         "GOOGLE_CALENDAR_ID",
         "GAS_INVITE_WEBHOOK_URL",
@@ -416,7 +415,6 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
     const slackChannelInternal = getEnv("SLACK_CHANNEL_INTERNAL");
     const slackChannelExternal = getEnv("SLACK_CHANNEL_EXTERNAL");
     const mentionGroupId = getEnv("SLACK_MENTION_GROUP_ID");
-    const taremaneGroupId = getEnv("SLACK_TAREMANE_GROUP_ID");
     // チャンネルルーティング: 外部案件 → EXTERNAL, それ以外 → INTERNAL
     const orderMode = data.mode || "shooting";
     const slackChannel = orderMode === "external" ? slackChannelExternal : slackChannelInternal;
@@ -680,8 +678,6 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             items: itemsWithConflict,
             hasInternal: data.hasInternal || false,
             mentionGroupId: mentionGroupId || undefined,
-            // @taremane は内部キャストがオーダーに含まれる時のみ
-            taremaneGroupId: (data.hasInternal && taremaneGroupId) ? taremaneGroupId : undefined,
             castingIds: data.castingIds || [],
             shootIds,
         });
@@ -712,8 +708,6 @@ exports.notifyOrderCreated = (0, https_1.onCall)({
             hasInternal: data.hasInternal || false,
             mode: orderMode,
             mentionGroupId: mentionGroupId || undefined,
-            // @taremane は内部キャストがオーダーに含まれる時のみ
-            taremaneGroupId: (data.hasInternal && taremaneGroupId) ? taremaneGroupId : undefined,
             ccString: ccString || undefined,
             ordererName: orderCreatorMention || orderCreatorName || undefined,
             castingIds: data.castingIds || [],

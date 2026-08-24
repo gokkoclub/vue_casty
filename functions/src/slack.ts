@@ -396,7 +396,6 @@ export function buildOrderMessage(params: {
     hasInternal: boolean;
     mode?: string;
     mentionGroupId?: string;
-    taremaneGroupId?: string;
     ccString?: string;
     ordererName?: string;
     castingIds?: string[];
@@ -406,12 +405,9 @@ export function buildOrderMessage(params: {
     const dateLabel = isShooting ? "撮影日" : "日程";
     const lines: string[] = [];
 
-    // グループメンション（既存グループ + タレマネ を併記）
-    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
-        .filter(Boolean)
-        .map((id) => `<!subteam^${id}>`);
-    if (groupMentions.length > 0) {
-        lines.push(groupMentions.join(" "));
+    // グループメンション
+    if (params.mentionGroupId) {
+        lines.push(`<!subteam^${params.mentionGroupId}>`);
     }
 
     // CC欄
@@ -425,7 +421,7 @@ export function buildOrderMessage(params: {
     }
 
     // 空行
-    if (groupMentions.length > 0 || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
+    if (params.mentionGroupId || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
 
@@ -576,24 +572,20 @@ export function buildAdditionalOrderMessage(params: {
     }>;
     hasInternal: boolean;
     mentionGroupId?: string;
-    taremaneGroupId?: string;
     castingIds?: string[];
     shootIds?: string[];
 }): string {
     const lines: string[] = [];
 
-    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
-        .filter(Boolean)
-        .map((id) => `<!subteam^${id}>`);
-    if (groupMentions.length > 0) {
-        lines.push(groupMentions.join(" "));
+    if (params.mentionGroupId) {
+        lines.push(`<!subteam^${params.mentionGroupId}>`);
     }
 
     // 撮影ID（スレッド検出の根拠。追加オーダーにも必ず記載する）
     if (params.shootIds && params.shootIds.length > 0) {
         lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
     }
-    if (groupMentions.length > 0 || (params.shootIds && params.shootIds.length > 0)) {
+    if (params.mentionGroupId || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
 

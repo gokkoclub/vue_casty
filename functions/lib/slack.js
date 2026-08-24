@@ -325,12 +325,9 @@ function buildOrderMessage(params) {
     const isShooting = params.mode === "shooting" || !params.mode;
     const dateLabel = isShooting ? "撮影日" : "日程";
     const lines = [];
-    // グループメンション（既存グループ + タレマネ を併記）
-    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
-        .filter(Boolean)
-        .map((id) => `<!subteam^${id}>`);
-    if (groupMentions.length > 0) {
-        lines.push(groupMentions.join(" "));
+    // グループメンション
+    if (params.mentionGroupId) {
+        lines.push(`<!subteam^${params.mentionGroupId}>`);
     }
     // CC欄
     if (params.ccString) {
@@ -341,7 +338,7 @@ function buildOrderMessage(params) {
         lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
     }
     // 空行
-    if (groupMentions.length > 0 || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
+    if (params.mentionGroupId || params.ccString || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
     // ヘッダー（オーダー主名を含む）
@@ -467,17 +464,14 @@ function buildOrderMessage(params) {
  */
 function buildAdditionalOrderMessage(params) {
     const lines = [];
-    const groupMentions = [params.mentionGroupId, params.taremaneGroupId]
-        .filter(Boolean)
-        .map((id) => `<!subteam^${id}>`);
-    if (groupMentions.length > 0) {
-        lines.push(groupMentions.join(" "));
+    if (params.mentionGroupId) {
+        lines.push(`<!subteam^${params.mentionGroupId}>`);
     }
     // 撮影ID（スレッド検出の根拠。追加オーダーにも必ず記載する）
     if (params.shootIds && params.shootIds.length > 0) {
         lines.push(`\`撮影ID\` ${params.shootIds.join(", ")}`);
     }
-    if (groupMentions.length > 0 || (params.shootIds && params.shootIds.length > 0)) {
+    if (params.mentionGroupId || (params.shootIds && params.shootIds.length > 0)) {
         lines.push("");
     }
     lines.push("追加オーダーのお知らせ");
