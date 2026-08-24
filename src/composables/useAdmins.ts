@@ -3,11 +3,15 @@ import { collection, query, getDocs, addDoc, updateDoc, deleteDoc, doc, Timestam
 import { db } from '@/services/firebase'
 import { useToast } from 'primevue/usetoast'
 
+export type AdminRole = 'admin' | 'actor'
+
 export interface Admin {
     id: string
     email: string
     name: string
     active: boolean
+    // 未設定は 'admin' 扱い（既存データ互換）。'actor' は外部案件の作品名・時間変更のみ可能
+    role?: AdminRole
     createdAt: Timestamp
     updatedAt: Timestamp
 }
@@ -55,7 +59,7 @@ export function useAdmins() {
     /**
      * 管理者を追加
      */
-    async function addAdmin(email: string, name: string) {
+    async function addAdmin(email: string, name: string, role: AdminRole = 'admin') {
         if (!db) return false
 
         try {
@@ -64,14 +68,16 @@ export function useAdmins() {
                 email: email.toLowerCase().trim(),
                 name,
                 active: true,
+                role,
                 createdAt: now,
                 updatedAt: now
             })
 
+            const roleLabel = role === 'actor' ? 'アクター' : '管理者'
             toast.add({
                 severity: 'success',
-                summary: '管理者追加',
-                detail: `${name} を管理者に追加しました`,
+                summary: `${roleLabel}追加`,
+                detail: `${name} を${roleLabel}として追加しました`,
                 life: 2000
             })
 
@@ -96,7 +102,7 @@ export function useAdmins() {
         if (!db) return false
 
         try {
-            const adminRef = doc(db, 'admins', adminId)
+            const adminRef = doc(db, 'admin', adminId)
             await updateDoc(adminRef, {
                 active: false,
                 updatedAt: Timestamp.now()
@@ -130,7 +136,7 @@ export function useAdmins() {
         if (!db) return false
 
         try {
-            const adminRef = doc(db, 'admins', adminId)
+            const adminRef = doc(db, 'admin', adminId)
             await updateDoc(adminRef, {
                 active: true,
                 updatedAt: Timestamp.now()
@@ -158,7 +164,7 @@ export function useAdmins() {
         if (!db) return false
 
         try {
-            await deleteDoc(doc(db, 'admins', adminId))
+            await deleteDoc(doc(db, 'admin', adminId))
 
             toast.add({
                 severity: 'success',

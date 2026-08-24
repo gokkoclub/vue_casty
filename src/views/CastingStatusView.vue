@@ -24,6 +24,12 @@ import ThreadReassignModal from '@/components/status/ThreadReassignModal.vue'
 import SummaryModal from '@/components/common/SummaryModal.vue'
 import QuickAddOrderModal from '@/components/status/QuickAddOrderModal.vue'
 import type { Casting, CastingStatus } from '@/types'
+import { parseDateLocal } from '@/utils/dateUtils'
+
+const { isActor } = useAuth()
+
+// 中長編タブ: 外部案件は誰でも（アクター含む）削除等の操作可
+const canFeatureEdit = (casting: Casting) => !isActor.value || casting.mode === 'external'
 
 const {
   castings: allCastings,
@@ -213,7 +219,7 @@ const formattedMonth = computed(() => {
 })
 
 const formatDate = (dateStr: string) => {
-  const date = new Date(dateStr)
+  const date = parseDateLocal(dateStr)
   const weekdays = ['日', '月', '火', '水', '木', '金', '土']
   const month = date.getMonth() + 1
   const day = date.getDate()
@@ -222,24 +228,29 @@ const formatDate = (dateStr: string) => {
 }
 
 const isWeekend = (dateStr: string) => {
-  const d = new Date(dateStr).getDay()
+  const d = parseDateLocal(dateStr).getDay()
   return d === 0 || d === 6
 }
 
 const formatDateShort = (dateStr: string) => {
-  const date = new Date(dateStr)
-  return `${date.getMonth() + 1}/${date.getDate()}`
+  const date = parseDateLocal(dateStr)
+  const weekdays = ['日', '月', '火', '水', '木', '金', '土']
+  return `${date.getMonth() + 1}/${date.getDate()}(${weekdays[date.getDay()]})`
 }
+
+// "YYYY/MM/DD" と "YYYY-MM-DD" の表記ゆれを吸収して比較するためのキー
+const toDateKey = (s: string) => s.replace(/\//g, '-')
 
 // Check if a cast is scheduled on a specific date
 // Uses shootingDates if available, otherwise assumes all dates in range
 const isCastOnDate = (casting: Casting, dateStr: string): boolean => {
   if (casting.shootingDates && casting.shootingDates.length > 0) {
-    return casting.shootingDates.includes(dateStr)
+    const target = toDateKey(dateStr)
+    return casting.shootingDates.some(d => toDateKey(d) === target)
   }
   // Fallback: if no shootingDates, assume all dates in range
   if (!casting.startDate || !casting.endDate) return false
-  const target = new Date(dateStr)
+  const target = parseDateLocal(dateStr)
   const start = casting.startDate.toDate()
   const end = casting.endDate.toDate()
   start.setHours(0, 0, 0, 0)
@@ -549,7 +560,8 @@ const countCastings = (dateGroup: any) => {
         <h1>キャスティング状況</h1>
       </div>
       <div class="sv-header-right">
-        <Button 
+        <Button
+          v-if="!isActor"
           :label="bulkSelectMode ? '選択中' : '一括選択'"
           :icon="bulkSelectMode ? 'pi pi-check-square' : 'pi pi-th-large'"
           :severity="bulkSelectMode ? 'info' : 'secondary'"
@@ -834,18 +846,35 @@ const countCastings = (dateGroup: any) => {
         <!-- Feature Cast List -->
         <div v-if="isDateExpanded(featureGroup.projectName)" class="sv-date-content">
           <div class="sv-feature-schedule">
-            <!-- Header row: キャスト列（縦=日付、横=キャスト） -->
+            <!-- Header row: 日付列（縦=キャスト、横=日付） -->
             <div class="sv-feature-date-row">
-              <div class="sv-feature-date-cell sv-feature-label">日付</div>
+              <div class="sv-feature-name-cell sv-feature-label">キャスト</div>
               <div
-                v-for="casting in featureGroup.castings"
-                :key="casting.id"
-                class="sv-feature-cast-cell sv-feature-cast-head"
+                v-for="dateStr in featureGroup.allDates"
+                :key="dateStr"
+                class="sv-feature-day-cell sv-feature-day-head"
+                :class="{ 'weekend': isWeekend(dateStr) }"
               >
-                <span class="sv-feature-cast-name" @click="openStatusModal(casting.id)" title="全日程のステータスを変更">
+                {{ formatDateShort(dateStr) }}
+              </div>
+            </div>
+
+            <!-- Cast rows: 各キャスト × 日付のステータス -->
+            <div
+              v-for="casting in featureGroup.castings"
+              :key="casting.id"
+              class="sv-feature-cast-row"
+            >
+              <div class="sv-feature-name-cell sv-feature-cast-head">
+                <span
+                  class="sv-feature-cast-name"
+                  :class="{ 'readonly': isActor }"
+                  @click="!isActor && openStatusModal(casting.id)"
+                  :title="isActor ? '' : '全日程のステータスを変更'"
+                >
                   {{ casting.castName }}
                 </span>
-                <span class="sv-feature-cast-acts">
+                <span v-if="canFeatureEdit(casting)" class="sv-feature-cast-acts">
                   <button class="sv-fc-btn" @click.stop="handleFeatureCastCancel(casting)" title="このキャストを全日程キャンセル">
                     <i class="pi pi-ban"></i>
                   </button>
@@ -854,32 +883,23 @@ const countCastings = (dateGroup: any) => {
                   </button>
                 </span>
               </div>
-            </div>
-
-            <!-- Date rows: 各日付 × キャストのステータス -->
-            <div
-              v-for="dateStr in featureGroup.allDates"
-              :key="dateStr"
-              class="sv-feature-cast-row"
-            >
-              <div class="sv-feature-date-cell" :class="{ 'weekend': isWeekend(dateStr) }">
-                {{ formatDateShort(dateStr) }}
-              </div>
               <div
-                v-for="casting in featureGroup.castings"
-                :key="casting.id"
-                class="sv-feature-cast-cell"
+                v-for="dateStr in featureGroup.allDates"
+                :key="dateStr"
+                class="sv-feature-day-cell"
+                :class="{ 'weekend': isWeekend(dateStr) }"
               >
                 <template v-if="isCastOnDate(casting, dateStr)">
                   <select
                     class="sv-feature-status-select"
                     :class="'status-' + featureDateStatus(casting, dateStr)"
                     :value="featureDateStatus(casting, dateStr)"
+                    :disabled="isActor"
                     @change="handleFeatureDateStatusChange(casting, dateStr, $event)"
                   >
                     <option v-for="st in FEATURE_STATUS_OPTIONS" :key="st" :value="st">{{ st }}</option>
                   </select>
-                  <button class="sv-fc-btn danger" @click="handleFeatureDateRemove(casting, dateStr)" title="この日の出演を削除">
+                  <button v-if="canFeatureEdit(casting)" class="sv-fc-btn danger" @click="handleFeatureDateRemove(casting, dateStr)" title="この日の出演を削除">
                     <i class="pi pi-times"></i>
                   </button>
                 </template>
@@ -1397,23 +1417,25 @@ const countCastings = (dateGroup: any) => {
 
 .sv-feature-cast-row {
   border-bottom: 1px solid var(--p-content-hover-background);
-  cursor: pointer;
   transition: background 0.15s;
+  background: var(--p-content-background);
 }
 
 .sv-feature-cast-row:hover {
   background: var(--p-content-hover-background);
 }
 
-.sv-feature-cast-row:nth-child(even) {
-  background: var(--p-content-background);
-}
-
-.sv-feature-cast-cell {
-  min-width: 120px;
-  max-width: 120px;
+/* 名前列: 横スクロールしても見切れないよう左に固定。長い名前は折り返す */
+.sv-feature-name-cell {
+  min-width: 180px;
+  max-width: 180px;
   padding: 0.4rem 0.75rem;
   flex-shrink: 0;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: inherit;
+  border-right: 1px solid var(--p-content-border-color);
 }
 
 .sv-feature-label {
@@ -1423,22 +1445,33 @@ const countCastings = (dateGroup: any) => {
 .sv-feature-cast-name {
   font-weight: 500;
   color: var(--p-text-color);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.3;
 }
 
-.sv-feature-date-cell {
-  min-width: 48px;
-  max-width: 48px;
-  text-align: center;
-  padding: 0.4rem 0.25rem;
+/* 日付列: セレクト + 削除ボタンが収まる幅 */
+.sv-feature-day-cell {
+  min-width: 132px;
+  max-width: 132px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0.4rem 0.4rem;
   flex-shrink: 0;
+}
+
+.sv-feature-day-head {
+  justify-content: center;
+  text-align: center;
   font-size: 0.75rem;
 }
 
-.sv-feature-date-cell.weekend {
+.sv-feature-day-cell.weekend {
   background: var(--p-red-50, #fef2f2);
+}
+
+.sv-feature-day-head.weekend {
   color: var(--p-red-500);
 }
 
@@ -1489,11 +1522,13 @@ const countCastings = (dateGroup: any) => {
 .sv-feature-cast-head { display: flex; align-items: center; gap: 4px; justify-content: space-between; font-weight: 700; }
 .sv-feature-cast-name { cursor: pointer; }
 .sv-feature-cast-name:hover { text-decoration: underline; }
+.sv-feature-cast-name.readonly { cursor: default; }
+.sv-feature-cast-name.readonly:hover { text-decoration: none; }
 .sv-feature-cast-acts { display: inline-flex; gap: 2px; }
 .sv-fc-btn { border: none; background: transparent; cursor: pointer; color: #64748B; padding: 2px 4px; border-radius: 4px; font-size: 0.75rem; }
 .sv-fc-btn:hover { background: #E2E8F0; }
 .sv-fc-btn.danger:hover { background: #FEE2E2; color: #DC2626; }
-.sv-feature-status-select { font-size: 0.72rem; padding: 2px 4px; border: 1px solid #CBD5E1; border-radius: 6px; background: #fff; max-width: 130px; }
+.sv-feature-status-select { font-size: 0.72rem; padding: 2px 4px; border: 1px solid #CBD5E1; border-radius: 6px; background: #fff; flex: 1; min-width: 0; }
 .sv-feature-status-select.status-決定 { background: #DCFCE7; border-color: #86EFAC; }
 .sv-feature-status-select.status-OK { background: #DBEAFE; border-color: #93C5FD; }
 .sv-feature-status-select.status-NG, .sv-feature-status-select.status-キャンセル { background: #FEE2E2; border-color: #FCA5A5; }

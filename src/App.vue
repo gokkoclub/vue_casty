@@ -11,25 +11,34 @@ import { useAuth } from '@/composables/useAuth'
 
 const router = useRouter()
 const cart = useCartStore()
-const { isAuthenticated, isAdmin, userName, signIn, signOut, init } = useAuth()
+const { isAuthenticated, isAdmin, isActor, userName, signIn, signOut, init } = useAuth()
 
 onMounted(() => {
   init()
 })
 
 const menuItems = computed(() => {
-  const items = [
-    {
-      label: 'キャストを探す',
-      icon: 'pi pi-search',
-      command: () => router.push('/casting')
-    },
-    {
-      label: 'キャスティング状況',
-      icon: 'pi pi-chart-bar',
-      command: () => router.push('/casting-status')
-    }
-  ]
+  // アクターはキャスティング状況のみ（外部案件の作品名・時間変更用の制限ロール）
+  const items = isActor.value
+    ? [
+        {
+          label: 'キャスティング状況',
+          icon: 'pi pi-chart-bar',
+          command: () => router.push('/casting-status')
+        }
+      ]
+    : [
+        {
+          label: 'キャストを探す',
+          icon: 'pi pi-search',
+          command: () => router.push('/casting')
+        },
+        {
+          label: 'キャスティング状況',
+          icon: 'pi pi-chart-bar',
+          command: () => router.push('/casting-status')
+        }
+      ]
 
   // 管理者のみ表示するメニュー項目
   if (isAdmin.value) {

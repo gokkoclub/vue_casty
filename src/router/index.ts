@@ -50,11 +50,12 @@ const router = createRouter({
     ]
 })
 
-// ナビゲーションガード：管理者専用ページのアクセス制限
+// ナビゲーションガード：管理者専用ページ + アクター制限
 router.beforeEach(async (to) => {
-    if (!to.meta.requiresAdmin) return true
+    const { loading, isAdmin, isActor, isAdminChecked } = useAuth()
 
-    const { loading, isAdmin, isAdminChecked } = useAuth()
+    const needsRoleCheck = to.meta.requiresAdmin || to.name === 'casting'
+    if (!needsRoleCheck) return true
 
     // 認証状態が確定するまで待機（最大3秒）
     if (loading.value || !isAdminChecked.value) {
@@ -70,8 +71,13 @@ router.beforeEach(async (to) => {
         })
     }
 
-    if (!isAdmin.value) {
-        return { name: 'casting' }
+    // アクターはオーダー作成ページに入れない（外部案件の作品名・時間変更のみのロール）
+    if (to.name === 'casting' && isActor.value) {
+        return { name: 'casting-status' }
+    }
+
+    if (to.meta.requiresAdmin && !isAdmin.value) {
+        return isActor.value ? { name: 'casting-status' } : { name: 'casting' }
     }
 
     return true

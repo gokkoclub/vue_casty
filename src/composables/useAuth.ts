@@ -13,6 +13,7 @@ const user = ref<User | null>(null)
 const loading = ref(true)
 const isAdminChecked = ref(false)
 const isAdminValue = ref(false)
+const isActorValue = ref(false)
 
 // スーパー管理者（NG / キャンセルからの巻き戻し等、通常 admin でも不可な操作を許可）
 const SUPER_ADMIN_EMAILS = ['kunihito.miura@gokkoclub.jp']
@@ -21,13 +22,15 @@ const googleAccessToken = ref<string | null>(
 )
 
 /**
- * 管理者かどうかをFirestoreでチェック
+ * ロールをFirestoreでチェック（admin コレクション）
+ * - role フィールドなし or 'admin' → 管理者
+ * - role: 'actor' → アクター（外部案件の作品名・時間変更のみ可能な制限ロール）
  * 複合インデックス不要のため、emailのみでクエリしactiveはクライアント側でチェック
  */
-async function checkIsAdmin(email: string): Promise<boolean> {
+async function checkUserRole(email: string): Promise<{ isAdmin: boolean; isActor: boolean }> {
     if (!db) {
         console.warn('[Auth] Firestore not initialized, cannot check admin status')
-        return false
+        return { isAdmin: false, isActor: false }
     }
 
     const normalizedEmail = email.toLowerCase().trim()
@@ -38,12 +41,15 @@ async function checkIsAdmin(email: string): Promise<boolean> {
             where('email', '==', normalizedEmail)
         )
         const snapshot = await getDocs(adminQuery)
-        if (snapshot.empty) return false
-        // activeフラグをクライアント側でチェック
-        return snapshot.docs.some(doc => doc.data().active === true)
+        if (snapshot.empty) return { isAdmin: false, isActor: false }
+        // activeフラグ・roleはクライアント側でチェック
+        const activeDocs = snapshot.docs.filter(doc => doc.data().active === true)
+        const isAdmin = activeDocs.some(doc => !doc.data().role || doc.data().role === 'admin')
+        const isActor = !isAdmin && activeDocs.some(doc => doc.data().role === 'actor')
+        return { isAdmin, isActor }
     } catch (error) {
         console.error('[Auth] Admin check failed:', error)
-        return false
+        return { isAdmin: false, isActor: false }
     }
 }
 
@@ -67,6 +73,9 @@ export function useAuth() {
 
     // 管理者判定（Firestoreから取得）
     const isAdmin = computed(() => isAdminValue.value)
+
+    // アクター判定（外部案件の作品名・時間変更のみ可能な制限ロール）
+    const isActor = computed(() => isActorValue.value)
 
     // スーパー管理者判定（email が SUPER_ADMIN_EMAILS に含まれる場合のみ true）
     // NG / キャンセルからの復帰など、通常 admin でも不可な操作を許可する
@@ -128,15 +137,18 @@ export function useAuth() {
                 // ログアウト時はリセット
                 storeToken(null)
                 isAdminValue.value = false
+                isActorValue.value = false
                 isAdminChecked.value = false
                 loading.value = false
                 return
             }
 
-            // 管理者チェック
+            // ロールチェック（管理者 / アクター）
             if (newUser.email) {
                 isAdminChecked.value = false
-                isAdminValue.value = await checkIsAdmin(newUser.email)
+                const role = await checkUserRole(newUser.email)
+                isAdminValue.value = role.isAdmin
+                isActorValue.value = role.isActor
                 isAdminChecked.value = true
             }
 
@@ -152,6 +164,7 @@ export function useAuth() {
         userName,
         userPhotoURL,
         isAdmin,
+        isActor,
         isSuperAdmin,
         isAdminChecked,
         googleAccessToken,

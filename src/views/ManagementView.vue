@@ -5,6 +5,7 @@ import TabPanel from 'primevue/tabpanel'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
+import Select from 'primevue/select'
 import Textarea from 'primevue/textarea'
 import Tag from 'primevue/tag'
 import Badge from 'primevue/badge'
@@ -463,7 +464,13 @@ const editBody = ref('')
 const admins = useAdmins()
 const newAdminEmail = ref('')
 const newAdminName = ref('')
+const newAdminRole = ref<'admin' | 'actor'>('admin')
 const addingAdmin = ref(false)
+
+const adminRoleOptions = [
+    { label: '管理者', value: 'admin' },
+    { label: 'アクター（外部案件の作品名・時間変更のみ）', value: 'actor' },
+]
 
 async function handleAddAdmin() {
     if (!newAdminEmail.value.trim() || !newAdminName.value.trim()) {
@@ -471,10 +478,11 @@ async function handleAddAdmin() {
         return
     }
     addingAdmin.value = true
-    const success = await admins.addAdmin(newAdminEmail.value, newAdminName.value)
+    const success = await admins.addAdmin(newAdminEmail.value, newAdminName.value, newAdminRole.value)
     if (success) {
         newAdminEmail.value = ''
         newAdminName.value = ''
+        newAdminRole.value = 'admin'
     }
     addingAdmin.value = false
 }
@@ -1160,7 +1168,7 @@ function setAllNewDate(date: Date | null) {
                     <div class="admin-add-form">
                         <h3 class="admin-section-title">
                             <i class="pi pi-user-plus"></i>
-                            管理者を追加
+                            ユーザーを追加
                         </h3>
                         <div class="admin-form-row">
                             <InputText
@@ -1173,6 +1181,13 @@ function setAllNewDate(date: Date | null) {
                                 v-model="newAdminName"
                                 placeholder="表示名"
                                 class="admin-input-name"
+                            />
+                            <Select
+                                v-model="newAdminRole"
+                                :options="adminRoleOptions"
+                                optionLabel="label"
+                                optionValue="value"
+                                class="admin-role-select"
                             />
                             <Button
                                 label="追加"
@@ -1204,6 +1219,7 @@ function setAllNewDate(date: Date | null) {
                                 <tr>
                                     <th>名前</th>
                                     <th>メールアドレス</th>
+                                    <th>ロール</th>
                                     <th>ステータス</th>
                                     <th>登録日</th>
                                     <th>操作</th>
@@ -1214,6 +1230,13 @@ function setAllNewDate(date: Date | null) {
                                     :class="{ 'admin-inactive': !admin.active }">
                                     <td class="cast-name">{{ admin.name }}</td>
                                     <td class="admin-email">{{ admin.email }}</td>
+                                    <td>
+                                        <Tag
+                                            :value="admin.role === 'actor' ? 'アクター' : '管理者'"
+                                            :severity="admin.role === 'actor' ? 'info' : 'primary'"
+                                            v-tooltip.top="admin.role === 'actor' ? '外部案件の作品名・時間変更のみ可能' : ''"
+                                        />
+                                    </td>
                                     <td>
                                         <Tag
                                             :value="admin.active ? '有効' : '無効'"
@@ -2099,6 +2122,10 @@ function setAllNewDate(date: Date | null) {
 .admin-input-name {
     flex: 1;
     min-width: 140px;
+}
+
+.admin-role-select {
+    min-width: 160px;
 }
 
 .admin-email {

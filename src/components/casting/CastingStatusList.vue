@@ -110,7 +110,31 @@ const saveRoleEdit = (castingId: string) => {
   editingRoleId.value = null
 }
 
-const { isAdmin, userEmail } = useAuth()
+const { isAdmin, isActor, userEmail } = useAuth()
+
+// このリスト（作品グループ）が外部案件かどうか
+const groupIsExternal = computed(() =>
+  !!props.isExternalTab || (props.castings.length > 0 && props.castings.every(c => c.mode === 'external'))
+)
+
+// 作品名編集: アクターは外部案件のみ。それ以外のユーザーは従来どおり編集可
+const canEditProjectName = computed(() => !isActor.value || groupIsExternal.value)
+
+// 外部案件かどうか（mode 未設定の旧データは外部タブ表示で判定）
+const isExternalCasting = (casting: Casting) =>
+  casting.mode === 'external' || (!casting.mode && !!props.isExternalTab)
+
+// 時間編集: 管理者、またはアクター（外部案件のみ）
+const canEditTime = (casting: Casting) =>
+  isAdmin.value || (isActor.value && isExternalCasting(casting))
+
+// 金額編集: アクターは外部案件のみ可。それ以外のユーザーは従来どおり
+const canEditCost = (casting: Casting) =>
+  !isActor.value || isExternalCasting(casting)
+
+// 削除: 管理者、またはアクター（外部案件のみ）
+const canDelete = (casting: Casting) =>
+  isAdmin.value || (isActor.value && isExternalCasting(casting))
 
 // クイック追加オーダーを使えるアカウント（宮澤・三浦のみ）
 const QUICK_ORDER_ACCOUNTS = ['yuki.miyazawa@gokkoclub.jp', 'kunihito.miura@gokkoclub.jp']
@@ -343,10 +367,16 @@ const sortLabel = computed(() => {
           <Button icon="pi pi-times" text size="small" severity="secondary" @click="cancelProjectNameEdit" />
         </template>
         <template v-else>
-          <span class="csl-project-name" @click="startProjectNameEdit" title="クリックして作品名を編集">
+          <span
+            v-if="canEditProjectName"
+            class="csl-project-name"
+            @click="startProjectNameEdit"
+            title="クリックして作品名を編集"
+          >
             {{ projectName }}
             <i class="pi pi-pencil csl-edit-icon"></i>
           </span>
+          <span v-else class="csl-project-name">{{ projectName }}</span>
         </template>
         <span v-if="multiDate" class="csl-multidate-tag" title="この作品は複数日程のオーダーがあります">複数日程</span>
         <span class="csl-cast-count">{{ castings.length }}人</span>
@@ -439,10 +469,11 @@ const sortLabel = computed(() => {
             </button>
           </template>
           <template v-else>
-            <span class="csl-role-name clickable" @click="startRoleEdit(casting)" title="クリックして役名を編集">
+            <span v-if="!isActor" class="csl-role-name clickable" @click="startRoleEdit(casting)" title="クリックして役名を編集">
               {{ casting.roleName || '-' }}
               <i class="pi pi-pencil csl-role-edit-icon"></i>
             </span>
+            <span v-else class="csl-role-name">{{ casting.roleName || '-' }}</span>
             <span v-if="casting.mainSub === 'メイン'" class="csl-main-badge">メイン</span>
             <span v-if="casting.rank" class="csl-rank-badge">第{{ casting.rank }}候補</span>
           </template>
@@ -480,7 +511,7 @@ const sortLabel = computed(() => {
               {{ casting.startTime || '??' }}〜{{ casting.endTime || '??' }}
             </span>
             <span v-else class="csl-time-empty">時間未設定</span>
-            <button v-if="isAdmin" class="csl-act-btn csl-time-edit" @click="startTimeEdit(casting)" title="時間を編集">
+            <button v-if="canEditTime(casting)" class="csl-act-btn csl-time-edit" @click="startTimeEdit(casting)" title="時間を編集">
               <i class="pi pi-pencil"></i>
             </button>
           </template>
@@ -488,7 +519,7 @@ const sortLabel = computed(() => {
 
         <!-- Cost -->
         <div class="csl-cell csl-cost" @click.stop>
-          <template v-if="!isRowDimmed(casting.status)">
+          <template v-if="!isRowDimmed(casting.status) && canEditCost(casting)">
             <InputNumber 
               :modelValue="casting.cost"
               @update:modelValue="(v) => handleCostChange(casting.id, v)"
@@ -541,10 +572,10 @@ const sortLabel = computed(() => {
           <button v-if="canQuickOrder" class="csl-act-btn" @click="emit('additional-order', casting)" title="追加オーダー">
             <i class="pi pi-plus"></i>
           </button>
-          <button v-if="isExternalTab" class="csl-act-btn" @click="emit('open-email', casting)" title="メール">
+          <button v-if="isExternalTab && !isActor" class="csl-act-btn" @click="emit('open-email', casting)" title="メール">
             <i class="pi pi-envelope"></i>
           </button>
-          <button v-if="isAdmin" class="csl-act-btn danger" @click="emit('delete', casting.id)" title="削除">
+          <button v-if="canDelete(casting)" class="csl-act-btn danger" @click="emit('delete', casting.id)" title="削除">
             <i class="pi pi-trash"></i>
           </button>
         </div>
