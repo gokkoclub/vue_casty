@@ -5,7 +5,10 @@ import Card from 'primevue/card'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import Message from 'primevue/message'
-import TabView from 'primevue/tabview'
+import Tabs from 'primevue/tabs'
+import TabList from 'primevue/tablist'
+import Tab from 'primevue/tab'
+import TabPanels from 'primevue/tabpanels'
 import TabPanel from 'primevue/tabpanel'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -91,6 +94,7 @@ async function load() {
     html.value = await renderKouban(shoot.value.payload)
   } catch (e) {
     console.error('[kouban] 描画に失敗', e)
+    html.value = ''
     toast.add({
       severity: 'error',
       summary: '香盤を表示できません',
@@ -204,32 +208,41 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
         「配役」で確かめてください。
       </Message>
 
-      <TabView>
-        <TabPanel value="0">
-          <template #header>
+      <Tabs value="0">
+        <TabList>
+          <Tab value="0">
             <div class="tab-header"><i class="pi pi-table"></i><span>香盤</span></div>
-          </template>
+          </Tab>
+          <Tab value="1">
+            <div class="tab-header"><i class="pi pi-pencil"></i><span>編集</span></div>
+          </Tab>
+          <Tab value="2">
+            <div class="tab-header">
+              <i class="pi pi-users"></i><span>配役</span>
+              <Tag :value="String(roster.length)" severity="secondary" />
+            </div>
+          </Tab>
+          <Tab value="3">
+            <div class="tab-header">
+              <i class="pi pi-history"></i><span>履歴</span>
+              <Tag :value="String(versions.length)" severity="secondary" />
+            </div>
+          </Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel value="0">
           <div v-if="rendering" class="center">
             <ProgressSpinner style="width: 36px; height: 36px" />
           </div>
           <!-- CLI が出す PDF と同じテンプレートで描く。だから見た目がズレない -->
           <iframe v-else :srcdoc="html" title="香盤" class="frame"></iframe>
-        </TabPanel>
+          </TabPanel>
 
-        <TabPanel value="1">
-          <template #header>
-            <div class="tab-header"><i class="pi pi-pencil"></i><span>編集</span></div>
-          </template>
+          <TabPanel value="1">
           <KoubanEditor :payload="draft ?? shoot.payload" @update="preview" />
-        </TabPanel>
+          </TabPanel>
 
-        <TabPanel value="2">
-          <template #header>
-            <div class="tab-header">
-              <i class="pi pi-users"></i><span>配役</span>
-              <Tag :value="String(roster.length)" severity="secondary" />
-            </div>
-          </template>
+          <TabPanel value="2">
           <DataTable :value="roster" size="small" stripedRows>
             <Column field="roleName" header="役">
               <template #body="{ data }"><strong>{{ data.roleName }}</strong></template>
@@ -259,15 +272,9 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
             「当たらない」「要選択」は、名前が違うか、1日2作品で同じ役名が2つあるときに出ます。
             <strong>勝手に選ばず、人に確かめる</strong>ようにしています。
           </p>
-        </TabPanel>
+          </TabPanel>
 
-        <TabPanel value="3">
-          <template #header>
-            <div class="tab-header">
-              <i class="pi pi-history"></i><span>履歴</span>
-              <Tag :value="String(versions.length)" severity="secondary" />
-            </div>
-          </template>
+          <TabPanel value="3">
           <div class="versions">
             <Card v-for="v in versions" :key="v.id" class="version">
               <template #content>
@@ -290,8 +297,9 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
               </template>
             </Card>
           </div>
-        </TabPanel>
-      </TabView>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
     </template>
   </div>
 </template>

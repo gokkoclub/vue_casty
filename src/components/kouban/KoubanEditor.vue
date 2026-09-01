@@ -20,9 +20,19 @@ import Tag from 'primevue/tag'
 const props = defineProps<{ payload: Record<string, any> }>()
 const emit = defineEmits<{ (e: 'update', v: Record<string, any>): void }>()
 
-// 編集用の複製。元は触らない
-const draft = ref<Record<string, any>>(structuredClone(props.payload))
-watch(() => props.payload, v => { draft.value = structuredClone(v) })
+// 編集用の複製。元は触らない。
+// payload が欠けていても落ちないようにする（落ちると画面ごと真っ白になる）
+function clone(p: Record<string, any> | null | undefined): Record<string, any> {
+  const base = p ? structuredClone(p) : {}
+  base.head ??= {}
+  base.rows ??= []
+  base.cast ??= []
+  base.locations ??= {}
+  return base
+}
+
+const draft = ref<Record<string, any>>(clone(props.payload))
+watch(() => props.payload, v => { draft.value = clone(v) })
 
 function touch() {
   emit('update', structuredClone(draft.value))
