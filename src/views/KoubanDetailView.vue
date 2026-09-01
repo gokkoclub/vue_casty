@@ -19,7 +19,7 @@ import { useConfirm } from 'primevue/useconfirm'
 import KoubanEditor from '@/components/kouban/KoubanEditor.vue'
 import { useAuth } from '@/composables/useAuth'
 import Dialog from 'primevue/dialog'
-import { useKouban, renderKouban, saveKouban, publishKouban,
+import { useKouban, renderKouban, saveKouban, publishKouban, clonePayload,
          type KoubanRosterRow, type PublishResult } from '@/composables/useKouban'
 
 const route = useRoute()
@@ -121,7 +121,7 @@ function decide() {
     acceptLabel: '決定にする',
     rejectLabel: 'やめる',
     accept: async () => {
-      const next = structuredClone(p) as Record<string, any>
+      const next = clonePayload(p) as Record<string, any>
       next.head = { ...(next.head ?? {}), fixed: true }
       draft.value = next
       html.value = await renderKouban(next)

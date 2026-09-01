@@ -6,6 +6,7 @@ import Select from 'primevue/select'
 import Checkbox from 'primevue/checkbox'
 import Textarea from 'primevue/textarea'
 import Tag from 'primevue/tag'
+import { clonePayload } from '@/composables/useKouban'
 
 /**
  * 香盤の編集。いまの香盤スプレッドシートと同じ並びで直せるようにする。
@@ -23,7 +24,7 @@ const emit = defineEmits<{ (e: 'update', v: Record<string, any>): void }>()
 // 編集用の複製。元は触らない。
 // payload が欠けていても落ちないようにする（落ちると画面ごと真っ白になる）
 function clone(p: Record<string, any> | null | undefined): Record<string, any> {
-  const base = p ? structuredClone(p) : {}
+  const base = p ? clonePayload(p) : {}
   base.head ??= {}
   base.rows ??= []
   base.cast ??= []
@@ -35,7 +36,7 @@ const draft = ref<Record<string, any>>(clone(props.payload))
 watch(() => props.payload, v => { draft.value = clone(v) })
 
 function touch() {
-  emit('update', structuredClone(draft.value))
+  emit('update', clonePayload(draft.value))
 }
 
 interface Row { kind: 'sc' | 'brk' | 'banner'; [k: string]: any }

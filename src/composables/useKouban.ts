@@ -14,6 +14,17 @@ import { db } from '@/services/firebase'
  * 行に割っていないのは、CLI が出す PDF と画面を同じテンプレートで描くため。
  */
 
+/**
+ * 香盤の中身を複製する。
+ *
+ * structuredClone は使わない。Firestore から来た中身は Vue の reactive proxy に
+ * なっていて、DataCloneError で落ちる。payload はもともと JSON なので、
+ * JSON を通すのが確実で、proxy も一緒に剥がれる。
+ */
+export function clonePayload<T>(v: T): T {
+    return JSON.parse(JSON.stringify(v ?? null))
+}
+
 export interface KoubanRosterRow {
     id: string
     workId: string
