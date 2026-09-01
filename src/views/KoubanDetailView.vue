@@ -11,18 +11,80 @@ import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import ProgressSpinner from 'primevue/progressspinner'
 import { useToast } from 'primevue/usetoast'
-import { useKouban, renderKouban, type KoubanRosterRow } from '@/composables/useKouban'
+import ConfirmDialog from 'primevue/confirmdialog'
+import { useConfirm } from 'primevue/useconfirm'
+import KoubanEditor from '@/components/kouban/KoubanEditor.vue'
+import { useAuth } from '@/composables/useAuth'
+import { useKouban, renderKouban, saveKouban, type KoubanRosterRow } from '@/composables/useKouban'
 
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+const confirm = useConfirm()
+const { userName } = useAuth()
 const { shoot, roster, versions, loading, error, fetchOne } = useKouban()
 
 const html = ref('')
 const rendering = ref(false)
 
+// 編集中の中身。保存するまで Firestore には書かない
+const draft = ref<Record<string, any> | null>(null)
+const dirty = ref(false)
+const saving = ref(false)
+
+/** 編集のたびに、その場で香盤を描き直す。出来上がりを見ながら直せる */
+async function preview(p: Record<string, any>) {
+  draft.value = p
+  dirty.value = true
+  try {
+    html.value = await renderKouban(p)
+  } catch (e) {
+    console.error('[kouban] 下書きの描画に失敗', e)
+  }
+}
+
+async function save(note = '') {
+  if (!shoot.value || !draft.value) return
+  saving.value = true
+  try {
+    await saveKouban(shoot.value.id, draft.value, userName.value || 'unknown', note)
+    dirty.value = false
+    await load()
+    toast.add({ severity: 'success', summary: '保存しました', detail: '版を1つ残しました', life: 3000 })
+  } catch (e) {
+    console.error('[kouban] 保存に失敗', e)
+    toast.add({
+      severity: 'error', summary: '保存できませんでした',
+      detail: e instanceof Error ? e.message : 'もう一度お試しください', life: 6000
+    })
+  } finally {
+    saving.value = false
+  }
+}
+
+/** 決定香盤にする。ここから Casty に流れるので、押す前に確かめる */
+function decide() {
+  const p = draft.value ?? shoot.value?.payload
+  if (!p) return
+  confirm.require({
+    header: '決定香盤にしますか',
+    message: '関係者に共有できる状態になります。あとから仮に戻すこともできます。',
+    acceptLabel: '決定にする',
+    rejectLabel: 'やめる',
+    accept: async () => {
+      const next = structuredClone(p) as Record<string, any>
+      next.head = { ...(next.head ?? {}), fixed: true }
+      draft.value = next
+      html.value = await renderKouban(next)
+      await save('決定香盤にした')
+    }
+  })
+}
+
 async function load() {
   await fetchOne(String(route.params.shootId))
+  draft.value = null
+  dirty.value = false
   if (!shoot.value) return
   rendering.value = true
   try {
@@ -81,6 +143,7 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
 
 <template>
   <div class="kouban-detail">
+    <ConfirmDialog />
     <div v-if="loading" class="center">
       <ProgressSpinner style="width: 44px; height: 44px" />
     </div>
@@ -114,6 +177,14 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
         </div>
         <div class="actions">
           <Button
+            v-if="dirty" label="保存" icon="pi pi-check" size="small" :loading="saving"
+            @click="save()"
+          />
+          <Button
+            v-if="shoot.status !== '決'" label="決定香盤にする" icon="pi pi-flag-fill"
+            size="small" severity="success" outlined :disabled="saving" @click="decide"
+          />
+          <Button
             v-if="shareUrl" label="共有リンク" icon="pi pi-link" size="small" outlined
             @click="copyShare"
           />
@@ -123,6 +194,10 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
           />
         </div>
       </div>
+
+      <Message v-if="dirty" severity="info" :closable="false" class="attention">
+        直したところがまだ保存されていません。「保存」を押すと版が1つ残ります。
+      </Message>
 
       <Message v-if="needsAttention.length" severity="warn" :closable="false" class="attention">
         Casty のキャスティングと結びついていない配役が {{ needsAttention.length }} 件あります。
@@ -142,6 +217,13 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
         </TabPanel>
 
         <TabPanel value="1">
+          <template #header>
+            <div class="tab-header"><i class="pi pi-pencil"></i><span>編集</span></div>
+          </template>
+          <KoubanEditor :payload="draft ?? shoot.payload" @update="preview" />
+        </TabPanel>
+
+        <TabPanel value="2">
           <template #header>
             <div class="tab-header">
               <i class="pi pi-users"></i><span>配役</span>
@@ -179,7 +261,7 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
           </p>
         </TabPanel>
 
-        <TabPanel value="2">
+        <TabPanel value="3">
           <template #header>
             <div class="tab-header">
               <i class="pi pi-history"></i><span>履歴</span>

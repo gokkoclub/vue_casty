@@ -137,3 +137,71 @@ export async function renderKouban(payload: Record<string, unknown>): Promise<st
     const blob = JSON.stringify(payload).replace(/<\//g, '<\\/')
     return tpl.replace('__SHOOT_JSON__', blob).replace('__TITLE__', title)
 }
+
+/**
+ * 香盤を保存する。版を1つ積んで、本体を差し替える。
+ *
+ * 版は消さない。誰がいつ何を変えたかが、そのまま履歴になる。
+ * CLI の push_firestore.py と同じ形で書くので、どちらから直しても混ざらない。
+ */
+export async function saveKouban(
+    shootId: string,
+    payload: Record<string, unknown>,
+    who: string,
+    note = ''
+): Promise<string> {
+    if (!db) throw new Error('Firestore に繋がっていません')
+
+    const { doc, getDoc, collection, writeBatch, serverTimestamp } = await import('firebase/firestore')
+    const ref = doc(db, 'shoots', shootId)
+    const snap = await getDoc(ref)
+    if (!snap.exists()) throw new Error('この撮影の香盤がありません')
+
+    const prev = (snap.data().payload ?? {}) as Record<string, unknown>
+    const versionId = new Date()
+        .toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', 'T')
+    const head = (payload.head ?? {}) as Record<string, unknown>
+
+    const batch = writeBatch(db)
+    batch.set(ref, {
+        payload,
+        status: head.fixed ? '決' : '仮',
+        currentVersionId: versionId,
+        updatedAt: serverTimestamp(),
+        updatedBy: who,
+        source: 'app'
+    }, { merge: true })
+    batch.set(doc(collection(ref, 'versions'), versionId), {
+        createdAt: serverTimestamp(),
+        createdBy: who,
+        source: 'app',
+        status: head.fixed ? '決' : '仮',
+        payload,
+        changes: diffPayload(prev, payload),
+        note
+    })
+    await batch.commit()
+    return versionId
+}
+
+/** 版と版のあいだで何が変わったか。CLI 側の diff_payload と同じ粒度 */
+function diffPayload(
+    a: unknown, b: unknown, path = '', acc: { path: string; from: unknown; to: unknown }[] = []
+): { path: string; from: unknown; to: unknown }[] {
+    if (acc.length >= 200) return acc
+    const bothPlain = (x: unknown) =>
+        typeof x === 'object' && x !== null && !Array.isArray(x)
+    if (Array.isArray(a) && Array.isArray(b)) {
+        for (let i = 0; i < Math.max(a.length, b.length); i++) {
+            diffPayload(a[i], b[i], `${path}[${i}]`, acc)
+        }
+    } else if (bothPlain(a) && bothPlain(b)) {
+        const A = a as Record<string, unknown>, B = b as Record<string, unknown>
+        for (const k of [...new Set([...Object.keys(A), ...Object.keys(B)])].sort()) {
+            diffPayload(A[k], B[k], path ? `${path}.${k}` : k, acc)
+        }
+    } else if (JSON.stringify(a) !== JSON.stringify(b)) {
+        acc.push({ path, from: a ?? null, to: b ?? null })
+    }
+    return acc
+}
