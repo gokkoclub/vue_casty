@@ -35,6 +35,9 @@ export { syncFromNotion, scheduledSyncFromNotion } from "./syncFromNotion";
 export { syncCastsFromNotion, scheduledSyncCastsFromNotion } from "./syncCastsFromNotion";
 export { handleSlackInteraction } from "./slackInteraction";
 
+// 香盤（決定香盤 → castings / shootingDetails）
+export { publishKouban } from "./publishKouban";
+
 // Automation (香盤SS submissions → 各種ディスパッチ)
 export { dispatchShootingSubmission } from "./automation/dispatchShootingSubmission";
 export { onShootingEventCreate } from "./automation/onShootingEventCreate";

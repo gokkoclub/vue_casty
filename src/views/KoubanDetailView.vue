@@ -18,7 +18,9 @@ import ConfirmDialog from 'primevue/confirmdialog'
 import { useConfirm } from 'primevue/useconfirm'
 import KoubanEditor from '@/components/kouban/KoubanEditor.vue'
 import { useAuth } from '@/composables/useAuth'
-import { useKouban, renderKouban, saveKouban, type KoubanRosterRow } from '@/composables/useKouban'
+import Dialog from 'primevue/dialog'
+import { useKouban, renderKouban, saveKouban, publishKouban,
+         type KoubanRosterRow, type PublishResult } from '@/composables/useKouban'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,6 +64,50 @@ async function save(note = '') {
     })
   } finally {
     saving.value = false
+  }
+}
+
+// ── Casty へ送る。まず試算を見せて、それから送る
+const plan = ref<PublishResult | null>(null)
+const planOpen = ref(false)
+const sending = ref(false)
+
+async function preflight() {
+  if (!shoot.value) return
+  sending.value = true
+  try {
+    plan.value = await publishKouban(shoot.value.id, true)
+    planOpen.value = true
+  } catch (e) {
+    console.error('[kouban] 試算に失敗', e)
+    toast.add({
+      severity: 'error', summary: '試算できませんでした',
+      detail: e instanceof Error ? e.message : '', life: 6000
+    })
+  } finally {
+    sending.value = false
+  }
+}
+
+async function send() {
+  if (!shoot.value) return
+  sending.value = true
+  try {
+    const r = await publishKouban(shoot.value.id, false)
+    planOpen.value = false
+    await load()
+    toast.add({
+      severity: 'success', summary: 'Casty に送りました',
+      detail: `${r.matched}人ぶんを反映しました`, life: 4000
+    })
+  } catch (e) {
+    console.error('[kouban] 送信に失敗', e)
+    toast.add({
+      severity: 'error', summary: '送れませんでした',
+      detail: e instanceof Error ? e.message : '', life: 6000
+    })
+  } finally {
+    sending.value = false
   }
 }
 
@@ -189,6 +235,11 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
             size="small" severity="success" outlined :disabled="saving" @click="decide"
           />
           <Button
+            v-if="shoot.status === '決'" label="Casty に送る" icon="pi pi-send"
+            size="small" severity="success" :loading="sending" :disabled="dirty"
+            @click="preflight"
+          />
+          <Button
             v-if="shareUrl" label="共有リンク" icon="pi pi-link" size="small" outlined
             @click="copyShare"
           />
@@ -300,6 +351,53 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
           </TabPanel>
         </TabPanels>
       </Tabs>
+
+      <!-- Casty へ送る前の試算。何人に当たって、何が食い違うかを見せてから送る -->
+      <Dialog v-model:visible="planOpen" modal header="Casty に送る" :style="{ width: '38rem' }">
+        <template v-if="plan">
+          <div class="plan-counts">
+            <div class="cnt ok">
+              <b>{{ plan.matched }}</b><span>人に反映</span>
+            </div>
+            <div class="cnt" :class="{ warn: plan.unmatched > 0 }">
+              <b>{{ plan.unmatched }}</b><span>当たらない</span>
+            </div>
+            <div class="cnt" :class="{ warn: plan.ambiguous > 0 }">
+              <b>{{ plan.ambiguous }}</b><span>要選択</span>
+            </div>
+            <div class="cnt" :class="{ warn: plan.conflicts > 0 }">
+              <b>{{ plan.conflicts }}</b><span>食い違い</span>
+            </div>
+          </div>
+
+          <p class="plan-note">
+            Casty のキャスティング {{ plan.castings }}件のうち、生きている
+            {{ plan.live }}件だけが対象です。NG・キャンセルには触れません。
+            <strong>入り時間は空のときだけ入れます。</strong>手で入れた値は残ります。
+          </p>
+
+          <div v-if="plan.conflictRows?.length" class="plan-block">
+            <h4>時刻が食い違っています（上書きしません）</h4>
+            <div v-for="c in plan.conflictRows" :key="c.castName" class="plan-row">
+              <span>{{ c.castName }}</span>
+              <span class="num">香盤 {{ c.kouban }} ／ Casty {{ c.casty }}</span>
+            </div>
+          </div>
+
+          <div v-if="plan.unmatchedRows?.length" class="plan-block">
+            <h4>当たらなかった配役</h4>
+            <div v-for="u in plan.unmatchedRows" :key="u.roleName" class="plan-row">
+              <span>{{ u.roleName }}　{{ u.castName }}</span>
+            </div>
+          </div>
+        </template>
+
+        <template #footer>
+          <Button label="やめる" text @click="planOpen = false" />
+          <Button label="送る" icon="pi pi-send" severity="success"
+                  :loading="sending" @click="send" />
+        </template>
+      </Dialog>
     </template>
   </div>
 </template>
@@ -382,6 +480,61 @@ const matchOf = (r: KoubanRosterRow) => MATCH[r.matchStatus] ?? { label: r.match
   color: var(--p-text-muted-color);
   margin: 1rem 0 0;
   line-height: 1.8;
+}
+
+.plan-counts {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.cnt {
+  text-align: center;
+  padding: 0.7rem 0.3rem;
+  border-radius: 8px;
+  background: var(--p-surface-100);
+}
+
+.cnt b {
+  display: block;
+  font-size: 1.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.cnt span {
+  font-size: 0.72rem;
+  color: var(--p-text-muted-color);
+}
+
+.cnt.ok b { color: var(--p-primary-color); }
+.cnt.warn b { color: var(--p-orange-500, #f59e0b); }
+
+.plan-note {
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+  line-height: 1.8;
+  margin: 0 0 1rem;
+}
+
+.plan-block h4 {
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+}
+
+.plan-block {
+  margin-top: 1rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--p-content-border-color);
+}
+
+.plan-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.8rem;
+  padding: 0.25rem 0;
 }
 
 .versions {

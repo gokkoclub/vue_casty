@@ -205,3 +205,41 @@ function diffPayload(
     }
     return acc
 }
+
+export interface PublishResult {
+    shootId: string
+    title: string
+    date: string
+    castings: number
+    live: number
+    matched: number
+    unmatched: number
+    ambiguous: number
+    conflicts: number
+    dryRun: boolean
+    exportId?: string
+    matchedRows: { castName: string; roleName: string; callTime: string; outTime: string;
+                   willFill: { inTime: boolean; outTime: boolean } }[]
+    unmatchedRows?: { roleName: string; castName: string }[]
+    conflictRows?: { castName: string; kouban: string; casty: string }[]
+}
+
+/**
+ * 決定香盤を Casty に流す。
+ *
+ * 既定は試算だけ（dryRun）。何人に当たって何人外れるかを見てから送る。
+ * 既存のスプレッドシート経由は止めない。source: 'auto' で見分けられる。
+ */
+export async function publishKouban(shootId: string, dryRun = true): Promise<PublishResult> {
+    const { functions } = await import('@/services/firebase')
+    if (!functions) throw new Error('Cloud Functions に繋がっていません')
+    const { httpsCallable } = await import('firebase/functions')
+    const fn = httpsCallable(functions, 'publishKouban')
+    const res = await fn({ shootId, dryRun })
+    const d = res.data as Record<string, unknown>
+    return {
+        ...(d as unknown as PublishResult),
+        unmatchedRows: d.unmatched as PublishResult['unmatchedRows'],
+        conflictRows: d.conflicts as PublishResult['conflictRows']
+    }
+}
