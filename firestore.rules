@@ -65,5 +65,28 @@ service cloud.firestore {
     match /galaRates/{docId} {
       allow read, write: if request.auth != null;
     }
+
+    // shoots: 香盤。撮影1件 = Notion の撮影ページID。
+    // 本体（payload）と、その下の versions / roster / staff / props。
+    // CLI（kouban-cli サービスアカウント）と アプリの両方が書く。
+    match /shoots/{shootId} {
+      allow read, write: if request.auth != null;
+      match /{sub=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // works: 作品に付くもの（役・小道具）。撮影をまたいで貯める
+    match /works/{workId} {
+      allow read, write: if request.auth != null;
+      match /{sub=**} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // koubanExports: Casty へ送った履歴と照合の結果
+    match /koubanExports/{docId} {
+      allow read, write: if request.auth != null;
+    }
   }
 }

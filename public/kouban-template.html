@@ -1,0 +1,964 @@
+<!-- gokkoclub/kouban の templates/kouban.html の写し。
+     直すときは向こうを直して、こちらに写す。CLI・PDF・アプリ・共有リンクが同じものを使う。 -->
+<title>__TITLE__</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=Noto+Sans+JP:wght@400;500;700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --paper:#FFFFFF;
+  --ground:#DEDDD9;
+  --ink:#1F2328;
+  --ink-2:#1F2328;
+  --ink-3:#1F2328;
+  --line:#8C959F;
+  --line-2:#C2CBD4;
+  --head-bg:#F2F4F6;
+  --tbl-bg:#E7EEF8;
+  --tbl-line:#8FB3DE;
+  --tbl-fg:#0A5CB8;
+  --accent:#0969DA;
+  --green:#1A7F37;  --green-bg:#DAFBE1;
+  --amber:#9A6700;  --amber-bg:#FFF8C5;
+  --meal:#7D4E00;
+  --prep-bg:#F6F8FA;     /* 準備・後片付け */
+  --move-bg:#E9EFF6;     /* 移動 */
+  --wear:#8250DF;  --wear-bg:#F3EBFF;   /* 衣装替え */
+  --hair-bg:#F1F7FE;                    /* ヘアメイク */
+  --miss:#A0503A;  --miss-bg:#FBE7E1;
+  --fs:"Noto Sans JP","Hiragino Kaku Gothic ProN",sans-serif;
+  --fd:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN",sans-serif;
+  --fm:"Inter","Helvetica Neue",Arial,sans-serif;
+  --fmset:"tnum" 1,"cv05" 1,"ss01" 1;
+  --ncast:6;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--ground:#1A1C1F}
+}
+:root[data-theme="dark"]{--ground:#1A1C1F}
+
+*{box-sizing:border-box}
+/* 白黒印刷用。URL に ?bw を付けると色を落とす。
+   そのままだと IN/OUT と現場名が薄くなりすぎるので、濃さを指定し直す */
+html.bw .sheet{filter:grayscale(1) contrast(1.06)}
+html.bw .sc-l span{color:#1F2328 !important}
+html.bw .sc-c .on i{color:#1F2328 !important}
+html.bw .sc-c .io.in {background:#2B2B2B}
+html.bw .sc-c .io.out{background:#6E6E6E}
+html.bw .sc-n{color:#1F2328}
+body{margin:0;background:var(--ground);font-family:var(--fs);-webkit-font-smoothing:antialiased}
+.stage{width:100%;display:flex;justify-content:center;padding:12px 12px 32px}
+/* 紙を丸ごと縮めて画面に収める。PDFを開いたときと同じ見え方にするため */
+.fitbox{position:relative}
+.sheet{transform-origin:top left}
+
+.bar{
+  position:fixed;top:12px;right:16px;z-index:50;display:flex;align-items:center;gap:4px;
+  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:8px;padding:4px 6px;
+  box-shadow:0 2px 10px rgba(0,0,0,.14);font-family:var(--fs)
+}
+.bar button{
+  font-family:inherit;font-size:12px;font-weight:600;color:var(--ink);
+  background:transparent;border:0;border-radius:5px;padding:5px 9px;cursor:pointer;line-height:1
+}
+.bar button:hover{background:var(--head-bg)}
+.bar button.on{background:var(--tbl-bg);color:var(--tbl-fg)}
+.bar .sep{width:1px;height:16px;background:var(--line);margin:0 3px}
+@media print{ .bar{display:none} .fitbox{position:static} .sheet{transform:none !important} }
+.sheet{
+  width:1096px;background:var(--paper);color:var(--ink);
+  padding:18px;border-radius:8px;box-shadow:0 2px 24px rgba(0,0,0,.12);
+}
+
+/* ---------- 縦の区切り線 ----------
+   横線につなげず、上下を少しあける。セル境界に擬似要素で引く */
+/* 縦線は横線までつなげる。隙間をあけると下端が浮いて見える */
+.vsep > *{position:relative}
+.vsep > *::after{
+  content:"";position:absolute;right:0;top:0;bottom:0;
+  width:1px;background:var(--line-2);pointer-events:none
+}
+.vsep > *:last-child::after{display:none}
+/* まとまりの境目だけ濃くする */
+.vsep > .split::after{background:var(--line)}
+
+/* ---------- 見出し ---------- */
+.head{display:flex;justify-content:space-between;align-items:flex-end;padding-bottom:14px;gap:28px}
+.head-l{display:flex;flex-direction:column;gap:6px}
+.h-title{font-size:34px;font-weight:700;line-height:1.2}
+.h-sub{display:flex;align-items:center;gap:16px}
+.h-date{display:flex;align-items:baseline;gap:12px}
+.h-date .d{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:30px;font-weight:700;letter-spacing:-.015em}
+.h-date .w{font-size:20px;font-weight:700}
+.h-date .r{font-size:14px;font-weight:700;letter-spacing:.04em;color:var(--ink)}
+.badge{font-size:17px;font-weight:700;letter-spacing:.1em;padding:6px 16px;border-radius:6px;color:#fff;white-space:nowrap}
+.badge.draft{background:#A0503A}
+.badge.final{background:#1A7F37}
+.head-r{display:flex;gap:8px;align-items:center}
+.prog-cap{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+/* 進行表の外、配役の列の真上に置く小さな見出し */
+.prog-label{margin-bottom:4px}
+/* どの列までが配役かを、下向きの括弧で示す */
+.prog-label .lb-cast{
+  grid-column:6 / span var(--ncast);
+  position:relative;padding-bottom:9px;
+  text-align:center;font-size:11px;font-weight:700;color:var(--ink);letter-spacing:.04em;
+}
+.prog-label .lb-cast::after{
+  content:"";position:absolute;left:1px;right:1px;bottom:1px;height:5px;
+  border:1px solid var(--ink);border-bottom:none;border-radius:2px 2px 0 0;
+}
+.pill-g{font-size:13px;color:var(--green);background:var(--green-bg);padding:4px 10px;border-radius:4px}
+.pill-a{font-size:13px;color:var(--amber);background:var(--amber-bg);padding:4px 10px;border-radius:4px}
+.pill-t{font-size:13px;color:var(--wear);background:var(--wear-bg);padding:4px 10px;border-radius:4px;font-weight:600}
+
+/* ---------- 天気 ---------- */
+.wx{display:grid;grid-template-columns:repeat(6,minmax(96px,auto));border:1px solid var(--line);
+    border-radius:6px;overflow:hidden;flex:none}
+.wx > div{display:flex;flex-direction:column;gap:3px;padding:9px 14px}
+.wx .k{font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--ink)}
+.wx .v{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:16px}
+.na{color:var(--ink);font-family:var(--fs);font-size:14px;
+    display:inline-block;line-height:1.35;vertical-align:middle}
+
+/* ---------- スタッフ・配役 ---------- */
+.h-title-row{display:flex;align-items:flex-end;gap:26px}
+.h-span{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:3px}
+.h-span > div{padding:5px 18px 7px;display:flex;flex-direction:column}
+.h-span .l{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--ink)}
+.h-span .v{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:27px;
+  font-weight:700;line-height:1.15;letter-spacing:-.01em}
+.duo{display:grid;grid-template-columns:700px 1fr;gap:18px;margin-bottom:14px;align-items:start}
+.blk{display:flex;flex-direction:column;gap:6px}
+.blk > .cap{font-size:16px;font-weight:700;letter-spacing:.02em;color:var(--ink)}
+.box{border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.gh{background:var(--tbl-bg);border-bottom:1px solid var(--tbl-line);font-size:13px;color:var(--tbl-fg);font-weight:600}
+.gh > div{padding:8px 12px}
+.gr{border-bottom:1px solid var(--line-2);align-items:stretch}
+.gr:last-child{border-bottom:none}
+.gr > div{padding:9px 12px}
+.g-staff{display:grid;grid-template-columns:165px 1fr 90px 170px}
+.g-cast {display:grid;grid-template-columns:104px 150px 92px 1fr 128px}
+.c-pos {font-size:15px;color:var(--ink)}
+.c-name{font-size:16px;font-weight:500}
+.c-time{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:15px;text-align:center}
+.c-place{font-size:14px;color:var(--ink);white-space:nowrap;text-align:center}
+.c-role{font-size:17px;font-weight:600;text-align:center}
+.c-actor{font-size:17px;color:var(--ink);text-align:center}
+/* まだ決まっていないキャスト。名前を入れれば自動で消える */
+.tbd{color:var(--miss);font-weight:700}
+.c-call{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:17px;text-align:center}
+.c-in{display:flex;flex-direction:column;gap:3px;align-items:center;text-align:center}
+.c-in .p{font-size:15px}
+.c-in .a{font-size:13px;color:var(--ink);line-height:1.55;white-space:nowrap}
+.c-note{font-size:14px;color:var(--ink)}
+.mk-s{color:var(--tbl-fg);font-size:13px;font-weight:600;white-space:nowrap}
+.mk-o{color:var(--ink);font-size:14px;white-space:nowrap}
+.mk-e{color:var(--ink);font-size:12.5px;white-space:nowrap}
+
+/* ---------- 進行表 ---------- */
+.prog{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.grid{display:grid;grid-template-columns:162px 74px 186px 52px 56px repeat(var(--ncast),88px) 208px 1fr}
+.p-head{background:var(--head-bg);border-bottom:2px solid var(--ink);font-size:15px;font-weight:600}
+
+.p-head .t{padding:11px 10px;text-align:center}
+.p-head .c{padding:11px 6px;text-align:center}
+.p-head .who{padding:8px 4px;display:flex;flex-direction:column;align-items:center;gap:2px}
+.p-head .who b{font-weight:700;font-size:15px}
+.p-head .who span{color:var(--ink);font-size:13px;line-height:1.25;text-align:center}
+/* 見出しの方が指定が強いので、未定の赤をここでも効かせる */
+.p-head .who .tbd{color:var(--miss);font-weight:700}
+
+.row-sc{border-bottom:1px solid var(--line);align-items:stretch}
+
+.sc-t{padding:12px 10px;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:17px;font-weight:500;
+      display:flex;align-items:center;justify-content:center;text-align:center}
+.sc-n{padding:14px 4px;display:flex;align-items:center;justify-content:center;white-space:nowrap;
+      font-family:var(--fm);font-feature-settings:var(--fmset);font-size:21px;color:var(--accent);font-weight:600}
+.sc-p{padding:12px 8px;font-size:20px;font-weight:600;text-align:center;letter-spacing:-.01em;text-wrap:balance;line-height:1.25;
+      display:flex;align-items:center;justify-content:center}
+.sc-d{padding:12px 6px;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:16px;
+      display:flex;align-items:center;justify-content:center}
+.sc-u{padding:12px 6px;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:16px;color:var(--ink-2);
+      display:flex;align-items:center;justify-content:center}
+.sc-c{padding:20px 4px;display:flex;justify-content:center;align-items:center}
+.sc-c .on{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;line-height:1.25}
+.sc-c .on b{font-size:17px;font-weight:500;white-space:nowrap}
+.sc-c .on i{font-style:normal;font-size:13px;padding:2px 7px;border-radius:3px;white-space:nowrap}
+/* IN / OUT は衣装のタグと見分けがつくよう、塗りつぶしの帯にする。
+   IN は名前の上で下向き、OUT は名前の下で上向き。入って出る向きに合わせる。
+   絶対配置にして、帯がある行とない行で役名の位置がずれないようにしている */
+.sc-c .ios{position:absolute;left:-3px;right:-3px;display:flex}
+.sc-c .ios.i{bottom:100%;margin-bottom:3px}
+.sc-c .ios.o{top:100%;margin-top:3px}
+.sc-c .io{
+  flex:1;font-style:normal;font-size:10.5px;font-weight:700;letter-spacing:.1em;
+  text-align:center;white-space:nowrap;color:#fff;line-height:1.15;
+}
+.sc-c .io.in {background:var(--green);padding:1px 0 4px;
+  clip-path:polygon(0 0,100% 0,100% 58%,50% 100%,0 58%)}
+.sc-c .io.out{background:var(--miss);padding:4px 0 1px;
+  clip-path:polygon(50% 0,100% 42%,100% 100%,0 100%,0 42%)}
+.sc-l{padding:10px;display:flex;align-items:center;justify-content:center;text-align:center}
+.sc-l span{display:inline-flex;align-items:center;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:16px;
+           padding:6px 12px;border-radius:4px;
+           /* 「CLASSROOM 廊下」を 廊下 の途中で折らず、スペースで折る */
+           word-break:keep-all;line-break:strict}
+.sc-r{padding:11px 10px;display:flex;flex-direction:column;gap:8px;align-items:flex-start;justify-content:center;text-align:left}
+.sc-r .grp{display:flex;flex-direction:column;gap:1px;align-items:flex-start}
+.sc-r .grp b{font-size:13px;font-weight:700;letter-spacing:.03em}
+.sc-r .grp span{font-size:15px;line-height:1.55;text-wrap:pretty}
+
+.row-brk{display:grid;grid-template-columns:106px 1fr;border-bottom:1px solid var(--line);align-items:stretch}
+.row-brk .t{padding:7px 10px;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:15px;color:var(--ink);
+            display:flex;align-items:center;justify-content:center}
+.row-brk .b{padding:7px 10px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.row-brk .b .l{font-size:15px;font-weight:600;color:var(--ink)}
+.row-brk .b .n{font-size:14px;color:var(--ink)}
+.row-brk.prep{background:var(--prep-bg)}
+.row-brk.hair{background:var(--hair-bg)}
+.row-brk.hair .b{padding-top:9px;padding-bottom:9px}
+.row-brk.hair .b .l{font-weight:700}
+.hi{display:inline-flex;align-items:baseline;gap:7px;margin-right:26px}
+.hi b{font-size:12.5px;font-weight:700;color:var(--ink)}
+.hi .hw,.hi .hm{font-size:12.5px;color:var(--ink);white-space:nowrap}
+.hi .hsep{font-size:12px;color:var(--ink-2)}
+.row-brk.wear{background:var(--wear-bg);box-shadow:inset 4px 0 0 var(--wear)}
+.row-brk.wear .b .l{font-weight:700;color:var(--wear)}
+.row-brk.wear .b .n{color:var(--wear)}
+.row-brk.move{background:var(--move-bg)}
+.row-brk.meal{background:var(--amber-bg)}
+.row-brk.meal .b .l{font-size:15px;font-weight:700;color:var(--meal)}
+
+.row-ban{display:grid;grid-template-columns:106px 1fr;border-bottom:1px solid var(--line);align-items:stretch}
+.row-ban .t{padding:12px 10px;font-family:var(--fm);font-feature-settings:var(--fmset);font-size:15px;font-weight:600;color:#fff;text-align:center}
+.row-ban .l{padding:12px 10px;font-size:15px;font-weight:700;letter-spacing:.16em;color:#fff}
+
+/* ---------- 凡例・現場 ---------- */
+.legend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-top:22px}
+.legend .cap{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink)}
+.legend .it{display:flex;align-items:center;gap:7px}
+.legend .sw{width:12px;height:12px;border-radius:3px;display:inline-block}
+.legend .s{font-size:13px}
+.legend .n{font-family:var(--fm);font-feature-settings:var(--fmset);font-size:12px;color:var(--ink-3)}
+
+.places{margin-top:20px;display:flex;flex-direction:column;gap:6px}
+.places > .cap{font-size:16px;font-weight:700;letter-spacing:.02em;color:var(--ink)}
+.pl-box{border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.pl-row{display:grid;grid-template-columns:210px 1fr;border-bottom:1px solid var(--line-2)}
+.pl-row:last-child{border-bottom:none}
+.pl-row .n{padding:10px 12px;font-size:17px;font-weight:600}
+.pl-row .a{padding:10px 12px;font-size:15px;color:var(--ink);line-height:1.7}
+.pl-row .a.dash{color:var(--ink-3)}
+.tel{font-size:15px;color:var(--ink);line-height:1.7;margin-top:8px}
+
+
+/* ---------- 印刷（A4縦・1ページ） ----------
+   画面用のゆったりした寸法だとA4に入らないので、印刷のときだけ全部詰める */
+@page{size:A4 portrait; margin:5mm}
+/* ==================================================================
+   ここから下は画面と印刷で共通。PDFの見た目を唯一の正にして、
+   画面はそれを拡大して表示するだけにしている
+   ================================================================== */
+
+/* 見出し */
+.head{padding-bottom:5px;gap:14px}
+.head-l{gap:3px}
+.h-title{font-size:20px}
+.h-title-row{gap:14px}
+.h-date{gap:8px}
+.h-date .d{font-size:19px} .h-date .w{font-size:13px} .h-date .r{font-size:9.5px}
+.badge{font-size:11px;padding:3px 10px}
+.h-span{margin-bottom:1px}
+.h-span > div{padding:2px 11px 3px}
+.h-span .l{font-size:8px} .h-span .v{font-size:17px}
+.wx{grid-template-columns:repeat(6,minmax(58px,auto))}
+.wx > div{padding:4px 9px;gap:1px}
+.wx .k{font-size:8px} .wx .v{font-size:11px}
+
+/* スタッフ・配役 */
+.duo{grid-template-columns:0.72fr 1.28fr;gap:10px;margin-bottom:7px}
+.blk{gap:3px}
+.blk > .cap{font-size:10.5px}
+.gh{font-size:10px} .gh > div{padding:2px 5px}
+.gh .c-time,.gh > div{white-space:nowrap}
+.gr > div{padding:2px 6px}
+.g-staff{grid-template-columns:112px 176px 50px 1fr}
+.g-cast {grid-template-columns:56px 108px 50px 1fr 108px}
+.c-pos,.c-place,.c-note,.mk-o{font-size:10.5px}
+.c-actor{font-size:12px}
+.c-name,.c-time{font-size:11.5px}
+.c-role,.c-call{font-size:12.5px}
+.c-in .p{font-size:11px}
+.c-in .a{display:none}        /* 住所は下の「現場」に出ているので省く */
+.mk-s{font-size:10.5px}
+.na{font-size:11px}
+
+/* 進行表 */
+.prog-label{margin-bottom:1px}
+.prog-label .lb-cast{font-size:9.5px;padding-bottom:6px}
+.grid{grid-template-columns:106px 50px 96px 26px 30px repeat(var(--ncast),52px) 118px 1fr}
+.p-head{font-size:11px}
+.p-head .t{padding:4px} .p-head .c{padding:4px 3px}
+.p-head .who{padding:3px 2px;gap:0}
+.p-head .who b{font-size:11px} .p-head .who span{font-size:9.5px}
+.sc-t{padding:3px 2px;font-size:12px;white-space:nowrap}
+.sc-n{padding:3px 1px;font-size:13px;letter-spacing:-.03em}
+.sc-p{padding:3px;font-size:14px;line-height:1.2;flex-direction:column;gap:1px}
+.sc-p b{font-weight:600;display:block}
+.sc-p em{font-style:normal;font-size:.78em;font-weight:500;color:var(--ink);
+         letter-spacing:-.01em;white-space:nowrap;display:block}
+.sc-d,.sc-u{padding:3px;font-size:11.5px}
+.sc-c{padding:10px 2px}
+.sc-c .on{gap:1px}
+.sc-c .on b{font-size:12px} .sc-c .on i{font-size:9.5px;padding:0 4px}
+.sc-c .ios.i{margin-bottom:1px} .sc-c .ios.o{margin-top:1px}
+.sc-c .io{font-size:7px;letter-spacing:.06em}
+.sc-c .io.in{padding:0 0 2px} .sc-c .io.out{padding:2px 0 0}
+.sc-l{padding:3px}
+.sc-l span{font-size:11.5px;padding:2px 7px}
+.sc-r{padding:3px 5px;gap:2px}
+/* 見出しと本文を同じ行に置いて行数を減らす */
+.sc-r .grp{flex-direction:row;flex-wrap:wrap;justify-content:flex-start;gap:0 5px}
+.sc-r .grp b{font-size:10px;white-space:nowrap} .sc-r .grp span{font-size:11px;line-height:1.3}
+.row-brk .t{padding:1px 3px;font-size:11px;white-space:nowrap}
+.row-brk .b{padding:1px 5px;gap:4px 8px}
+.row-brk .b .l{font-size:11.5px} .row-brk .b .n{font-size:10.5px}
+.hi{margin-right:12px;gap:4px}
+.hi b,.hi .hw,.hi .hm,.hi .hsep{font-size:9.5px}
+.row-ban .t{padding:2px 5px;font-size:12.5px}
+.row-ban .l{padding:2px 5px;font-size:12.5px;letter-spacing:.1em}
+
+/* 下段 */
+.places{margin-top:0;margin-bottom:7px;gap:2px}
+.places > .cap{font-size:11px}
+.pl-row{grid-template-columns:132px 1fr}
+.pl-row .n{padding:4px 7px;font-size:11.5px}
+.pl-row .a{padding:4px 7px;font-size:10.5px;line-height:1.4}
+.tel{font-size:10.5px;margin-top:4px}
+
+@media print{
+  html,body{background:#fff !important}
+  /* 画面用の縮小がインラインで残るので、印刷では打ち消す */
+  .stage{display:block !important;padding:0 !important;margin:0 !important;width:auto !important}
+  .fitbox{width:auto !important;height:auto !important;position:static !important}
+  .sheet{width:1060px !important;padding:0 !important;box-shadow:none !important;
+         border-radius:0 !important;zoom:.655;margin:0 auto !important}
+  *{-webkit-print-color-adjust:exact !important;print-color-adjust:exact !important}
+  .row-sc,.row-brk,.row-ban,.pl-row{break-inside:avoid}
+}
+</style>
+
+<div class="bar" id="bar">
+  <button data-z="page">全体</button>
+  <button data-z="width">幅に合わせる</button>
+  <span class="sep"></span>
+  <button data-z="out" title="縮小">−</button>
+  <button data-z="in" title="拡大">＋</button>
+  <button data-z="100">100%</button>
+</div>
+
+<script id="shoot" type="application/json">__SHOOT_JSON__</script>
+
+<div class="stage"><div class="fitbox" id="fitbox"><div class="sheet" id="sheet">
+
+  <div class="head">
+    <div class="head-l">
+      <div class="h-sub">
+        <div class="h-date"><span class="d" id="date"></span><span class="w" id="wday"></span><span class="r" id="rain"></span></div>
+        <div id="state"></div>
+      </div>
+      <div class="h-title-row">
+        <div class="h-title" id="title"></div>
+        <div class="h-span vsep">
+          <div><span class="l">撮影開始</span><span class="v" id="sp-in"></span></div>
+          <div><span class="l">撮影終了</span><span class="v" id="sp-out"></span></div>
+        </div>
+      </div>
+    </div>
+    <div class="wx vsep" id="wx"></div>
+  </div>
+
+  <div class="duo">
+    <div class="blk">
+      <div class="cap">スタッフ</div>
+      <div class="box">
+        <div class="gh g-staff vsep"><div>ポジション</div><div>名前</div><div style="text-align:center">入り時間</div><div>入り場所</div></div>
+        <div id="staff"></div>
+      </div>
+    </div>
+    <div class="blk">
+      <div class="cap">配役 / キャスト（敬称略）</div>
+      <div class="box">
+        <div class="gh g-cast vsep"><div>配役</div><div>キャスト</div><div style="text-align:center">入り時間</div><div>入り場所</div><div>備考</div></div>
+        <div id="cast"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="places">
+    <div class="cap">現場</div>
+    <div class="pl-box" id="places"></div>
+    <div class="tel" id="tel"></div>
+    <span id="notion" hidden></span>   <!-- 書き出し用。画面には出さない -->
+  </div>
+
+  <div class="grid prog-label">
+    <div class="lb-cast">配役 / キャスト（敬称略）</div>
+  </div>
+
+  <div class="prog">
+    <div class="grid p-head vsep" id="phead"></div>
+    <div id="rows"></div>
+  </div>
+
+</div></div></div>
+
+<script>
+/* ==================================================================
+   香盤データ —— ここを差し替えれば別の撮影の香盤になる
+   ================================================================== */
+
+/* ==================================================================
+   データ —— 作品ごとの中身は外の JSON から流し込む。
+   このファイルは作品に依存しない（tools/build_kouban.py が埋める）
+   ================================================================== */
+const D = JSON.parse(document.getElementById("shoot").textContent);
+
+const HEAD    = D.head;
+const WEATHER = D.weather;
+const STUDIO  = D.studio;
+const ADDR    = D.addr;
+const TEL     = D.tel || {};
+const STAFF   = D.staff;
+const CAST    = D.cast;
+const WEAR    = D.wear;
+const LOC     = D.locations;
+const PLACES  = D.places;
+
+/* ==================================================================
+   ここから下はしくみ。どの作品でも同じ
+   ================================================================== */
+/* 性別。メイクの長さ（男40分／女50分）を決めるためだけに使う。
+   まず役名で判断し、決まらなければキャスト名で判断する。
+   どちらでも決まらなければ長いほう（女性50分）に倒しておく。違っていたら sex を直接書く */
+const MALE_ROLE = /男|彼氏|夫|父|兄|弟|息子|祖父|おじ|少年|青年|先輩男|王子|社長|部長|課長|店長|警官|医師/;
+const FEMALE_ROLE = /女|彼女|妻|母|姉|妹|娘|祖母|おば|少女|ママ|嫁|OL/;
+const MALE_NAME = /[太郎|一郎|健|翔|大|亮|拓|悠|颯|海斗|蓮|樹|人$|斗$|也$|介$|平$|司$|郎$]/;
+const FEMALE_NAME = /[子$|美$|香$|奈$|花$|菜$|恵$|愛$|莉$|里$|さくら|ゆい|かほ|あの|みゆ|ひな]/;
+function guessSex(c){
+  if (c.sex !== undefined) return c.sex;              /* 明示されていればそれに従う */
+  if (MALE_ROLE.test(c.role))   return "男";
+  if (FEMALE_ROLE.test(c.role)) return "女";
+  const n = (c.name||"").replace(/\s*様$/,"");
+  if (FEMALE_NAME.test(n)) return "女";
+  if (MALE_NAME.test(n))   return "男";
+  return "女";                                        /* 決まらなければ長いほう */
+}
+CAST.forEach(c => { c.sex = guessSex(c); });
+
+const TAKES = HEAD.takes || 3;
+const DRESS =10;                        /* 衣装 */
+const MAKE  ={"男":40,"女":50,null:50}; /* メイク。分からなければ長いほう */
+const ARRIVE= 5;                        /* 入ってから衣装にかかるまで */
+const BUFFER=10;                        /* 支度あがりから準備開始までのバッファ */
+const CHAIRS_AM = HEAD.hairCrew || 1;   /* 朝一に入るヘアメの人数。基本は1人 */
+const CHAIRS_PM = 1;                    /* 撮影が始まったら1人。2人目は朝だけ */
+
+/* キーは location_id（社内の「スタジオ予約用DB」のID）。
+   表示名は name。進行表の place もこのIDで書く → knowledge/locations.json と同じ体系 */
+
+const wearOf = (role, sc) => (WEAR[role]||{})[sc] || (WEAR[role]||{})["*"] || "私服";
+const PREP_CHANGE = "0:15";
+
+const S=(t0,t1,sc,pillar,dn,dur,cast,place,note)=>({k:"sc",t0,t1,sc,pillar,dn,dur,cast,place,note:note||""});
+const B=(t0,t1,label,dur,note)=>({k:"brk",t0,t1,label,dur,note:note||""});
+const N=(t0,label)=>({k:"banner",t0,label});
+
+
+const WEAR_PALETTE=[
+  {fg:"#1A7F37", bg:"#DAFBE1"},   /* 緑   */
+  {fg:"#8250DF", bg:"#F3EBFF"},   /* 紫   */
+  {fg:"#9A6700", bg:"#FFF8C5"},   /* 琥珀 */
+  {fg:"#0A5CB8", bg:"#DDF4FF"},   /* 青   */
+  {fg:"#A5325F", bg:"#FFEFF7"},   /* 桃   */
+  {fg:"#9E4A05", bg:"#FFF1E5"},   /* 橙   */
+];
+const _wc={}; let _wi=0;
+const wearColor = w => _wc[w] || (_wc[w]=WEAR_PALETTE[_wi++%WEAR_PALETTE.length]);
+
+
+/* 備考の {TAKES} を実際のテイク数に置き換える */
+const fillNote = s => (s||"").replace(/\{TAKES\}/g, TAKES);
+
+const RAW = D.rows.map(r =>
+    r.kind === "banner" ? N(r.t0 || "", r.label)
+  : r.kind === "brk"    ? B(r.t0, r.t1, r.label, r.dur, fillNote(r.note))
+  :                       S(r.t0, r.t1, r.sc, r.pillar, r.dn, r.dur, r.cast, r.place, fillNote(r.note))
+);
+
+
+
+
+/* ==================================================================
+   描画
+   ================================================================== */
+/* ==================================================================
+   入り時間 —— すべて進行表から逆算する
+
+   制作(FD/SIX)・衣装   STAFF入り と同じ
+   ヘアメイク           その10分後。入って15分で支度が整う
+   監督・技術           最初のシーンの準備が始まる1時間前
+   キャスト             初めて出るシーンの前の「準備10分」が始まる時刻から逆算する
+                        入り →5分→ 衣装10分 → メイク40/50分 →10分あけて→ 準備開始
+                        自前ヘアメイクの人はメイクの時間を取らない
+                        ただしヘアメイクを始められる時刻より前にメイクは置かない
+   BD                   現場に来ないので「-」
+   ================================================================== */
+const _M=t=>{const[a,b]=t.split(":").map(Number);return a*60+b};
+const _T=m=>`${Math.floor(m/60)}:${String(m%60).padStart(2,"0")}`;
+
+/* ------------------------------------------------------------------
+   衣装が変わる手前の準備を15分にして、そこから先の時刻を積み直す
+   ------------------------------------------------------------------ */
+/* ヘアメイクが入らない日は、全員が自前メイクになる。
+   撮影助手と同じで、決定香盤に切り替えた時点で未定なら「入らない」とみなす */
+const _hair   = STAFF.find(s=>s.role==="hair");
+const NO_HAIR = !_hair || _hair.absent || (HEAD.fixed && !_hair.v);
+if(NO_HAIR){
+  CAST.forEach(c=>{ delete c.make; });                     /* スタジオメイクを解除 */
+  for(let i=RAW.length-1;i>=0;i--)
+    if(RAW[i].k==="brk" && /ヘアメイク/.test(RAW[i].label)) RAW.splice(i,1);
+}
+
+/* ヘアメイクの枠 —— ヘアメは同時に1人しか見られないので、人数分を足して枠を取る。
+   支度15分 ＋ （男40分／女50分）×人数。スタジオメイクの人がいなければ枠はそのまま */
+/* ==================================================================
+   進行表の時刻とヘアメイクの枠 —— 互いに影響するので収束するまで回す
+   ================================================================== */
+let STAFF_IN, HAIR_IN, HAIR_OPEN, CAST_FLOOR;
+function recalcBase(){
+  if(!RAW.length) return;
+  STAFF_IN  = _M(RAW[0].t0);
+  HAIR_IN   = STAFF_IN + 5;                  /* 制作の5分後にヘアメが入る */
+  HAIR_OPEN = HAIR_IN + 15;                  /* 入って15分で支度が整う */
+  CAST_FLOOR= STAFF_IN + 10;                 /* キャストはこれより早く入らない */
+}
+recalcBase();
+const SUNRISE   = _M((WEATHER.find(w=>w.k==="日の出")||{}).v || "0:00");
+const SUNSET    = _M((WEATHER.find(w=>w.k==="日の入")||{}).v || "23:59");
+/* 日の入は「日が入り始める時刻」。屋外Nが撮れる暗さになるのはその40分後 */
+const DARK_AFTER= 40;
+const NIGHT_OK  = SUNSET + DARK_AFTER;
+const isOutdoor = p => /^EXT-/.test(p);      /* 505の外。屋外Nは日の入より後にしか撮れない */
+const HAIR_SLOT = {};
+
+
+const DRESS_SLOT = {};
+let FIRST_SC, PREP_HEAD, TECH_IN;
+
+RAW.forEach(r=>{ if(r.k==="brk") r.base = r.dur; });   /* 伸ばす前の長さを覚えておく */
+
+const firstIdx = j => { const i = RAW.findIndex(r=>r.k==="sc" && r.cast[j]); return i<0?1e9:i; };
+const lastIdx  = j => { for(let i=RAW.length-1;i>=0;i--) if(RAW[i].k==="sc" && RAW[i].cast[j]) return i; return -1; };
+/* 屋外シーンの手前の「移動」。キャストはここに同行するので、支度はこの時刻までに終える */
+const moveIdx  = idx => {
+  for(let i=idx-1;i>=0;i--){
+    if(RAW[i].k==="sc") break;
+    if(RAW[i].k==="brk" && /移動/.test(RAW[i].label)) return i;
+  }
+  return -1;
+};
+const prepIdx  = idx => {                      /* そのシーンの手前の「準備」の位置 */
+  for(let i=idx-1;i>=0;i--){
+    if(RAW[i].k==="sc") break;
+    if(RAW[i].k==="brk" && /準備/.test(RAW[i].label)) return i;
+  }
+  return -1;
+};
+
+/* ① 朝の枠を決める。最初のシーンに出る人だけを、2席で並行して仕上げる */
+function sizeHair(){
+  const hair  = RAW.find(r=>r.k==="brk" && r.label==="ヘアメイク");
+  const dress = RAW.find(r=>r.k==="brk" && r.label==="衣装");
+  if(!hair) return;
+  const sc0 = RAW.find(r=>r.k==="sc");
+  const am  = CAST.filter((c,j)=>c.make==="studio" && sc0 && sc0.cast[j]);
+  if(!am.length) return;
+  if(dress) dress.dur = _T(DRESS);             /* 並行して着替えられるので1人ぶん */
+  const chair = Array(CHAIRS_AM).fill(0);
+  am.map(c=>MAKE[c.sex]).sort((a,b)=>b-a)
+    .forEach(d=>{ const i=chair.indexOf(Math.min(...chair)); chair[i]+=d; });
+  hair.dur = _T(Math.max(...chair));
+  const i = RAW.indexOf(dress), prep = i>0 ? RAW[i-1] : null;
+  if(prep && prep.k==="brk" && /準備/.test(prep.label))
+    prep.dur = _T(Math.max(_M(prep.base), 10 + ARRIVE));
+}
+
+/* ② 衣装替えを拾い、待ち時間を足したうえで時刻を積み直す */
+function retime(){
+  if(!RAW.length) return;
+  RAW.forEach(r=>{
+    if(r.k!=="brk" || !r.base || !/^準備/.test(r.label)) return;
+    r.dur = _T(_M(r.dur) + (r.wait||0));
+    if(r.wait) r.note = r.waitSun  ? `日の入 ${_T(SUNSET)} ＋${DARK_AFTER}分 待ち ${r.wait}分を含む`
+                       : r.waitMove ? `${r.waitWho} のヘアメイク待ち ${r.wait}分を含む（ロケ地へ同行のため出発前に完了）`
+                                    : `${r.waitWho} のヘアメイク待ち ${r.wait}分を含む`;
+  });
+  const worn={};
+  RAW.forEach((r,i)=>{
+    if(r.k!=="sc") return;
+    const ch=[];
+    r.cast.forEach((on,j)=>{ if(!on) return;
+      const role=CAST[j].role, w=wearOf(role, r.sc);
+      if(worn[role] && worn[role]!==w) ch.push(`${CAST[j].short2} ${worn[role]} → ${w}`);
+      worn[role]=w; });
+    if(!ch.length) return;
+    const k = prepIdx(i);
+    if(k>=0){ RAW[k].label="準備 / 衣装"; RAW[k].dur=_T(_M(PREP_CHANGE)+(RAW[k].wait||0)); RAW[k].note=ch.join("　／　"); }
+  });
+  let t=_M(RAW[0].t0);
+  RAW.forEach(r=>{
+    if(r.k==="banner"){ r.t0 = /終了/.test(r.label.replace(/\s/g,"")) ? "" : _T(t); return; }
+    r.t0=_T(t); t+=_M(r.dur); r.t1=_T(t);
+  });
+  const up=RAW.filter(r=>r.k==="banner" && r.t0).pop();
+  if(up) HEAD.upTime=up.t0;
+  FIRST_SC  = RAW.find(r=>r.k==="sc");
+  PREP_HEAD = _M(FIRST_SC.t0) - 10;
+  TECH_IN   = Math.max(STAFF_IN, PREP_HEAD - 60);   /* STAFF入りより前には入らない */
+}
+
+/* ③ メイクの枠を割り当てる。朝は2席、撮影が始まったら1席。出番から逆算して遅めに置く */
+function assignSlots(){
+  Object.keys(HAIR_SLOT).forEach(k=>delete HAIR_SLOT[k]);
+  const sc0  = RAW.find(r=>r.k==="sc");
+  const list = CAST.map((c,j)=>({c,j})).filter(x=>x.c.make==="studio" && firstIdx(x.j)<1e9)
+                   .sort((a,b)=>firstIdx(a.j)-firstIdx(b.j));
+  const START = Math.max(HAIR_OPEN, CAST_FLOOR + ARRIVE + DRESS);
+  const am = list.filter(x=>sc0 && sc0.cast[x.j]);
+  const pm = list.filter(x=>!am.includes(x));
+
+  const chair = Array(CHAIRS_AM).fill(START);
+  [...am].sort((a,b)=>MAKE[b.c.sex]-MAKE[a.c.sex]).forEach(x=>{
+    const d=MAKE[x.c.sex], i=chair.indexOf(Math.min(...chair));
+    HAIR_SLOT[x.j]={t0:chair[i],t1:chair[i]+d,d,am:true}; chair[i]+=d;
+  });
+  let free = Math.max(...chair);
+  for(const x of pm){
+    const d=MAKE[x.c.sex], idx=firstIdx(x.j);
+    /* 屋外が初シーンの人は移動に同行するので、締切は出発時刻。505内はシーン開始の10分前 */
+    const mi  = isOutdoor(RAW[idx].place) ? moveIdx(idx) : -1;
+    /* いま入っている待ちを引いた「素の締切」を使わないと、待ちが待ちを呼んで発散する */
+    const pk  = mi>=0 ? prepIdx(mi) : prepIdx(idx);
+    const w0  = (pk>=0 ? RAW[pk].wait : 0) || 0;
+    const due = mi>=0 ? _M(RAW[mi].t0)  - w0
+                      : _M(RAW[idx].t0) - w0 - BUFFER;
+    const t0 = Math.max(free, due - d);
+    HAIR_SLOT[x.j]={t0,t1:t0+d,d};
+    free = t0 + d;
+  }
+}
+
+/* ④ メイクが間に合わないシーンは、手前の準備を伸ばして待つ */
+function fixWaits(){
+  let changed=false;
+  RAW.forEach((r,i)=>{
+    if(r.k!=="sc") return;
+    /* 屋外は移動に同行するので、締切はシーンの開始ではなく移動の出発 */
+    const mi = isOutdoor(r.place) ? moveIdx(i) : -1;
+    const anchor = mi>=0 ? mi : i;
+    const k = prepIdx(anchor); if(k<0) return;
+    let need = 0, who = [];
+    /* いま入っている待ちを引いた「素の時刻」を基準にしないと、待ちが増減して収束しない */
+    const w0 = RAW[k].wait||0;
+    const t0 = _M(RAW[anchor].t0) - w0;   /* 支度の締切 */
+    const s0 = _M(r.t0) - w0;             /* シーンの開始（日の出・日の入の判定用） */
+    /* 505の中は時間帯を問わない。屋外だけ、Nは日の入＋40分から、M/D/E は明るいうち */
+    if(!FIT_SUNSET && r.dn==="N" && isOutdoor(r.place)){
+      const gap = NIGHT_OK - s0;
+      if(gap > 0){ need = gap; who = ["日の入"]; }
+    }
+    if(isOutdoor(r.place) && r.dn && r.dn!=="N"){
+      const gap = SUNRISE - s0;
+      if(gap > 0){ need = Math.max(need, gap); who = ["日の出"]; }
+    }
+    r.cast.forEach((on,j)=>{
+      const s = on && HAIR_SLOT[j];
+      if(!s || s.am) return;                    /* 朝の枠の人は行そのものが枠なので数えない */
+      /* 屋外は出発に間に合えばよい。505内はシーン開始の10分前 */
+      const gap = s.t1 + (mi>=0 ? 0 : BUFFER) - t0;
+      if(gap > need){ need = gap; who = [CAST[j].role]; }
+      else if(gap === need && gap > 0) who.push(CAST[j].role);
+    });
+    need = Math.max(0, Math.ceil(need/5)*5);
+    RAW[k].waitWho = need ? who.join("・") : "";
+    RAW[k].waitSun  = need>0 && who[0]==="日の入";
+    RAW[k].waitMove = need>0 && mi>=0 && who[0]!=="日の入" && who[0]!=="日の出";
+    if(need !== (RAW[k].wait||0)){ RAW[k].wait = need; changed = true; }
+  });
+  return changed;
+}
+
+/* 屋外Nが日の入の直後に来るよう、STAFF入りごとずらす（待たせずに入りを動かす） */
+const FIT_SUNSET = HEAD.fitSunset !== false;
+for(let pass=0; RAW.length && pass<24; pass++){
+  RAW.forEach(r=>{ if(r.k==="brk" && r.base) r.dur = r.base; });
+  recalcBase(); sizeHair(); retime(); assignSlots();
+  if(fixWaits()) continue;                 /* まず待ちを収束させる */
+  if(FIT_SUNSET){
+    const sc = RAW.find(r=>r.k==="sc" && r.dn==="N" && isOutdoor(r.place));
+    if(sc){
+      /* 指定があればその時刻、なければ日の入直後の5分刻みに合わせる */
+      const target = HEAD.outdoorNStart ? _M(HEAD.outdoorNStart) : Math.ceil(NIGHT_OK/5)*5;
+      const delta = Math.max(target, Math.ceil(NIGHT_OK/5)*5) - _M(sc.t0);
+      if(Math.abs(delta) >= 5){
+        RAW[0].t0 = _T(_M(RAW[0].t0) + delta);
+        RAW.forEach(r=>{ if(r.k==="brk"){ r.wait=0; r.waitSun=false; r.waitWho=""; } });
+        continue;
+      }
+    }
+  }
+  break;
+}
+
+const HAS_PROG = !!FIRST_SC;
+
+const CALL_OF = HAS_PROG
+  ? { none:"-", prod:_T(STAFF_IN), hair:_T(HAIR_IN), tech:_T(TECH_IN) }
+  : { none:"-" };
+STAFF.forEach(s=>{ s.t = CALL_OF[s.role] || ""; });
+
+/* キャストの入り —— メイク枠があればそこから、無ければ準備開始から逆算する */
+CAST.forEach((c,j)=>{
+  const idx = firstIdx(j);
+  if(idx>=1e9){ c.call=""; return; }
+  /* 衣装の開始。メイクがある人はその直前、無い人はシーン開始から逆算して置けるかぎり遅く */
+  const slot  = HAIR_SLOT[j];
+  let   dress = slot ? slot.t0 - DRESS
+                     : Math.max(CAST_FLOOR + ARRIVE, _M(RAW[idx].t0) - BUFFER - DRESS);
+  /* 出番が昼休憩明けの人は、休憩の前に入ってもらう。
+     休憩中に衣装を済ませて、明け一番から動ける状態にするため */
+  const lunch = RAW.find(r=>r.k==="brk" && /昼休憩/.test(r.label));
+  if(lunch && !slot){
+    const lb=_M(lunch.t0), le=_M(lunch.t1);
+    if(dress > lb && _M(RAW[idx].t0) >= le){ dress = lb; c.overLunch = true; }
+  }
+  DRESS_SLOT[j] = {t0:dress, t1:dress + DRESS};
+  /* early を書くと、衣装とメイクの枠は動かさずに入りだけ前倒しする */
+  c.call = _T(dress - ARRIVE - (c.early||0));
+});
+
+/* ヘアメイクの行 —— メイク枠を時刻順に並べる。誰もいなければ何も書かない */
+const hairHTML = () => Object.keys(HAIR_SLOT)
+  .sort((a,b)=>HAIR_SLOT[a].t0-HAIR_SLOT[b].t0)
+  .map(j=>({c:CAST[j], ...HAIR_SLOT[j]}))
+  .map(x=>
+  `<span class="hi"><b>${x.c.role}</b>`
+  +`<span class="hm">${_T(x.t0)} - ${_T(x.t1)}（${x.d}分間）</span></span>`).join("");
+
+const dressHTML = () => Object.keys(DRESS_SLOT)
+  .sort((a,b)=>DRESS_SLOT[a].t0-DRESS_SLOT[b].t0)
+  .map(j=>({c:CAST[j], ...DRESS_SLOT[j]}))
+  .map(x=>
+  `<span class="hi"><b>${x.c.role}</b>`
+  +`<span class="hw">${_T(x.t0)} - ${_T(x.t1)}（${DRESS}分間）</span></span>`).join("");
+
+/* 「準備」→「準備（10分間）」。すでに（徒歩）などが付いていればその中に入れる */
+function brkLabel(r){
+  const m = r.label.match(/^(.*)（(.+)）$/);
+  return m ? `${m[1]}（${m[2]}・${_M(r.dur)}分間）` : `${r.label}（${_M(r.dur)}分間）`;
+}
+
+/* 備考の見出しを省略形から正式名に開く */
+const NOTE_LABEL={ "小":"小道具", "画":"画面", "美":"美術", "衣":"衣装", "音":"音効" };
+function noteHTML(s){
+  if(!s) return "";
+  const parts = s.split(/(?=【)/).map(x=>x.trim()).filter(Boolean);
+  if(!parts.length || parts[0][0] !== "【") return `<div class="grp"><span>${s}</span></div>`;
+  return parts.map(x=>{
+    const m = x.match(/^【(.+?)】\s*(.*)$/);
+    if(!m) return `<div class="grp"><span>${x}</span></div>`;
+    const key = NOTE_LABEL[m[1]] || m[1];
+    return `<div class="grp"><b>【${key}】</b><span>${m[2]}</span></div>`;
+  }).join("");
+}
+
+const NA='<span class="na">-</span>';
+const val=v=>v?v:NA;
+const TBD=/^(未定|TBD|-)?$/;                    /* これに当たる名前は赤で出す */
+const tbd=v=>TBD.test((v||"").trim()) ? `<span class="tbd">※未定</span>` : v;
+const el=id=>document.getElementById(id);
+/* 柱は「本体（補足）」の形が多い。補足は2行目に小さく置き、括弧は半角にして詰める。
+   本体が長いときは字を小さくして、行が増えないようにする */
+const pillarHTML = s => {
+  s = (s||"").trim();
+  const m = s.match(/^(.*?)[（(]([^）)]*)[）)]\s*$/);
+  const base = (m ? m[1] : s).trim();
+  const sub  = m ? m[2].trim().replace(/＃/g,"#") : "";
+  const n = base.replace(/\s/g,"").length;
+  const size = n<=6 ? "" : n<=9 ? ' style="font-size:.86em"' : ' style="font-size:.74em"';
+  return `<b${size}>${base}</b>` + (sub ? `<em>(${sub})</em>` : "");
+};
+const locOf=p=>LOC[p]||{name:p,bg:"transparent",fg:"#1F2328",bar:"#8C959F",tint:"#FFFFFF",short:""};
+const scenes=RAW.filter(r=>r.k==="sc");
+
+/* まだ入っていない項目は「-」にする */
+el("title").innerHTML   = (HEAD.account||HEAD.title)
+  ? `${HEAD.account}『${HEAD.title||"&nbsp;"}』スケ香盤`
+  : `${NA}『${NA}』スケ香盤`;
+el("date").innerHTML    = HEAD.date || NA;
+el("wday").innerHTML    = HEAD.wday ? `（${HEAD.wday}）` : "";
+el("rain").textContent  =HEAD.rain;
+el("state").textContent =HEAD.fixed?"決定香盤":"仮香盤";
+el("state").className   ="badge "+(HEAD.fixed?"final":"draft");
+/* 撮影開始＝最初のシーン、撮影終了＝オールアップ */
+el("sp-in").innerHTML  = FIRST_SC ? FIRST_SC.t0 : NA;
+el("sp-out").innerHTML = HEAD.upTime || NA;
+
+
+el("wx").innerHTML=WEATHER.map(w=>
+  `<div><span class="k">${w.k}</span><span class="v">${val(w.v)}</span></div>`).join("");
+
+/* 「決定香盤」になっても埋まっていない任意の枠は、入らないものとして「-」 */
+/* 「未定」は赤。空欄は「-」（入らない、または未取得） */
+const staffName=s=> s.v==="未定" ? tbd(s.v) : (s.v ? s.v : (s.opt && HEAD.fixed ? "-" : NA));
+el("staff").innerHTML=STAFF.filter(s=>!s.absent).map(s=>
+  `<div class="gr g-staff vsep">`
+  +`<div class="c-pos">${s.k}</div>`
+  +`<div class="c-name">${staffName(s)}</div>`
+  +`<div class="c-time">${s.t && s.t!=="-" ? s.t : NA}</div>`
+  +`<div class="c-place">${s.t && s.t!=="-" ? STUDIO : NA}</div></div>`).join("");
+
+/* スタジオでメイクするかどうか。書いていなければ自前 */
+const makeLabel=c=>{
+  if(!c.call) return "—";
+  const base = c.make==="studio" ? `<span class="mk-s">スタジオメイク</span>`
+                                 : `<span class="mk-o">自前ヘアメイク</span>`;
+  const ex = [ c.early ? `${c.early}分早め` : "",
+               c.overLunch ? "昼休憩前に入り" : "" ].filter(Boolean);
+  return ex.length ? `${base}<br><span class="mk-e">${ex.join(" ／ ")}</span>` : base;
+};
+el("cast").innerHTML=CAST.map(c=>
+  `<div class="gr g-cast vsep">`
+  +`<div class="c-role">${c.role}</div>`
+  +`<div class="c-actor">${tbd(c.name)}</div>`
+  +`<div class="c-call">${val(c.call)}</div>`
+  +`<div class="c-in"><span class="p">${val(STUDIO)}</span>${ADDR?`<span class="a">${ADDR}</span>`:""}</div>`
+  +`<div class="c-note">${makeLabel(c)}</div></div>`).join("");
+
+/* 配役がまだ0人でも表が崩れないよう、列は最低1つ確保する */
+const NCAST = CAST.length || 1;
+document.documentElement.style.setProperty("--ncast",NCAST);
+/* 上段に「配役 / キャスト」をかぶせた2段の見出し */
+el("phead").innerHTML=
+  `<div class="t split">時間</div><div class="c">S#</div><div class="c">柱</div>`
+ +`<div class="c">D/N</div><div class="c split">尺</div>`
+ +(CAST.length
+    ? CAST.map((c,j)=>`<div class="who${j===CAST.length-1?" split":""}"><b>${c.short2}</b><span>${tbd(c.short)}</span></div>`).join("")
+    : `<div class="who split"><b>${NA}</b></div>`)
+ +`<div class="c split">現場</div><div class="t">備考（衣装・小道具・美術等）</div>`;
+
+el("rows").innerHTML=RAW.map((r,i)=>{
+  if(r.k==="sc"){
+    const L=locOf(r.place);
+    return `<div class="grid row-sc vsep" style="background:${L.tint}">`
+      +`<div class="sc-t split" style="border-left:7px solid ${L.bar}">${r.t0} - ${r.t1}</div>`
+      +`<div class="sc-n">${r.sc}</div>`
+      +`<div class="sc-p">${pillarHTML(r.pillar)}</div>`
+      +`<div class="sc-d">${r.dn}</div>`
+      +`<div class="sc-u split">${r.dur}</div>`
+      + r.cast.map((on,j)=>`<div class="sc-c${j===r.cast.length-1?" split":""}">`
+          +(on?(()=>{const w=wearOf(CAST[j].role, r.sc),c=wearColor(w);
+        /* 初登場のシーンに IN、出番の最後に OUT。本番前の紹介と、上がりの挨拶のため */
+        const isIn = i===firstIdx(j), isOut = i===lastIdx(j);
+        return `<span class="on">`
+             + (isIn ? `<span class="ios i"><em class="io in">IN</em></span>` : "")
+             + `<b>${CAST[j].short2}</b>`
+             + `<i style="color:${c.fg};background:${c.bg}">${w}</i>`
+             + (isOut ? `<span class="ios o"><em class="io out">OUT</em></span>` : "")
+             + `</span>`;})():"")
+        +`</div>`).join("")
+      +`<div class="sc-l split"><span style="background:${L.bg};color:${L.fg}">${L.name||r.place}</span></div>`
+      +`<div class="sc-r">${noteHTML(r.note)}</div></div>`;
+  }
+  if(r.k==="brk"){
+    const isHair  = r.label==="ヘアメイク";
+    const isDress = r.label==="衣装";
+    const kind = (isHair||isDress) ? "hair"
+               : /休憩/.test(r.label) ? "meal"
+               : /移動/.test(r.label) ? "move"
+               : /^準備 \/ 衣装/.test(r.label) ? "wear"
+               : /準備|後片付け/.test(r.label) ? "prep" : "";
+    return `<div class="row-brk${kind?" "+kind:""}">`
+      +`<div class="t">${r.t0} - ${r.t1}</div>`
+      +`<div class="b"><span class="l">${brkLabel(r)}</span>`
+      +(()=>{const n = isHair?hairHTML() : isDress?dressHTML() : r.note;
+         return n?`<span class="n">${n}</span>`:"";})()+`</div></div>`;
+  }
+  const lb=r.label.replace(/\s/g,"");
+  const bg=lb.includes("STAFF")?"#0969DA":lb.includes("オールアップ")?"#1F2328":"#1A7F37";
+  return `<div class="row-ban" style="background:${bg}">`
+    +`<div class="t">${r.t0}</div><div class="l">${r.label}</div></div>`;
+}).join("");
+
+/* 現場は進行表の中に色つきで出ているので、凡例は衣装が2種類以上あるときだけ */
+
+
+el("places").innerHTML=PLACES.map(p=>
+  `<div class="pl-row vsep"><div class="n">${p.n}</div>`
+  +`<div class="a${p.a?"":" dash"}">${p.a||"—"}</div></div>`).join("");
+
+/* 当日連絡先は FD。担当が分かるようポジションも出す。番号が無ければ未入力 */
+(function(){
+  const fd  = STAFF.find(s=>/FD/.test(s.k));
+  const pos = fd ? fd.k.split(/\s*-\s*/)[0] : "FD";      /* 「FD - 助監督」→「FD」 */
+  const no  = fd && TEL[fd.v];
+  el("notion").textContent = HEAD.notionUrl
+  || (HEAD.shootId ? `https://${HEAD.notionSite||"brass-soursop-b4a"}.notion.site/`
+                     + HEAD.shootId.replace(/-/g,"") + "?source=copy_link" : "");
+el("tel").innerHTML = `※当日連絡先（${pos}：${fd?fd.v:NA}　${no||NA}）`
+    + `※撮影中など繋がらない場合はお手数ですがSMS(ショートメッセージ)をお送りください。`;
+})();
+/* ==================================================================
+   表示倍率 —— PDFビューアと同じで、既定は「全体」
+   ================================================================== */
+(function(){
+  const W = 1096, PAD = 32;
+  if(/(^|[?&])bw($|[=&])/.test(location.search)) document.documentElement.classList.add("bw");
+  const sheet=el("sheet"), box=el("fitbox"), bar=el("bar");
+  let mode="page", manual=1;
+
+  const natural = () => {                 /* 等倍のときの高さ */
+    const t=sheet.style.transform; sheet.style.transform="none";
+    const hh=sheet.offsetHeight; sheet.style.transform=t; return hh;
+  };
+  function apply(){
+    const h=natural();
+    const aw=window.innerWidth-PAD, ah=window.innerHeight-PAD-16;
+    let s = mode==="page"  ? Math.min(aw/W, ah/h)
+          : mode==="width" ? aw/W
+          : manual;
+    if(mode!=="manual") s=Math.min(s,1);          /* 自動のときは等倍を超えない */
+    s=Math.max(.1, Math.min(s,3));
+    sheet.style.transform=`scale(${s})`;
+    box.style.width =W*s+"px";
+    box.style.height=h*s+"px";
+    bar.querySelectorAll("button").forEach(b=>
+      b.classList.toggle("on", b.dataset.z===mode));
+    manual=s;
+  }
+  bar.onclick=e=>{
+    const z=e.target.dataset && e.target.dataset.z; if(!z) return;
+    if(z==="in"||z==="out"){ mode="manual"; manual=manual*(z==="in"?1.25:.8); }
+    else if(z==="100"){ mode="manual"; manual=1; }
+    else mode=z;
+    apply();
+  };
+  window.addEventListener("resize", apply);
+  apply();
+})();
+</script>
+

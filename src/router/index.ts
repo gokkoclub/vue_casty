@@ -46,6 +46,27 @@ const router = createRouter({
             path: '/help',
             name: 'help',
             component: () => import('@/views/HelpView.vue')
+        },
+        // ── 香盤。Casty とは別の製品としてヘッダーで切り替える ──
+        {
+            path: '/kouban',
+            name: 'kouban',
+            component: () => import('@/views/KoubanView.vue'),
+            meta: { requiresAdmin: true, product: 'kouban' }
+        },
+        {
+            path: '/kouban/:shootId',
+            name: 'kouban-detail',
+            component: () => import('@/views/KoubanDetailView.vue'),
+            meta: { requiresAdmin: true, product: 'kouban' }
+        },
+        // 共有リンク。撮影ごとに1本。読み取り専用。
+        // サインインは要る（Casty に入るのと同じ）が、管理者でなくてよい
+        {
+            path: '/k/:token',
+            name: 'kouban-share',
+            component: () => import('@/views/KoubanShareView.vue'),
+            meta: { product: 'kouban' }
         }
     ]
 })
