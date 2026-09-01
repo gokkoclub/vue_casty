@@ -59,6 +59,14 @@ const router = createRouter({
             name: 'kouban-detail',
             component: () => import('@/views/KoubanDetailView.vue'),
             meta: { requiresAdmin: true, product: 'kouban' }
+        },
+        // 共有リンク。撮影ごとに1本。読み取り専用。
+        // サインインは要る（Casty に入るのと同じ）が、管理者でなくてよい
+        {
+            path: '/k/:token',
+            name: 'kouban-share',
+            component: () => import('@/views/KoubanShareView.vue'),
+            meta: { product: 'kouban' }
         }
     ]
 })

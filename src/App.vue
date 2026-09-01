@@ -21,7 +21,7 @@ onMounted(() => {
 // いま見ている製品。ref では持たず、パスから決める。
 // そうするとリロードでズレず、共有されたURLがそのまま正しい製品で開く
 const product = computed<'casty' | 'kouban'>(() =>
-  route.path.startsWith('/kouban') ? 'kouban' : 'casty'
+  route.path.startsWith('/kouban') || route.path.startsWith('/k/') ? 'kouban' : 'casty'
 )
 
 // 香盤は管理者だけ。アクターや一般には切り替えごと見せない
