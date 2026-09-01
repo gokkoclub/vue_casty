@@ -46,6 +46,19 @@ const router = createRouter({
             path: '/help',
             name: 'help',
             component: () => import('@/views/HelpView.vue')
+        },
+        // ── 香盤。Casty とは別の製品としてヘッダーで切り替える ──
+        {
+            path: '/kouban',
+            name: 'kouban',
+            component: () => import('@/views/KoubanView.vue'),
+            meta: { requiresAdmin: true, product: 'kouban' }
+        },
+        {
+            path: '/kouban/:shootId',
+            name: 'kouban-detail',
+            component: () => import('@/views/KoubanDetailView.vue'),
+            meta: { requiresAdmin: true, product: 'kouban' }
         }
     ]
 })
